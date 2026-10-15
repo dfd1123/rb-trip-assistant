@@ -1,0 +1,215 @@
+'use strict';
+// 아마란스10 조작: 품의서입력(복수) 그리드 → 결재상신 모달 → 전자결재 팝업 본문 → 보관.
+// 그리드는 RealGrid2 DOM: 행 tr.rg-data-row / 셀 td.rg-data-cell(헤더 .rg-header-cell 순서) /
+// 행 체크 td.rg-checkbar-cell / 드롭다운 .rg-list-editor
+// 자동 조작이 막히면 ui.assist() 로 사람에게 넘기고(앱 화면에 안내 + [계속]) 이어서 진행한다.
+
+const { Page, sleep } = require('./driver');
+const { FILL_JS, FIND_JS } = require('./editorFill');
+
+const BUDGET_PATH = '/#/HP/NPC1023/NCA0018';
+const popupsOf = new WeakMap();   // 그룹웨어 창 → 그 창에서 열린 작성 팝업들
+const amountOf = s => Number(String(s || '').replace(/[^\d]/g, '')) || 0;
+
+class Amaranth {
+  constructor({ win, baseUrl, ui, log }) {
+    this.page = new Page(win);
+    this.win = win;
+    this.baseUrl = baseUrl.replace(/\/$/, '');
+    this.ui = ui;
+    this.log = log;
+    if (!popupsOf.has(win.webContents)) {
+      const set = new Set();
+      popupsOf.set(win.webContents, set);
+      win.webContents.on('did-create-window', w => { set.add(w); w.on('closed', () => set.delete(w)); });
+    }
+  }
+
+  // ---------- 로그인 ----------
+  async ensureLogin(timeoutMs = 10 * 60 * 1000) {
+    const p = this.page;
+    if (!p.url().startsWith(this.baseUrl)) await p.goto(this.baseUrl);
+    await sleep(2500);
+    if (!p.url().includes('#/login')) return;
+    this.win.show(); this.win.focus();
+    this.log('그룹웨어 창에서 로그인해 주세요. (비밀번호는 앱이 저장하지 않습니다)');
+    const end = Date.now() + timeoutMs;
+    while (p.url().includes('#/login')) {
+      if (Date.now() > end) throw new Error('로그인 대기 시간이 지났습니다.');
+      await sleep(1000);
+    }
+    await sleep(2500);
+    this.log('로그인 확인됨');
+  }
+
+  // ---------- 그리드 헬퍼 ----------
+  rowCount(gridHdr) { return this.page.eval(h => { const g = grid(h); return g ? rows(g).length : -1; }, gridHdr); }
+  rowVals(gridHdr, row) { return this.page.eval((h, r) => { const g = grid(h); return g ? rowVals(g, r) : null; }, gridHdr, row); }
+  cellPoint(gridHdr, row, col) {
+    return this.page.eval((h, r, c) => { const g = grid(h); const el = g && cell(g, r, c); return el ? center(el) : null; }, gridHdr, row, col);
+  }
+
+  async editCell(gridHdr, row, col, text) {
+    const p = this.page;
+    await p.dblclick(await this.cellPoint(gridHdr, row, col));
+    await p.selectAll();
+    await p.type(text);
+    await p.key('Enter');
+    await sleep(400);
+  }
+
+  // ---------- 코드도움 모달 ----------
+  async openCodeHelp(gridHdr, row, col, titleRe) {
+    const p = this.page;
+    const pt = await this.cellPoint(gridHdr, row, col);
+    for (const count of [1, 2]) {
+      await p.click(pt, { count });
+      const ok = await p.waitFor(re => { const r = new RegExp(re); return all('*').some(e => ownText(e) && vis(e) && r.test(e.textContent.trim()) && !!dialog(e.textContent.trim())); },
+        [titleRe], { timeout: 3000 });
+      if (ok) return;
+    }
+    throw new Error('코드도움 창이 열리지 않았습니다.');
+  }
+
+  async pickInCodeHelp(titleRe, query, match) {
+    const p = this.page;
+    const findDlg = `(re) => { const r = new RegExp(re); const h = all('*').filter(e => ownText(e) && vis(e) && r.test(e.textContent.trim())).pop(); return h ? dialog(h.textContent.trim()) : null; }`;
+    await p.clickWhere(`(re) => { const d = (${findDlg})(re); return d && all('input[type=text]', d).find(vis); }`, titleRe);
+    await p.selectAll();
+    await p.type(query);
+    await p.key('Enter');
+    await sleep(1200);
+    await p.waitFor(`(re, m) => { const d = (${findDlg})(re); return d && byText(m, d).length > 0; }`, [titleRe, match],
+      { timeout: 6000, message: `검색 결과에서 '${match}'를 찾지 못했습니다.` });
+    await p.clickWhere(`(re, m) => { const d = (${findDlg})(re); return byText(m, d)[0]; }`, titleRe, match);
+    await p.clickWhere(`(re) => { const d = (${findDlg})(re); return all('button', d).filter(b => norm(b.textContent) === '확인' && vis(b)).pop(); }`, titleRe);
+    await p.waitFor(`(re) => !(${findDlg})(re)`, [titleRe], { timeout: 6000 });
+  }
+
+  // ---------- 품의서입력(복수) ----------
+  /** 품의 1건 + 예산 라인 입력. 그 품의의 top grid 행 번호를 돌려준다. */
+  async enterBudget(dept, expenses, kind = '지출') {
+    const p = this.page, ui = this.ui;
+    this.log('품의서입력(복수) 화면을 엽니다.');
+    await p.goto(this.baseUrl + BUDGET_PATH);
+    await p.waitFor(() => !!grid('품의구분'), [], { timeout: 30000, message: '품의서입력 화면이 열리지 않았습니다.' });
+    await sleep(1500);
+
+    let row = (await this.rowCount('품의구분')) - 1;
+    if (row < 0 || (await this.rowVals('품의구분', row))['순번']) {
+      await ui.assist('품의 목록 맨 아래에 빈 행이 없습니다. 빈 행을 만든 뒤 [계속]을 눌러주세요.');
+      row = (await this.rowCount('품의구분')) - 1;
+    }
+
+    this.log(`품의구분 '${kind}' 선택`);
+    try {
+      await p.dblclick(await this.cellPoint('품의구분', row, '품의구분'));
+      await sleep(600);
+      const opt = await p.eval(k => { const el = all('.rg-list-editor *').find(e => ownText(e) && vis(e) && norm(e.textContent) === k); return el ? center(el) : null; }, kind);
+      if (opt) await p.click(opt); else { await p.type(kind); await p.key('Enter'); }
+      await sleep(400);
+      await p.click(await this.cellPoint('품의구분', row, '품의구분'));
+      await p.press('Enter', 3);
+    } catch (e) {
+      await ui.assist(`품의구분 선택에 실패했습니다(${e.message}). 품의구분을 '${kind}'로 고르고 Enter 3번을 눌러주세요.`);
+    }
+    if ((await this.rowVals('품의구분', row))['품의구분'] !== kind)
+      await ui.assist(`품의구분이 '${kind}'로 보이지 않습니다. 직접 선택하고 Enter 3번 눌러주세요.`);
+
+    for (const [i, ex] of expenses.entries()) {
+      this.log(`예산 라인 ${i + 1}/${expenses.length}: ${ex.label} ${ex.amount.toLocaleString('ko-KR')}원`);
+      if ((await this.rowCount('예산과목')) <= i) await ui.assist(`예산 목록에 ${i + 1}번째 행이 없습니다. 빈 행을 만들어 주세요.`);
+      try {
+        await this.openCodeHelp('예산과목', i, '부서', '^사업코드도움$');
+        await this.pickInCodeHelp('^사업코드도움$', dept, dept);
+      } catch (e) { await ui.assist(`부서 선택 실패(${e.message}). ${i + 1}번째 줄 부서를 '${dept}'로 지정해 주세요.`); }
+      try {
+        await this.openCodeHelp('예산과목', i, '예산과목', '(예산과목|예산|과목).*(코드)?도움$');
+        await this.pickInCodeHelp('(예산과목|예산|과목).*(코드)?도움$', ex.code, ex.code);
+      } catch (e) { await ui.assist(`예산과목 선택 실패(${e.message}). ${i + 1}번째 줄 예산과목을 ${ex.code} ${ex.label}로 지정해 주세요.`); }
+      try {
+        await this.editCell('예산과목', i, '품의금액', String(ex.amount));
+        await p.dblclick(await this.cellPoint('예산과목', i, '적요'));
+        await p.selectAll();
+        await p.type(ex.memo);
+        await p.key('Enter');                       // → 첨부파일
+        if (i < expenses.length - 1) await p.key('Enter');   // → 다음 예산 라인
+        await sleep(700);
+      } catch (e) { await ui.assist(`금액/적요 입력 실패(${e.message}). ${i + 1}번째 줄에 ${ex.amount.toLocaleString('ko-KR')}원 / '${ex.memo}' 를 입력해 주세요.`); }
+      const got = amountOf(((await this.rowVals('예산과목', i)) || {})['품의금액']);
+      if (got !== ex.amount) await ui.assist(`${i + 1}번째 줄 금액이 ${got.toLocaleString('ko-KR')}원으로 보입니다. ${ex.amount.toLocaleString('ko-KR')}원으로 고쳐 주세요.`);
+    }
+
+    // 품의 행 체크 → 총금액 확인
+    await p.clickWhere(r => all('td.rg-checkbar-cell', grid('품의구분'))[r], row);
+    await sleep(1000);
+    const total = expenses.reduce((s, e) => s + e.amount, 0);
+    const vals = await this.rowVals('품의구분', row);
+    if (amountOf(vals['총금액']) !== total)
+      await ui.assist(`품의 총금액이 ${amountOf(vals['총금액']).toLocaleString('ko-KR')}원입니다(예상 ${total.toLocaleString('ko-KR')}원). 확인 후 품의 행만 체크된 상태로 두세요.`);
+    this.log(`품의 입력 완료: 총 ${total.toLocaleString('ko-KR')}원 (순번 ${vals['순번'] || '?'})`);
+    return row;
+  }
+
+  // ---------- 결재상신 ----------
+  /** 하단 [결재상신] → 결재양식/제목 → 확인 → 전자결재 팝업(BrowserWindow) */
+  async openApproval(formName, title) {
+    const p = this.page, ui = this.ui;
+    this.log(`결재상신: ${formName}`);
+    // 이전에 열어 둔 작성 창(이미 보관됨)이 있으면 닫는다. 같은 이름의 창이 재사용되는 것을 막기 위함.
+    for (const w of popupsOf.get(this.win.webContents) || []) if (!w.isDestroyed()) w.destroy();
+    const popupPromise = new Promise(resolve => this.win.webContents.once('did-create-window', w => resolve(w)));
+    await p.clickWhere(() => all('button').filter(b => norm(b.textContent) === '결재상신' && vis(b) && !b.disabled).pop());
+    await p.waitFor(() => !!dialog('전자결재상신'), [], { timeout: 8000, message: '전자결재상신 창이 열리지 않았습니다.' });
+    try {
+      await p.clickWhere(() => { const d = dialog('전자결재상신'); return byText('품의서입력', d, false)[0] || byText('출장', d, false)[0]; });
+      await sleep(500);
+      await p.clickWhere(f => byText(f).pop(), formName);
+      await sleep(400);
+    } catch (e) { await ui.assist(`결재양식 선택 실패(${e.message}). 결재양식을 '${formName}'으로 골라주세요.`); }
+    await p.clickWhere(() => all('input[type=text]', dialog('전자결재상신')).filter(vis).pop());
+    await p.selectAll();
+    await p.type(title);
+    await p.clickWhere(() => all('button', dialog('전자결재상신')).filter(b => norm(b.textContent) === '확인' && vis(b)).pop());
+    const popup = await Promise.race([popupPromise, sleep(30000).then(() => null)]);
+    if (!popup) throw new Error('전자결재 작성 창이 열리지 않았습니다.');
+    await new Promise(r => popup.webContents.isLoading() ? popup.webContents.once('did-finish-load', r) : r());
+    this.log('전자결재 작성 창이 열렸습니다.');
+    return popup;
+  }
+
+  /** 팝업 본문 채우기 → 첨부 → [보관] */
+  async fillAndKeep(popup, { title, probe, payload, attachments = [], save = true }) {
+    const pp = new Page(popup), ui = this.ui;
+    let frame = await pp.findFrame(FIND_JS, probe, 30000);
+    if (!frame) { await ui.assist('본문 편집기를 찾지 못했습니다. 작성 창이 다 열렸는지 확인해 주세요.'); frame = await pp.findFrame(FIND_JS, probe, 5000); }
+
+    const cur = await pp.eval(() => { const i = document.querySelector('.docTitleBox input'); return i ? i.value : null; });
+    if (cur !== null && cur !== title) {
+      await pp.clickWhere(() => document.querySelector('.docTitleBox input'));
+      await pp.selectAll(); await pp.type(title);
+    }
+
+    if (frame) {
+      const res = await frame.executeJavaScript(`(${FILL_JS})(${JSON.stringify(payload)})`);
+      this.log(`본문 입력: ${res.filled.join(', ')}`);
+      if (res.missing.length) await ui.assist(`본문에서 찾지 못한 칸: ${res.missing.join(', ')}. 직접 채워 주세요.`);
+    }
+
+    const files = attachments.filter(Boolean);
+    if (files.length) {
+      try { await pp.setFiles('input[type=file]', files); await sleep(1500); this.log(`첨부: ${files.length}개`); }
+      catch (e) { await ui.assist(`첨부 실패(${e.message}). 다음 파일을 직접 끌어다 놓아 주세요: ${files.join(', ')}`); }
+    }
+
+    if (!save) { this.log('보관하지 않고 멈춥니다.'); return; }
+    await pp.eval(() => { window.confirm = () => true; window.alert = () => {}; return true; });   // 보관 확인창 자동 승인
+    await pp.clickWhere(() => all('.topBtn').find(b => norm(b.textContent) === '보관'));
+    await sleep(800);
+    try { await pp.clickWhere(() => all('button').filter(b => norm(b.textContent) === '확인' && vis(b)).pop()); } catch (e) { /* 확인창 없음 */ }
+    await sleep(1500);
+    this.log('보관(임시저장) 완료. 상신은 내용을 확인한 뒤 직접 눌러 주세요.');
+  }
+}
+
+module.exports = { Amaranth, BUDGET_PATH };

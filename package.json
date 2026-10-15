@@ -1,0 +1,82 @@
+{
+  "name": "trip-assistant",
+  "productName": "출장 결재 도우미",
+  "version": "0.1.0",
+  "description": "아마란스10 출장신청서·출장보고서 자동 작성 (레인보우로보틱스)",
+  "main": "src/main.js",
+  "author": "Rainbow Robotics 개발 2팀",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/rules.test.js",
+    "e2e": "electron test/e2e.js",
+    "dist": "electron-builder",
+    "dist:win": "electron-builder --win",
+    "dist:mac": "electron-builder --mac",
+    "dist:linux": "electron-builder --linux"
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.0"
+  },
+  "devDependencies": {
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.rainbowrobotics.tripassistant",
+    "productName": "출장 결재 도우미",
+    "artifactName": "trip-assistant-${version}-${os}-${arch}.${ext}",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "shortcutName": "출장 결재 도우미"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "category": "public.app-category.productivity",
+      "icon": "build/icon.png"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Office",
+      "icon": "build/icon.png",
+      "maintainer": "Rainbow Robotics <noreply@rainbow-robotics.com>",
+      "executableName": "trip-assistant",
+      "synopsis": "아마란스10 출장신청서·보고서 자동 작성"
+    },
+    "publish": []
+  },
+  "homepage": "https://www.rainbow-robotics.com"
+}
