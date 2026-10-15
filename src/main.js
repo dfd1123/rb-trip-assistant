@@ -35,6 +35,7 @@ function createMain() {
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
   mainWin.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  mainWin.on('closed', () => { mainWin = null; if (process.platform !== 'darwin') app.quit(); });   // 숨긴 그룹웨어 창이 있어도 종료
   if (process.env.TRIP_ASSISTANT_SMOKE) {           // CI/개발용: 화면 캡처 후 종료
     mainWin.webContents.on('console-message', (...a) => { const m = a[0] && a[0].message !== undefined ? a[0].message : a[2]; console.log('[renderer]', m); });
     mainWin.webContents.once('did-finish-load', async () => {
@@ -49,18 +50,40 @@ function createMain() {
 }
 
 /** 그룹웨어 창. 로그인 세션은 persist:gw 파티션(이 PC)에만 저장된다. */
-function gwWindow(show = true) {
-  if (gwWin && !gwWin.isDestroyed()) { if (show && !gwWin.isVisible()) gwWin.show(); return gwWin; }
+// 그룹웨어 창은 기본으로 숨긴 채(백그라운드) 작업한다. 사람이 봐야 할 때만 [그룹웨어 창 열기]로 띄운다.
+// 숨겨도 입력 이벤트·화면 갱신이 멈추지 않도록 backgroundThrottling 을 끈다.
+const gwPopups = new Set();
+let quitting = false;
+app.on('before-quit', () => { quitting = true; });
+function gwWindow(show = false) {
+  if (gwWin && !gwWin.isDestroyed()) { if (show) showGw(); return gwWin; }
   gwWin = new BrowserWindow({
-    show, width: 1500, height: 950, icon: ICON, title: '아마란스 — 와니의 결재 도우미가 입력 중', autoHideMenuBar: true,
-    webPreferences: { partition: 'persist:gw', contextIsolation: true, sandbox: true },
+    show: false, width: 1500, height: 950, icon: ICON, title: '아마란스 — 와니의 결재 도우미가 입력 중', autoHideMenuBar: true,
+    webPreferences: { partition: 'persist:gw', contextIsolation: true, sandbox: true, backgroundThrottling: false },
   });
-  // 결재 작성 팝업(window.open)은 앱 창으로 열고 같은 세션을 쓴다
+  // 결재 작성 팝업(window.open)도 숨긴 채 같은 세션으로 연다
   gwWin.webContents.setWindowOpenHandler(() => ({
     action: 'allow',
-    overrideBrowserWindowOptions: { width: 1100, height: 1000, icon: ICON, autoHideMenuBar: true },
+    overrideBrowserWindowOptions: { show: false, width: 1100, height: 1000, icon: ICON, autoHideMenuBar: true, webPreferences: { backgroundThrottling: false } },
   }));
+  gwWin.webContents.on('did-create-window', w => {
+    gwPopups.add(w); w.on('closed', () => gwPopups.delete(w));
+    w.on('close', e => { if (!quitting && jobBusy()) { e.preventDefault(); w.hide(); } });   // 작업 중 닫으면 숨기기만
+  });
+  gwWin.on('close', e => { if (!quitting) { e.preventDefault(); gwWin.hide(); } });            // 닫기 = 숨기기 (로그인·작업 상태 유지)
+  if (show) showGw();
   return gwWin;
+}
+function showGw() {
+  if (!gwWin || gwWin.isDestroyed()) gwWindow(false);
+  gwWin.show();
+  const pops = [...gwPopups].filter(w => !w.isDestroyed());
+  for (const w of pops) w.show();
+  (pops.pop() || gwWin).focus();
+}
+function hideGw() {
+  for (const w of gwPopups) if (!w.isDestroyed()) w.hide();
+  if (gwWin && !gwWin.isDestroyed()) gwWin.hide();
 }
 
 function makeNaverWindow() {
@@ -100,7 +123,7 @@ function startJob(kind, fn, title) {
   if (job && job.state === 'waiting') job.cancel();          // 사람 입력만 기다리던 이전 작업은 취소
   else if (job && job.state === 'running') throw new Error('이전 작업이 아직 진행 중이에요. 작업창의 [취소]를 누른 뒤 다시 시도해 주세요.');
   const j = job = new Job(kind, title);
-  const env = { debugDir: app.isPackaged ? path.join(app.getPath('userData'), 'debug') : path.join(__dirname, '..', 'debug'), cfg: store.config(), store, ui: j, log: m => j.info(m), gwWindow, makeNaverWindow, creds: gwCreds };
+  const env = { debugDir: app.isPackaged ? path.join(app.getPath('userData'), 'debug') : path.join(__dirname, '..', 'debug'), cfg: store.config(), store, ui: j, log: m => j.info(m), gwWindow: () => gwWindow(false), showGw, makeNaverWindow, creds: gwCreds };
   (async () => {
     try { j.result = await fn(env); j.state = 'done'; j.info('✔ 완료'); }
     catch (e) { j.error = e instanceof R.InputError ? `입력 오류: ${e.message}` : e.message; j.state = j.cancelled ? 'cancelled' : 'error'; }
@@ -255,8 +278,11 @@ async function route(p, body = {}) {
     case '/api/gw/status': return gwStatus();
     case '/api/gw/login': return gwLogin(body);
     case '/api/gw/forget': sessionCreds = null; store.saveConfig({ gwId: '', gwPwEnc: '' }); return { ok: true };
-    case '/api/gw/show': gwWindow(true).focus(); return { ok: true };
+    case '/api/gw/show': showGw(); return { ok: true };
+    case '/api/gw/hide': hideGw(); return { ok: true };
     case '/api/job/gw-list': return startJob('gw-list', env => runner.runListBudget(env), body.title);
+    case '/api/job/trip-delete': return startJob('trip-delete', env => runner.runDeleteTrip(env, body.id), body.title);
+    case '/api/trip/forget': store.remove(String(body.id)); return { ok: true };
     case '/api/job/gw-delete': return startJob('gw-delete', env => runner.runDeleteBudget(env, body.keys), body.title);
     case '/api/job/login': return startJob('login', env => runner.runLogin(env), body.title);
     case '/api/job/fare': return startJob('fare', env => runner.runFare({ ...env, force: Boolean(body.force) }, body), body.title);
@@ -280,6 +306,6 @@ app.whenReady().then(() => {
   createMain();
   updater.start();
   if (!app.isPackaged) watchForDev();
-  app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createMain(); });
+  app.on('activate', () => { if (!mainWin || mainWin.isDestroyed()) createMain(); });
 });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });

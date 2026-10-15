@@ -53,6 +53,7 @@ textarea{resize:vertical;min-height:84px}
 .btn{border:1px solid var(--line);background:#fff;border-radius:8px;padding:8px 14px;font:inherit;cursor:pointer;white-space:nowrap}
 .btn:hover{border-color:#c9ced6}
 .btn.primary{background:linear-gradient(135deg,var(--accent),#1f6aa8);border-color:var(--accent);color:var(--accent-ink);font-weight:600}
+.gwtag{display:inline-block;font-size:12px;color:var(--muted);margin-right:10px} .gwtag b{color:var(--ink);font-weight:600}
 .btn.danger{border-color:#f3c2c2;color:#b42318} .btn.danger:disabled{opacity:.45;cursor:not-allowed}
 table.gw{width:100%;border-collapse:collapse;font-size:13px} table.gw td,table.gw th{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left} table.gw th{color:var(--muted);font-weight:600}
 table.gw tr.locked{color:var(--muted)} table.gw td.num{text-align:right;white-space:nowrap}
@@ -199,13 +200,17 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
 
 <!-- ================= 내 출장 / 보고서 ================= -->
 <section id="tab-trips" class="hidden">
-  <div class="card" id="gwList">
-    <div class="inline" style="justify-content:space-between"><div><h2 style="margin:0">그룹웨어에 올린 품의</h2>
-      <p class="sub" style="margin:2px 0 0">품의서입력(복수)에 저장된 품의예요. 결재가 진행 중이거나 끝난 건은 삭제할 수 없어요.</p></div>
-      <div class="inline" style="gap:8px"><button class="btn" id="btnGwList">불러오기</button><button class="btn danger" id="btnGwDel" disabled>선택 삭제</button></div></div>
-    <div id="gwRows" style="margin-top:10px"></div>
+  <div class="card list" id="tripList">
+    <div class="inline" style="justify-content:space-between;align-items:flex-start"><div><h2 style="margin:0">신청한 출장</h2>
+      <p class="sub" style="margin:2px 0 0">이 PC에서 신청한 기록과 그룹웨어 품의 상태예요. 결재 전(상신대기 등)이면 [삭제]로 그룹웨어 품의까지 지울 수 있어요.</p></div>
+      <button class="btn" id="btnGwList">그룹웨어 상태 확인</button></div>
+    <div id="trips" style="margin-top:8px"></div>
+    <div id="gwOrphans" class="hidden" style="margin-top:18px">
+      <div class="inline" style="justify-content:space-between"><div><b>앱 기록에 없는 품의</b><p class="sub" style="margin:2px 0 0">그룹웨어에만 있는 품의예요 (예: 중간에 멈춘 입력).</p></div>
+        <button class="btn danger" id="btnGwDel" disabled>선택 삭제</button></div>
+      <div id="gwRows" style="margin-top:8px"></div>
+    </div>
   </div>
-  <div class="card list" id="tripList"><h2>신청한 출장</h2><p class="sub">이 PC에서 신청한 기록이에요. [보고서 작성]을 누르면 신청 내용이 미리 채워집니다.</p><div id="trips"></div></div>
 
   <div id="reportView" class="hidden">
   <div class="card quick">
@@ -323,9 +328,9 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
 </main>
 
 <div id="jobPanel">
-  <header><b id="jobTitle">작업</b><span class="inline"><button class="btn small" id="jobCancel">취소</button><button class="btn small" id="jobClose">닫기</button></span></header>
+  <header><b id="jobTitle">작업</b><span class="inline"><button class="btn small" id="jobShow" title="숨겨진 그룹웨어 창을 띄워서 직접 확인·수정">그룹웨어 창 열기</button><button class="btn small" id="jobCancel">취소</button><button class="btn small" id="jobClose">닫기</button></span></header>
   <pre id="jobLog"></pre>
-  <div id="jobAsk"><p id="jobQ"></p>
+  <div id="jobAsk"><p id="jobQ"></p><p class="sub" style="margin:-4px 0 8px">그룹웨어는 뒤에서 진행 중이에요. 직접 손봐야 하면 위 [그룹웨어 창 열기]를 누르세요.</p>
     <div class="inline"><input id="jobInput" inputmode="numeric" class="hidden" placeholder="숫자 입력">
       <button class="btn" id="jobNo">아니오</button><button class="btn primary" id="jobYes">계속</button></div></div>
 </div>

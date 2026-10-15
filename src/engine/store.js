@@ -52,6 +52,7 @@ class Store {
   }
   tripDir(id) { const d = path.join(this.tripsDir, id); fs.mkdirSync(d, { recursive: true }); return d; }
   save(id, rec) { fs.writeFileSync(path.join(this.tripDir(id), 'trip.json'), JSON.stringify(rec, null, 2)); return rec; }
+  remove(id) { if (!id || /[\/\\]/.test(String(id)) || String(id).includes('..')) throw new Error('잘못된 출장 ID'); fs.rmSync(path.join(this.tripsDir, id), { recursive: true, force: true }); }
   load(id) { return JSON.parse(fs.readFileSync(path.join(this.tripsDir, id, 'trip.json'), 'utf8')); }
   /** 자주 가는 곳: 기록에서 많이 간 순 + 기본 목록 */
   places() {
@@ -92,7 +93,7 @@ class Store {
     return fs.readdirSync(this.tripsDir).sort().reverse().flatMap(id => {
       try {
         const r = this.load(id);
-        return [{ id, reason: r.apply.reason, start: r.apply.start, end: r.apply.end, status: r.status || '', report: r.reportStatus || '' }];
+        return [{ id, reason: r.apply.reason, start: r.apply.start, end: r.apply.end, status: r.status || '', report: r.reportStatus || '', gwApply: r.gwApply || null, gwReport: r.gwReport || null }];
       } catch (e) { return []; }
     });
   }

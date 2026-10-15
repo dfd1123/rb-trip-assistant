@@ -30,8 +30,9 @@ app.whenReady().then(async () => {
     let gw;
     const gwWindow = () => {
       if (gw && !gw.isDestroyed()) return gw;
-      gw = new BrowserWindow({ width: 1400, height: 950, show: true, webPreferences: { partition: 'e2e-' + Date.now() } });
-      gw.webContents.setWindowOpenHandler(() => ({ action: 'allow' }));
+      // 앱처럼 숨긴 창(백그라운드)에서 진행
+      gw = new BrowserWindow({ width: 1400, height: 950, show: !!process.env.E2E_SHOW, webPreferences: { partition: 'e2e-' + Date.now(), backgroundThrottling: false } });
+      gw.webContents.setWindowOpenHandler(() => ({ action: 'allow', overrideBrowserWindowOptions: { show: false, webPreferences: { backgroundThrottling: false } } }));
       return gw;
     };
     const env = { cfg: store.config(), store, ui, log: m => { ui.info(m); console.log('  ·', m); }, gwWindow, makeNaverWindow: () => { throw new Error('no naver'); }, creds: () => ({ id: 'tester', pw: 'pw1234' }) };
@@ -109,6 +110,16 @@ app.whenReady().then(async () => {
     assert.equal(res.deleted, mine.length); assert.equal(res.skipped, 1);
     assert.deepEqual(res.rows.map(r => r.seq), ['44']);
     console.log('E2E 품의 삭제 OK');
+
+    // 출장 기록 삭제: 연결된 품의(신청)까지 삭제. 새로 신청 하나 더 만든 뒤 지운다
+    delete process.env.MOCK_FORM;   // 다시 신청서 양식
+    const { id: id2 } = await runner.runApply(env, { ...data, reason: '삭제 테스트 출장' });
+    const link = store.load(id2).gwApply;
+    assert.ok(link && link.seq, '신청 품의 순번이 기록돼야 함');
+    const dr = await runner.runDeleteTrip(env, id2);
+    assert.ok(!dr.rows.some(r => r.key === link.key), '연결된 품의가 지워져야 함');
+    assert.ok(!store.list().some(t => t.id === id2), '출장 기록이 지워져야 함');
+    console.log('E2E 출장 삭제 OK');
   } catch (e) {
     console.error('E2E FAIL:', e.stack || e.message);
     code = 1;

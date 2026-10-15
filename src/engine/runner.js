@@ -51,6 +51,7 @@ async function runApply(env, data, { save = true } = {}) {
   const gw = new Amaranth({ win: env.gwWindow(), baseUrl: cfg.baseUrl, ui, log, debugDir: env.debugDir, creds: env.creds });
   await gw.ensureLogin();
   await gw.enterBudget(cfg.budgetDept, expenses);
+  if (gw.lastBudget) { rec.gwApply = gw.lastBudget; store.save(id, rec); }   // 그룹웨어 품의와 연결 (목록·삭제용)
   const popup = await gw.openApproval(R.APPLY_FORM, title);
   await gw.fillAndKeep(popup, { title, probe: '출장일', payload: applyPayload(a), save });
   rec.status = save ? '보관됨' : '입력됨(미보관)';
@@ -84,6 +85,7 @@ async function runReport(env, data, { save = true } = {}) {
   const gw = new Amaranth({ win: env.gwWindow(), baseUrl: cfg.baseUrl, ui, log, debugDir: env.debugDir, creds: env.creds });
   await gw.ensureLogin();
   await gw.enterBudget(cfg.budgetDept, rep.expenses);
+  if (rep.trip_id && gw.lastBudget) { try { const rec = store.load(rep.trip_id); rec.gwReport = gw.lastBudget; store.save(rep.trip_id, rec); } catch (e) { /* 기록 없음 */ } }
   const popup = await gw.openApproval(R.REPORT_FORM, title);
   await gw.fillAndKeep(popup, { title, probe: '출장일시', payload: reportPayload(rep), attachments: rep.attachments, save });
   if (rep.trip_id) {
@@ -116,4 +118,25 @@ async function runDeleteBudget(env, keys) {
   return { ...r, rows: r.rows || await gw.listBudgetRows() };
 }
 
-module.exports = { planApply, runFare, runApply, reportDraft, runReport, runLogin, runListBudget, runDeleteBudget };
+/** 출장 기록 삭제. 연결된 그룹웨어 품의(신청·보고)도 결재 전이면 함께 삭제 */
+async function runDeleteTrip(env, id) {
+  const { store, log } = env;
+  const rec = store.load(id);
+  const keys = [rec.gwApply, rec.gwReport].filter(Boolean).map(b => b.key);
+  let rows = null;
+  if (keys.length) {
+    const gw = new Amaranth({ win: env.gwWindow(), baseUrl: env.cfg.baseUrl, ui: env.ui, log, debugDir: env.debugDir, creds: env.creds });
+    await gw.ensureLogin();
+    const now = await gw.listBudgetRows();
+    const linked = now.filter(r => keys.includes(r.key));
+    const locked = linked.filter(r => r.locked);
+    if (locked.length) throw new Error(`결재가 진행 중인 품의가 있어 삭제하지 않았어요 (순번 ${locked.map(r => r.seq).join(', ')}: ${locked.map(r => r.status).join(', ')}).`);
+    if (linked.length) rows = (await gw.deleteBudgetRows(linked.map(r => r.key))).rows;
+    else { log('그룹웨어에서 연결된 품의를 찾지 못했어요 (이미 지워졌을 수 있음).'); rows = now; }
+  }
+  store.remove(id);
+  log(`출장 기록 삭제: ${rec.apply.reason}`);
+  return { rows };
+}
+
+module.exports = { planApply, runFare, runApply, reportDraft, runReport, runLogin, runListBudget, runDeleteBudget, runDeleteTrip };

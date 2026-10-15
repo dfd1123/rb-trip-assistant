@@ -276,12 +276,17 @@ class Amaranth {
     if (amountOf(vals['총금액']) !== total)
       await ui.assist(`품의 총금액이 ${amountOf(vals['총금액']).toLocaleString('ko-KR')}원입니다(예상 ${total.toLocaleString('ko-KR')}원). 확인 후 품의 행만 체크된 상태로 두세요.`);
     this.log(`품의 입력 완료: 총 ${total.toLocaleString('ko-KR')}원 (순번 ${vals['순번'] || '?'})`);
+    this.lastBudget = vals['순번'] ? { key: [vals['품의연월'], vals['품의일'], vals['순번']].join('|'), ym: vals['품의연월'], day: vals['품의일'], seq: vals['순번'] } : null;
     return row;
   }
 
   // ---------- 올린 품의 목록·삭제 ----------
   /** 결재가 진행 중이거나 끝난 품의는 삭제하지 않는다 */
-  static locked(status) { return /(진행|완료|승인|결재중|종결|상신|결재대기|합의)/.test(String(status || '')); }
+  static locked(status) {
+    const t = String(status || '').replace(/\s/g, '');
+    if (!t || /(상신대기|미상신|작성|보관|임시|반려|회수|취소)/.test(t)) return false;   // 아직 상신 전이거나 돌아온 건
+    return /(진행|완료|승인|결재중|종결|상신|합의|결재대기)/.test(t);
+  }
 
   async openBudgetList() {
     const p = this.page;
@@ -322,6 +327,8 @@ class Amaranth {
     // 상단 도구 모음의 삭제(휴지통) 버튼
     const btn = await p.eval(() => {
       const g = grid('품의구분'); const gt = g ? g.getBoundingClientRect().top : 9999;
+      const exact = all('button, [role=button]').filter(b => vis(b) && !b.disabled && norm(b.textContent) === '삭제');   // 하단 바 [삭제]
+      if (exact.length) return center(exact.pop());
       const c = all('button, [role=button]').filter(b => vis(b) && b.getBoundingClientRect().bottom <= gt + 5).filter(b => {
         const t = norm(b.textContent) + (b.getAttribute('title') || '') + (b.getAttribute('aria-label') || '') + (b.id || '') + (b.className || '');
         const img = b.querySelector('img'); const src = img ? img.getAttribute('src') || '' : '';

@@ -178,3 +178,9 @@ test('월 없는 날짜·조사 정리 (16일날, 16~18일, 정비를)', () => {
   d = q('판교 정비 1박2일 내일 9시 출발 18시 복귀');
   assert.deepEqual([d.dates.start, d.dates.end, d.reason], ['2026-10-16', '2026-10-17', '정비']);
 });
+
+test('품의 삭제 가능 여부 (결재상태)', () => {
+  const { Amaranth } = require('../src/engine/gw');
+  for (const t of ['상신대기', '작성', '보관', '반려', '']) assert.equal(Amaranth.locked(t), false, t);
+  for (const t of ['결재중', '진행중', '결재완료', '승인', '종결']) assert.equal(Amaranth.locked(t), true, t);
+});

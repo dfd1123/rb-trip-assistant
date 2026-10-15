@@ -19,7 +19,7 @@ const list = s => String(s||'').split(',').map(x=>x.trim()).filter(Boolean);
 $$('nav button').forEach(b => b.onclick = () => {
   $$('nav button').forEach(x => x.classList.toggle('on', x===b));
   ['apply','trips','settings'].forEach(t => $('#tab-'+t).classList.toggle('hidden', t!==b.dataset.tab));
-  if(b.dataset.tab==='trips') loadTrips();
+  if(b.dataset.tab==='trips'){ loadTrips(); autoGwCheck(); }
 });
 
 /* ---------- 경비 표 ---------- */
@@ -182,49 +182,81 @@ $('#btnApply').onclick = async () => {
 };
 
 /* ---------- 내 출장 / 보고서 ---------- */
+let gwMap = null;            // 그룹웨어 품의 상태 (key → 행). [그룹웨어 상태 확인] 후 채워짐
+let gwAll = [];
+const gwText = (label, link) => {
+  if(!link) return '';
+  const r = gwMap && gwMap[link.key];
+  const st = !gwMap ? '' : r ? ` · ${r.status || '-'}${r.locked ? '' : ''}` : ' · 그룹웨어에 없음';
+  return `<span class="gwtag">${label} 품의 <b>순번 ${link.seq}</b>${st}</span>`;
+};
 async function loadTrips(){
   const {trips} = await rpc('/api/trips');
   $('#trips').innerHTML = trips.length ? '' : '<p class="sub">아직 신청 기록이 없어요.</p>';
   trips.forEach(t => {
     const el = document.createElement('div'); el.className = 'item';
+    const links = [t.gwApply, t.gwReport].filter(Boolean);
+    const locked = gwMap && links.some(l => gwMap[l.key] && gwMap[l.key].locked);
     el.innerHTML = `<div><b></b><span class="pill ${t.status==='보관됨'?'ok':''}">신청 ${t.status||'-'}</span><span class="pill ${t.report==='보관됨'?'ok':''}">보고 ${t.report||'-'}</span>
-      <div class="sub" style="margin:2px 0 0">${t.start} ~ ${t.end}</div></div><div class="inline"><button class="btn again">다시 신청</button><button class="btn primary rep">보고서 작성</button></div>`;
+      <div class="sub" style="margin:2px 0 0">${t.start} ~ ${t.end}</div><div style="margin-top:2px">${gwText('신청', t.gwApply)}${gwText('보고', t.gwReport)}</div></div>
+      <div class="inline"><button class="btn small danger del">삭제</button><button class="btn again">다시 신청</button><button class="btn primary rep">보고서 작성</button></div>`;
     el.querySelector('b').textContent = t.reason;
     el.querySelector('.rep').onclick = () => openReport(t.id);
     el.querySelector('.again').onclick = () => repeatTrip(t.id);
+    const del = el.querySelector('.del');
+    if(locked){ del.disabled = true; del.title = '결재가 진행 중이거나 끝난 품의가 있어 삭제할 수 없어요'; }
+    del.onclick = () => deleteTrip(t, links);
     $('#trips').appendChild(el);
   });
+  renderOrphans(trips);
 }
-/* ---------- 그룹웨어에 올린 품의 (목록·삭제) ---------- */
-let gwRows = [];
-function renderGwRows(rows){
-  gwRows = rows || [];
-  const box = $('#gwRows');
-  if(!gwRows.length){ box.innerHTML = '<p class="sub">저장된 품의가 없어요.</p>'; $('#btnGwDel').disabled = true; return; }
-  box.innerHTML = '<table class="gw"><thead><tr><th style="width:28px"><input type="checkbox" id="gwAll" style="width:auto"></th><th>품의일</th><th>순번</th><th>적요</th><th class="num">총금액</th><th>결재상태</th></tr></thead><tbody></tbody></table>';
+function deleteTrip(t, links){
+  const msg = links.length
+    ? `'${t.reason}' 출장을 삭제할까요?\n\n그룹웨어 품의(${links.map(l => '순번 ' + l.seq).join(', ')})도 함께 삭제돼요. 결재가 진행 중이면 삭제하지 않아요. 되돌릴 수 없어요.`
+    : `'${t.reason}' 출장 기록을 이 PC에서 지울까요? (그룹웨어와 연결된 품의 기록은 없어요)`;
+  if(!confirm(msg)) return;
+  if(!links.length) return rpc('/api/trip/forget', {id: t.id}).then(loadTrips);
+  runJob('출장 삭제', '/api/job/trip-delete', {id: t.id}, r => { if(r.rows) setGw(r.rows); loadTrips(); });
+}
+function setGw(rows){ gwAll = rows || []; gwMap = Object.fromEntries(gwAll.map(r => [r.key, r])); }
+function renderOrphans(trips){
+  if(!gwMap){ $('#gwOrphans').classList.add('hidden'); return; }
+  const linked = new Set(trips.flatMap(t => [t.gwApply, t.gwReport].filter(Boolean).map(l => l.key)));
+  const rows = gwAll.filter(r => !linked.has(r.key));
+  $('#gwOrphans').classList.toggle('hidden', !rows.length);
+  const box = $('#gwRows'); gwRows = rows;
+  box.innerHTML = '<table class="gw"><thead><tr><th style="width:28px"><input type="checkbox" id="gwAllCb" style="width:auto"></th><th>품의일</th><th>순번</th><th>적요</th><th class="num">총금액</th><th>결재상태</th></tr></thead><tbody></tbody></table>';
   const tb = box.querySelector('tbody');
-  gwRows.forEach(r => {
+  rows.forEach(r => {
     const tr = document.createElement('tr'); if(r.locked) tr.className = 'locked';
     tr.innerHTML = '<td><input type="checkbox" style="width:auto"></td><td></td><td></td><td></td><td class="num"></td><td></td>';
     const cb = tr.querySelector('input'); cb.dataset.key = r.key; cb.disabled = r.locked; cb.title = r.locked ? '결재가 진행 중이거나 끝나서 삭제할 수 없어요' : '';
     const td = tr.querySelectorAll('td');
-    td[1].textContent = `${r.ym} ${r.day}일`; td[2].textContent = r.seq; td[3].textContent = r.memo || r.kind; td[4].textContent = r.total; td[5].textContent = r.status || '-';
-    if(r.locked) td[5].textContent += ' (삭제 불가)';
+    td[1].textContent = `${r.ym} ${r.day}일`; td[2].textContent = r.seq; td[3].textContent = r.memo || r.kind; td[4].textContent = r.total; td[5].textContent = (r.status || '-') + (r.locked ? ' (삭제 불가)' : '');
     tb.appendChild(tr);
   });
   const sync = () => { $('#btnGwDel').disabled = !$$('#gwRows tbody input:checked').length; };
   tb.querySelectorAll('input').forEach(c => c.onchange = sync);
-  $('#gwAll').onchange = e => { tb.querySelectorAll('input:not(:disabled)').forEach(c => c.checked = e.target.checked); sync(); };
+  $('#gwAllCb').onchange = e => { tb.querySelectorAll('input:not(:disabled)').forEach(c => c.checked = e.target.checked); sync(); };
   sync();
 }
-$('#btnGwList').onclick = () => runJob('그룹웨어 품의 불러오기', '/api/job/gw-list', {}, r => renderGwRows(r.rows));
+let gwRows = [];
+let gwAutoAt = 0;
+async function autoGwCheck(){   // 탭을 열 때 그룹웨어 상태를 조용히 확인 (10분에 한 번, 다른 작업 중이면 건너뜀)
+  if(Date.now() - gwAutoAt < 10 * 60 * 1000 || !$('#gwPill').classList.contains('ok')) return;
+  const cur = await rpc('/api/job').catch(() => null);
+  if(cur && (cur.state === 'running' || cur.state === 'waiting')) return;
+  gwAutoAt = Date.now();
+  runJob('그룹웨어 상태 확인', '/api/job/gw-list', {}, r => { setGw(r.rows); loadTrips(); }, {quiet: true});
+}
+$('#btnGwList').onclick = () => runJob('그룹웨어 상태 확인', '/api/job/gw-list', {}, r => { setGw(r.rows); loadTrips(); }, {quiet: true});
 $('#btnGwDel').onclick = () => {
   const keys = $$('#gwRows tbody input:checked').map(c => c.dataset.key);
   const pick = gwRows.filter(r => keys.includes(r.key));
   if(!pick.length) return;
   const lines = pick.map(r => `· ${r.ym} ${r.day}일 순번 ${r.seq}  ${r.memo || ''}  ${r.total}`).join('\n');
   if(!confirm(`그룹웨어에서 품의 ${pick.length}건을 삭제할까요? 되돌릴 수 없어요.\n\n${lines}`)) return;
-  runJob(`품의 ${pick.length}건 삭제`, '/api/job/gw-delete', { keys }, r => renderGwRows(r.rows));
+  runJob(`품의 ${pick.length}건 삭제`, '/api/job/gw-delete', { keys }, r => { setGw(r.rows); loadTrips(); });
 };
 
 async function repeatTrip(id){
@@ -333,20 +365,21 @@ $('#btnRateSave').onclick = async () => {
 
 /* ---------- 작업 패널 ---------- */
 let jobTimer = null, jobSince = 0;
-async function runJob(title, path, body, onDone){
+async function runJob(title, path, body, onDone, opt = {}){
   try { await rpc(path, {...body, title}); } catch(e){ alertErr(e.message); return; }
-  watchJob(title, onDone);
+  watchJob(title, onDone, opt);
 }
 /** 진행 중인 작업 화면에 붙기 (새 작업 시작, 또는 새로고침 후 이어보기) */
-function watchJob(title, onDone){
+function watchJob(title, onDone, {quiet = false} = {}){
   $('#jobTitle').textContent = title; $('#jobLog').textContent = ''; jobSince = 0;
-  $('#jobPanel').style.display = 'block'; $('#jobCancel').classList.remove('hidden'); $$('main .btn.primary').forEach(b => b.disabled = true);
+  if(!quiet) $('#jobPanel').style.display = 'block';   // quiet: 물어볼 게 있거나 실패할 때만 창을 띄움 $('#jobCancel').classList.remove('hidden'); $$('main .btn.primary').forEach(b => b.disabled = true);
   clearInterval(jobTimer);
   jobTimer = setInterval(async () => {
     const s = await rpc('/api/job', {since: jobSince});
     if(s.logs && s.logs.length){ $('#jobLog').textContent += s.logs.join('\n') + '\n'; $('#jobLog').scrollTop = 1e9; jobSince = s.next; }
     const q = s.question;
     $('#jobAsk').style.display = q ? 'block' : 'none';
+    if(q || s.state==='error') $('#jobPanel').style.display = 'block';
     if(q){
       $('#jobQ').textContent = q.text;
       $('#jobInput').classList.toggle('hidden', q.type!=='int');
@@ -369,6 +402,7 @@ $('#jobYes').onclick = () => {
 $('#jobNo').onclick = () => answer(false);
 $('#jobClose').onclick = () => $('#jobPanel').style.display = 'none';
 $('#jobCancel').onclick = () => rpc('/api/job/cancel');
+$('#jobShow').onclick = () => rpc('/api/gw/show');
 function alertErr(m){ $('#jobPanel').style.display='block'; $('#jobTitle').textContent='오류'; $('#jobLog').textContent = m; $('#jobAsk').style.display='none'; }
 
 /* ---------- 그룹웨어 로그인 ---------- */
