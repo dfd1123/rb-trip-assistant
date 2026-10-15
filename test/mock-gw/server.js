@@ -52,7 +52,8 @@ function render(){
   $('#app').innerHTML=gridHtml('top',TOP,S.top)+gridHtml('bot',BOT,S.bot)+(S.checked>=0?'<div class="bar"><button id="btnAppr">결재상신</button></div>':'');
   if($('#btnAppr')) $('#btnAppr').onclick=approvalDialog;
 }
-const total=()=>S.bot.reduce((s,r)=>s+Number(String(r.품의금액||'0').replace(/,/g,'')),0);
+// 실제처럼 첨부파일 칸에서 Enter 로 확정된 행만 합계에 반영
+const total=()=>S.bot.filter(r=>r.done).reduce((s,r)=>s+Number(String(r.품의금액||'0').replace(/,/g,'')),0);
 function dialog(title, bodyHtml, onOk){
   const d=document.createElement('div'); d.className='dlg'; d.innerHTML='<h3>'+title+'</h3>'+bodyHtml+'<div><button class="cancel">취소</button><button class="ok">확인</button></div>';
   document.body.appendChild(d); d.querySelector('.cancel').onclick=()=>d.remove(); d.querySelector('.ok').onclick=()=>{ if(onOk(d)!==false) d.remove(); }; return d;
@@ -99,7 +100,7 @@ document.addEventListener('keydown',e=>{
   if(e.key!=='Enter'||!S||!S.focus) return;
   const f=S.focus;
   if(f.g==='top'&&f.c==='품의구분'&&S.top[f.r].품의구분){ if(++S.enter===3){ S.top[f.r].순번='45'; S.top.push({품의연월:'2026-10',품의일:'14'}); S.bot.push({}); S.focus={g:'bot',r:0,c:'부서'}; render(); } }
-  else if(f.g==='bot'&&f.c==='첨부파일'){ S.bot.push({}); S.focus={g:'bot',r:f.r+1,c:'부서'}; render(); }
+  else if(f.g==='bot'&&f.c==='첨부파일'){ S.bot[f.r].done=true; S.bot.push({}); S.focus={g:'bot',r:f.r+1,c:'부서'}; render(); }
 });
 function approvalDialog(){
   let form='품의서입력(복수)지출';

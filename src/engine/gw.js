@@ -259,16 +259,18 @@ class Amaranth {
         await p.selectAll();
         await p.type(ex.memo);
         await p.key('Enter');                       // → 첨부파일
-        if (i < expenses.length - 1) await p.key('Enter');   // → 다음 예산 라인
-        await sleep(700);
+        await sleep(300);
+        await p.key('Enter');                       // 첨부파일에서 Enter 해야 행이 확정되고 금액이 반영됨 (다음 빈 행 생김)
+        await sleep(900);
       } catch (e) { await ui.assist(`금액/적요 입력 실패(${e.message}). ${i + 1}번째 줄에 ${ex.amount.toLocaleString('ko-KR')}원 / '${ex.memo}' 를 입력해 주세요.`); }
       const got = amountOf(((await this.rowVals('예산과목', i)) || {})['품의금액']);
       if (got !== ex.amount) await ui.assist(`${i + 1}번째 줄 금액이 ${got.toLocaleString('ko-KR')}원으로 보입니다. ${ex.amount.toLocaleString('ko-KR')}원으로 고쳐 주세요.`);
     }
 
     // 품의 행 체크 → 총금액 확인
+    await sleep(800);
     await p.clickWhere(r => all('td.rg-checkbar-cell', grid('품의구분'))[r], row);
-    await sleep(1000);
+    await sleep(1500);
     const total = expenses.reduce((s, e) => s + e.amount, 0);
     const vals = await this.rowVals('품의구분', row);
     if (amountOf(vals['총금액']) !== total)

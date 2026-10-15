@@ -164,3 +164,17 @@ test('시각 말 해석', () => {
   assert.equal(a.start_time, '19:00');
   assert.throws(() => R.parseApply({ ...q.data, dates: { start: '2026-10-20', end: '2026-10-20', start_time: '19:00', end_time: '09:00' }, transport: { mode: 'car', total: 1 }, purpose: 'p' }), /복귀 시각/);
 });
+
+test('월 없는 날짜·조사 정리 (16일날, 16~18일, 정비를)', () => {
+  const Qk = require('../src/engine/quick');
+  const ctx = { today: new Date('2026-10-15T10:00'), places: [{ name: '레인보우로보틱스 판교 AI 사무소', aliases: ['판교'] }], rates: { lodgingPerNight: 70000, breakfast: 8000, lunch: 15000, dinner: 15000 } };
+  const q = m => Qk.quickApply(m, ctx).data;
+  let d = q('16일날 판교 RBY1 정비를 하러 감 9시 출발 18시 복귀');
+  assert.deepEqual([d.dates.start, d.dates.end, d.reason], ['2026-10-16', '2026-10-16', 'RBY1 정비']);
+  d = q('16~18일 판교 RBY1 정비 9시 출발 18시 복귀');
+  assert.deepEqual([d.dates.start, d.dates.end], ['2026-10-16', '2026-10-18']);
+  d = q('3일 판교 미팅 9시 출발 18시 복귀');
+  assert.equal(d.dates.start, '2026-11-03');
+  d = q('판교 정비 1박2일 내일 9시 출발 18시 복귀');
+  assert.deepEqual([d.dates.start, d.dates.end, d.reason], ['2026-10-16', '2026-10-17', '정비']);
+});

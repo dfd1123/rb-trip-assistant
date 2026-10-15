@@ -65,6 +65,14 @@ function parseDates(text, today = new Date()) {
   else if ((m = /(오늘|내일|모레|글피)/.exec(text))) {
     start = addDays(today, { 오늘: 0, 내일: 1, 모레: 2, 글피: 3 }[m[1]]); end = start; matched.push(m[0]);
   }
+  // 월 없이 16일(날) / 16~18일 / 16일부터 18일까지 → 이번 달(지났으면 다음 달)
+  else if ((m = /(?<![\d.\/월박]\s*)(\d{1,2})\s*(?:일(?:날)?\s*(?:(?:~|-|부터)\s*(\d{1,2})\s*일(?:날)?(?:까지)?)?|(?:~|-|부터)\s*(\d{1,2})\s*일(?:날)?(?:까지)?)(?!\s*(?:간|동안))/.exec(text)) && +m[1] >= 1 && +m[1] <= 31) {
+    const e = m[2] || m[3];
+    let mon = today.getMonth() + 1;
+    if (+m[1] < today.getDate()) mon = mon === 12 ? 1 : mon + 1;
+    start = md(today, mon, +m[1]);
+    end = e ? md(today, +e < +m[1] ? (mon === 12 ? 1 : mon + 1) : mon, +e) : start; matched.push(m[0]);
+  }
   if (end && start && end < start) end = new Date(end.getFullYear() + 1, end.getMonth(), end.getDate());
 
   // N박M일 / N일간 (시작일 기준)
@@ -210,7 +218,10 @@ function cleanReason(text, removed) {
     .replace(/\s+출장\s*$/g, ' ')
     .replace(/(^|\s)(부터|까지|에서|에|로|으로)(?=\s|$)/g, ' ')
     .replace(/\s+/g, ' ').trim();
-  return s.replace(/^(에서|에|로|으로)\s+/, '').replace(/\s*(때문에|위해서|위해|건)$/, '').trim();
+  return s.replace(/^(에서|에|로|으로|날|일날)\s+/, '').replace(/(^|\s)(날|일날)(?=\s)/g, ' ')
+    .replace(/\s*(때문에|위해서|위해|건)$/, '')
+    .replace(/([가-힣A-Za-z0-9])(을|를)\s*(하러|하기|하려|)$/, '$1')     // "RBY1 정비를" → "RBY1 정비"
+    .replace(/\s+/g, ' ').trim();
 }
 const hasFinal = w => { const c = [...String(w).trim()].pop() || ''; const code = c.codePointAt(0);
   if (code >= 0xac00 && code <= 0xd7a3) return (code - 0xac00) % 28 !== 0;
