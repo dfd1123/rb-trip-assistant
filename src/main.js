@@ -141,6 +141,23 @@ async function quickReport(id, memo) {
   return { data: Q.quickReport(draft, memo), source: 'template' };
 }
 
+// ---------- dev: 파일이 바뀌면 자동 반영 ----------
+// 화면(renderer) 파일 → 창 새로고침, 엔진/메인 파일 → 앱 재시작
+function watchForDev() {
+  const fs = require('fs');
+  let timer = null;
+  const on = (dir, action) => {
+    try {
+      fs.watch(dir, { recursive: true }, () => { clearTimeout(timer); timer = setTimeout(action, 200); });
+    } catch (e) { console.warn('watch 실패:', dir, e.message); }
+  };
+  on(path.join(__dirname, 'renderer'), () => { if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.reloadIgnoringCache(); });
+  on(path.join(__dirname, 'engine'), () => { app.relaunch(); app.exit(0); });
+  for (const f of ['main.js', 'preload.js', 'updater.js'])
+    fs.watch(path.join(__dirname, f), () => { clearTimeout(timer); timer = setTimeout(() => { app.relaunch(); app.exit(0); }, 200); });
+  console.log('[dev] 파일 변경 감시 중 (renderer → 새로고침, engine/main → 재시작)');
+}
+
 // ---------- 화면 API ----------
 async function route(p, body = {}) {
   const cfg = store.config();
@@ -191,6 +208,7 @@ app.whenReady().then(() => {
   store = new Store(process.env.TRIP_ASSISTANT_DATA || app.getPath('userData'));
   createMain();
   updater.start();
+  if (!app.isPackaged) watchForDev();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createMain(); });
 });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
