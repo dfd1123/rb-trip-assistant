@@ -138,11 +138,11 @@ function showMealPlan(m){
 ['#a_start','#a_end','#a_start_time','#a_end_time'].forEach(id => $(id).addEventListener('change', () => { if(autoExp) recalcExpenses(); }));
 $('#btnRecalc').onclick = recalcExpenses;
 function markNeed(missing){
-  const map = {'날짜': ['#a_start','#a_end'], '출장지': ['#a_destination'], '사유': ['#a_reason']};
+  const map = {'날짜': ['#a_start','#a_end'], '출발 시각': ['#a_start_time'], '복귀 시각': ['#a_end_time'], '출장지': ['#a_destination'], '사유': ['#a_reason']};
   $$('.need').forEach(el => el.classList.remove('need'));
   missing.forEach(m => (map[m]||[]).forEach(id => $(id).classList.add('need')));
 }
-$$('#a_start,#a_end,#a_destination,#a_reason').forEach(el => el.addEventListener('input', () => el.classList.remove('need')));
+$$('#a_start,#a_end,#a_start_time,#a_end_time,#a_destination,#a_reason').forEach(el => ['input','change'].forEach(ev => el.addEventListener(ev, () => el.classList.remove('need'))));
 $('#btnQuick').onclick = async () => {
   const memo = $('#q_memo').value.trim();
   if(!memo){ $('#q_memo').focus(); return; }
@@ -172,6 +172,11 @@ function renderPlaces(){
 $('#btnApply').onclick = async () => {
   $('#a_err').textContent = '';
   const data = applyData();
+  const need = [];
+  if(!data.dates.start || !$('#a_end').value) need.push('날짜');
+  if(!data.dates.start_time) need.push('출발 시각');
+  if(!data.dates.end_time) need.push('복귀 시각');
+  if(need.length){ markNeed(need); $('#a_err').textContent = `${need.join(', ')}을(를) 넣어 주세요.`; return; }
   try { await rpc('/api/plan', data); } catch(e){ $('#a_err').textContent = e.message; return; }
   runJob('출장신청서 입력', '/api/job/apply', {data, save: $('#a_save').checked}, () => loadTrips());
 };

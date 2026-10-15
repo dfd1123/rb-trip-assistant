@@ -42,7 +42,7 @@ app.whenReady().then(async () => {
 
     const data = {
       reason: '판교 AI 사무소 RBY1-Muscat 연동 검증', destination: '레인보우로보틱스 판교 AI 사무소',
-      dates: { start: '2026-10-20', end: '2026-10-22' }, category: '연구과제', project: 'RBY1 과제',
+      dates: { start: '2026-10-20', end: '2026-10-22', start_time: '09:00', end_time: '18:00' }, category: '연구과제', project: 'RBY1 과제',
       transport: { mode: 'car', to: '판교', total: 74814 }, companions: ['홍길동'], companion_purpose: '셋업 지원',
       purpose: 'SDK 래핑 및 실기 검증\n두번째 줄',
       expenses: [{ item: 'domestic_lodging', amount: 160000 }, { item: 'meal', amount: 90000, memo: '판교 출장 식대' }],

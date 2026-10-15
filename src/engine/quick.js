@@ -45,15 +45,21 @@ function parseDates(text, today = new Date()) {
       if (e2) { end = at(e2[1]); if (end < start) end = addDays(end, 7); matched.push(e2[0].trim()); }
     }
   }
+  // 2026-10-20 ~ 2026-10-22 / 2026.10.20~22
+  else if ((m = /(\d{4})\s*[-./]\s*(\d{1,2})\s*[-./]\s*(\d{1,2})(?:\s*(?:~|-|부터)\s*(?:(?:\d{4})\s*[-./]\s*)?(?:(\d{1,2})\s*[-./]\s*)?(\d{1,2})(?!\s*박))?/.exec(text))) {
+    start = new Date(+m[1], +m[2] - 1, +m[3]);
+    end = m[5] ? new Date(+m[1], (m[4] ? +m[4] : +m[2]) - 1, +m[5]) : start; matched.push(m[0]);
+  }
   // 10/20~22, 10/20~10/22, 10.20-22
   else if ((m = /(\d{1,2})\s*[\/.]\s*(\d{1,2})(?:\s*(?:~|-|부터)\s*(?:(\d{1,2})\s*[\/.]\s*)?(\d{1,2})(?!\s*박))?/.exec(text))) {
     start = md(today, +m[1], +m[2]);
     end = m[4] ? md(today, m[3] ? +m[3] : +m[1], +m[4]) : start; matched.push(m[0]);
   }
   // 10월 20일~22일 / 10월 20일부터 11월 2일까지
-  else if ((m = /(\d{1,2})\s*월\s*(\d{1,2})\s*일?(?:\s*(?:~|-|부터)\s*(?:(\d{1,2})\s*월\s*)?(\d{1,2})(?!\s*박)\s*일?(?:까지)?)?/.exec(text))) {
-    start = md(today, +m[1], +m[2]);
-    end = m[4] ? md(today, m[3] ? +m[3] : +m[1], +m[4]) : start; matched.push(m[0]);
+  else if ((m = /(?:(\d{4})\s*년\s*)?(\d{1,2})\s*월\s*(\d{1,2})\s*일?(?:\s*(?:~|-|부터)\s*(?:(\d{1,2})\s*월\s*)?(\d{1,2})(?!\s*박)\s*일?(?:까지)?)?/.exec(text))) {
+    const y = m[1] ? +m[1] : null;
+    start = y ? new Date(y, +m[2] - 1, +m[3]) : md(today, +m[2], +m[3]);
+    end = m[5] ? (y ? new Date(y, (m[4] ? +m[4] : +m[2]) - 1, +m[5]) : md(today, m[4] ? +m[4] : +m[2], +m[5])) : start; matched.push(m[0]);
   }
   // 오늘/내일/모레
   else if ((m = /(오늘|내일|모레|글피)/.exec(text))) {
@@ -73,16 +79,20 @@ function parseDates(text, today = new Date()) {
 const WORD_TIME = [[/새벽/, '06:00'], [/아침\s*일찍|이른\s*아침|첫\s*차/, '06:30'], [/아침|오전\s*일찍/, '08:00'], [/점심\s*먹고|점심\s*후|점심\s*이후/, '13:00'],
   [/점심/, '11:30'], [/오전/, '10:00'], [/오후\s*늦게/, '16:00'], [/오후/, '14:00'], [/퇴근\s*(후|하고)|저녁/, '19:00'], [/밤/, '21:00']];
 function clock(seg) {
-  let m = /(\d{1,2})\s*:\s*(\d{2})/.exec(seg);
-  let h = null, mi = 0;
-  if (m) { h = +m[1]; mi = +m[2]; }
-  else if ((m = /(\d{1,2})\s*시(?:\s*(\d{1,2})\s*분|\s*(반))?/.exec(seg))) { h = +m[1]; mi = m[2] ? +m[2] : (m[3] ? 30 : 0); }
-  if (h !== null) {
-    if (/오후|저녁|밤/.test(seg) && h < 12) h += 12;
-    else if (!/오전|아침|새벽/.test(seg) && h >= 1 && h <= 6) h += 12;   // "3시 복귀" → 15시
+  // 구간에 시각이 여러 개면 출발/복귀 바로 앞의 마지막 것을 쓴다 ("오전 9시 출발 18시 복귀" → 복귀 18:00)
+  const all = [...seg.matchAll(/(오전|오후|저녁|밤|아침|새벽)?\s*(\d{1,2})\s*(?::\s*(\d{2})|시(?:\s*(\d{1,2})\s*분|\s*(반))?)/g)];
+  if (all.length) {
+    const m = all[all.length - 1];
+    let h = +m[2]; const mi = m[3] ? +m[3] : m[4] ? +m[4] : m[5] ? 30 : 0;
+    if (/오후|저녁|밤/.test(m[1] || '') && h < 12) h += 12;
+    else if (!m[1] && h >= 1 && h <= 6) h += 12;   // "3시 복귀" → 15시
     return `${pad(h)}:${pad(mi)}`;
   }
-  for (const [re, t] of WORD_TIME) if (re.test(seg)) return t;
+  let best = null;    // 단어 시각도 마지막에 나온 것
+  for (const [re, t] of WORD_TIME)
+    for (const mm of seg.matchAll(new RegExp(re.source, 'g')))
+      if (!best || mm.index > best.i || (mm.index === best.i && mm[0].length > best.n)) best = { i: mm.index, n: mm[0].length, t };
+  if (best) return best.t;
   return '';
 }
 /** "화 19시 출발 ~ 목 15시 복귀", "저녁에 출발", "오후 3시 도착" → {startTime, endTime} */
@@ -184,7 +194,8 @@ function computeExpenses({ start, end, startTime = '', endTime = '', reason, rat
 // ---------- 문장 템플릿 (AI 없을 때) ----------
 function cleanReason(text, removed) {
   let s = text.replace(COMPANION_RE, ' ');
-  for (const r of removed) s = strip(s, r);
+  for (const r of [...removed].sort((a, b) => b.length - a.length)) s = s.replace(new RegExp(looseRe(r).source + '(에서|에|으로|로)?', 'gi'), ' ');
+  s = s.replace(/\d{4}\s*년/g, ' ');
   for (const c of CARS) s = strip(s, c);
   s = s.replace(/당일/g, ' ')
     .replace(/(?:오전|오후|저녁|밤|아침|새벽)?\s*\d{1,2}\s*(?::\s*\d{2}|시(?:\s*\d{1,2}\s*분|\s*반)?)\s*(?:에|까지|부터)?\s*(?:출발|복귀|귀가|귀사|도착)?/g, ' ')
@@ -194,6 +205,8 @@ function cleanReason(text, removed) {
     .replace(/(자차|자가용|내\s*차로?|차로|운전해서|대중\s*교통|KTX|SRT|기차|열차|고속버스|버스|지하철|법인\s*차량?|회사\s*차)\s*(로|으로|타고)?/gi, ' ')
     .replace(/[,.。]/g, ' ')
     .replace(/\s*(출장|으로|로)?\s*(갑니다|가요|감|예정|가야\s*함|가야해|다녀옴|다녀와요)\s*$/g, ' ')
+    .replace(/(하러|하기\s*위해|하려고|하기\s*위한)\s*$/g, ' ')
+    .replace(/([A-Za-z0-9])(에|에서|의)(?=\s)/g, '$1')
     .replace(/\s+출장\s*$/g, ' ')
     .replace(/(^|\s)(부터|까지|에서|에|로|으로)(?=\s|$)/g, ' ')
     .replace(/\s+/g, ' ').trim();
@@ -227,7 +240,7 @@ function quickApply(memo, ctx = {}) {
   let destination = hit ? hit.place.name : '';
   let to = hit ? (hit.place.to || hit.place.name) : '';
   const removed = [...dates.matched];
-  if (hit) removed.push(hit.key);
+  if (hit) removed.push(hit.key, hit.place.name, ...(hit.place.aliases || []), ...hit.place.name.split(/\s+/).filter(w => w.length >= 2));
   if (!destination) {
     const v = VENUES.find(([k]) => looseRe(k).test(text));
     if (v) { destination = v[1]; to = v[2]; removed.push(v[0]); }
@@ -243,6 +256,8 @@ function quickApply(memo, ctx = {}) {
   const missing = [];
   if (!reason) { missing.push('사유'); reason = destination ? `${(hit && hit.key) || destination} 업무 협의` : ''; }
   if (!dates.start) missing.push('날짜');
+  if (!times.startTime) missing.push('출발 시각');
+  if (!times.endTime) missing.push('복귀 시각');
   if (!destination) missing.push('출장지');
   const m = mode.mode || (ctx.defaults && ctx.defaults.mode) || 'car';
   const data = {

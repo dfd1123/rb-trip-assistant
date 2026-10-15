@@ -31,7 +31,7 @@ test('네이버 지도 금액 읽기 / 왕복', () => {
 });
 
 test('신청서 검증과 기본 적요', () => {
-  const a = R.parseApply({ reason: '판교 출장', destination: '판교', dates: { start: '2026-10-20', end: '2026-10-22' },
+  const a = R.parseApply({ reason: '판교 출장', destination: '판교', dates: { start: '2026-10-20', end: '2026-10-22', start_time: '09:00', end_time: '18:00' },
     transport: { mode: 'car', to: '판교' }, purpose: '목적', expenses: [{ item: 'meal', amount: '90,000원' }] });
   assert.equal(a.period, '2026.10.20 - 2026.10.22');
   assert.equal(a.expenses[0].amount, 90000);
@@ -39,8 +39,9 @@ test('신청서 검증과 기본 적요', () => {
   assert.equal(a.expenses[0].code, '8120004');
   assert.deepEqual(a.transport.check, ['자차']);
   assert.throws(() => R.parseApply({ ...a, dates: { start: '2026-10-22', end: '2026-10-20' } }), R.InputError);
-  assert.throws(() => R.parseApply({ reason: 'x', destination: 'y', dates: { start: '2026-10-20', end: '2026-10-20' }, transport: { mode: 'car' }, purpose: 'p' }), /도착지/);
-  assert.throws(() => R.parseApply({ reason: 'x', destination: 'y', dates: { start: '2026-10-20', end: '2026-10-20' }, transport: { mode: 'car', to: 'z' }, purpose: 'p',
+  assert.throws(() => R.parseApply({ reason: 'x', destination: 'y', dates: { start: '2026-10-20', end: '2026-10-20', start_time: '09:00', end_time: '18:00' }, transport: { mode: 'car' }, purpose: 'p' }), /도착지/);
+  assert.throws(() => R.parseApply({ reason: 'x', destination: 'y', dates: { start: '2026-10-20', end: '2026-10-20' }, transport: { mode: 'car', to: 'z' }, purpose: 'p' }), /시각은 필수/);
+  assert.throws(() => R.parseApply({ reason: 'x', destination: 'y', dates: { start: '2026-10-20', end: '2026-10-20', start_time: '09:00', end_time: '18:00' }, transport: { mode: 'car', to: 'z' }, purpose: 'p',
     expenses: [{ item: 'domestic_transport', amount: 1 }] }), /국내교통비/);
 });
 
@@ -60,7 +61,7 @@ test('보고서: 정부과제는 과제명 필수', () => {
 const Q = require('../src/engine/quick');
 const AI = require('../src/engine/ai');
 const TODAY = new Date(2026, 9, 15); // 2026-10-15 목
-const PLACES = [{ name: '레인보우로보틱스 판교 AI 사무소', to: '레인보우로보틱스 판교 AI 사무소', aliases: ['판교', '판교 AI 사무소'] }];
+const PLACES = require('../src/engine/store').PRESET_PLACES;
 
 test('날짜 말 해석', () => {
   const d = s => { const r = Q.parseDates(s, TODAY); return [r.start, r.end]; };
@@ -86,7 +87,7 @@ test('한 줄 메모 → 신청서', () => {
   assert.equal(data.destination, '레인보우로보틱스 판교 AI 사무소');
   assert.deepEqual(data.companions, ['홍길동']);
   assert.equal(data.transport.mode, 'car');
-  assert.deepEqual(missing, []);
+  assert.deepEqual(missing, ['출발 시각', '복귀 시각']);
   assert.equal(data.purpose, '레인보우로보틱스 판교 AI 사무소에서 RBY1 Muscat 연동 검증을 수행하기 위해 홍길동과 함께 출장을 신청합니다.');
   const r2 = Q.quickApply('11월 3일부터 2박3일 KINTEX 로봇 전시회 참관 법인차 스타렉스', { today: TODAY, places: PLACES });
   assert.equal(r2.data.destination, '킨텍스');
@@ -94,7 +95,12 @@ test('한 줄 메모 → 신청서', () => {
   assert.equal(r2.data.transport.corporate_car, '스타렉스');
   assert.ok(Q.quickApply('판교 미팅', { today: TODAY, places: PLACES }).missing.includes('날짜'));
   // 신청서 검증까지 통과해야 함
-  assert.equal(R.parseApply({ ...data, transport: { ...data.transport, total: 74814 } }).expenses.length, 2);
+  assert.equal(R.parseApply({ ...data, dates: { ...data.dates, start_time: '09:00', end_time: '18:00' }, transport: { ...data.transport, total: 74814 } }).expenses.length, 2);
+  // 연도·장소·'하러 감'이 섞인 메모
+  const r3 = Q.quickApply('2026년 10월 15일부터 19일까지\n판교에 레인보우로보틱스 판교 사무소에 RBY1에 Muscat 연동하러 감 오전 9시 출발 18시 복귀', { today: TODAY, places: PLACES });
+  assert.deepEqual(r3.data.dates, { start: '2026-10-15', end: '2026-10-19', start_time: '09:00', end_time: '18:00' });
+  assert.equal(r3.data.reason, 'RBY1 Muscat 연동');
+  assert.deepEqual(Q.parseTimes('아침에 출발해서 저녁에 복귀'), { startTime: '08:00', endTime: '19:00' });
 });
 
 test('AI 결과 병합: 출장지 이름은 기존 목록으로, 금액은 규칙으로', () => {

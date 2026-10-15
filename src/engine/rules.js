@@ -122,6 +122,7 @@ function parseApply(data) {
   if (end < start) throw new InputError('종료일이 시작일보다 빠릅니다.');
   const hm = (v, k) => { const t = String(v || '').trim(); if (t && !/^\d{1,2}:\d{2}$/.test(t)) throw new InputError(`${k}은 HH:MM 형식입니다: ${t}`); return t ? t.padStart(5, '0') : ''; };
   const startTime = hm(dates.start_time, '출발 시각'), endTime = hm(dates.end_time, '복귀 시각');
+  if (!startTime || !endTime) throw new InputError('출발 시각과 복귀 시각은 필수예요. 식대 계산에 쓰여요.');
   if (start === end && startTime && endTime && endTime < startTime) throw new InputError('복귀 시각이 출발 시각보다 빠릅니다.');
   const reason = String(req(data, 'reason', where)).trim();
   const expenses = parseExpenses(data.expenses, 'expenses', reason);

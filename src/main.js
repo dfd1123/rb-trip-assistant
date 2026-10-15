@@ -134,6 +134,8 @@ async function quick(memo) {
   }
   const missing = [];
   if (!data.dates.start) missing.push('날짜');
+  if (!data.dates.start_time) missing.push('출발 시각');
+  if (!data.dates.end_time) missing.push('복귀 시각');
   if (!data.destination) missing.push('출장지');
   if (source === 'template' && base.missing.includes('사유')) missing.push('사유');
   const t = data.transport;
