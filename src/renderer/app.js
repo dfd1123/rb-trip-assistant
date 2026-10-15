@@ -290,9 +290,13 @@ $('#btnRateSave').onclick = async () => {
 /* ---------- 작업 패널 ---------- */
 let jobTimer = null, jobSince = 0;
 async function runJob(title, path, body, onDone){
-  try { await rpc(path, body); } catch(e){ alertErr(e.message); return; }
+  try { await rpc(path, {...body, title}); } catch(e){ alertErr(e.message); return; }
+  watchJob(title, onDone);
+}
+/** 진행 중인 작업 화면에 붙기 (새 작업 시작, 또는 새로고침 후 이어보기) */
+function watchJob(title, onDone){
   $('#jobTitle').textContent = title; $('#jobLog').textContent = ''; jobSince = 0;
-  $('#jobPanel').style.display = 'block'; $$('main .btn.primary').forEach(b => b.disabled = true);
+  $('#jobPanel').style.display = 'block'; $('#jobCancel').classList.remove('hidden'); $$('main .btn.primary').forEach(b => b.disabled = true);
   clearInterval(jobTimer);
   jobTimer = setInterval(async () => {
     const s = await rpc('/api/job', {since: jobSince});
@@ -305,9 +309,10 @@ async function runJob(title, path, body, onDone){
       $('#jobNo').classList.toggle('hidden', q.type!=='confirm');
       $('#jobYes').textContent = q.type==='confirm' ? '예' : q.type==='int' ? '입력' : '계속';
     }
-    if(s.state==='done' || s.state==='error'){
-      clearInterval(jobTimer); $$('main .btn.primary').forEach(b => b.disabled = false);
+    if(s.state==='done' || s.state==='error' || s.state==='cancelled' || s.state==='none'){
+      clearInterval(jobTimer); $$('main .btn.primary').forEach(b => b.disabled = false); $('#jobCancel').classList.add('hidden'); $('#jobAsk').style.display='none';
       if(s.state==='error') $('#jobLog').textContent += '\n✖ ' + s.error + '\n';
+      if(s.state==='cancelled') $('#jobLog').textContent += '\n— 취소했어요.\n';
       if(s.state==='done' && onDone) onDone(s.result);
     }
   }, 700);
@@ -319,6 +324,7 @@ $('#jobYes').onclick = () => {
 };
 $('#jobNo').onclick = () => answer(false);
 $('#jobClose').onclick = () => $('#jobPanel').style.display = 'none';
+$('#jobCancel').onclick = () => rpc('/api/job/cancel');
 function alertErr(m){ $('#jobPanel').style.display='block'; $('#jobTitle').textContent='오류'; $('#jobLog').textContent = m; $('#jobAsk').style.display='none'; }
 
 /* ---------- 시작 ---------- */
@@ -339,6 +345,8 @@ function alertErr(m){ $('#jobPanel').style.display='block'; $('#jobTitle').textC
   };
   $('#updBtn').onclick = () => rpc('/api/update/install');
   setTimeout(checkUpdate, 8000); setInterval(checkUpdate, 60000);
+  const cur = await rpc('/api/job').catch(() => null);          // 새로고침 전 작업이 남아 있으면 이어서 보여주기
+  if(cur && (cur.state === 'running' || cur.state === 'waiting')) watchJob(cur.title || '진행 중인 작업', cur.kind === 'fare' ? r => setFare(r) : (cur.kind === 'apply' || cur.kind === 'report') ? () => loadTrips() : null);
   $('#q_memo').focus();
   if(!META.configured || !c.name){ $$('nav button')[2].click(); $('#s_msg').textContent = '처음이면 이름부터 저장해 주세요'; }
 })();

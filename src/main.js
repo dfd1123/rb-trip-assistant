@@ -60,26 +60,39 @@ function makeNaverWindow() {
 }
 
 // ---------- 작업 1건 (사람 확인 포함) ----------
+class Cancelled extends Error { constructor() { super('취소했어요.'); } }
 class Job {
-  constructor(kind) { this.kind = kind; this.logs = []; this.state = 'running'; this.result = null; this.error = ''; this.question = null; this._resolve = null; }
-  info(msg) { this.logs.push(...String(msg).split('\n')); }
-  _ask(type, text) { this.state = 'waiting'; this.question = { type, text }; return new Promise(r => { this._resolve = v => { this.question = null; this.state = 'running'; r(v); }; }); }
+  constructor(kind, title) { this.kind = kind; this.title = title || kind; this.logs = []; this.state = 'running'; this.result = null; this.error = ''; this.question = null; this._resolve = null; this._reject = null; this.cancelled = false; }
+  info(msg) { if (this.cancelled) throw new Cancelled(); this.logs.push(...String(msg).split('\n')); }
+  _ask(type, text) {
+    if (this.cancelled) return Promise.reject(new Cancelled());
+    this.state = 'waiting'; this.question = { type, text };
+    return new Promise((r, j) => {
+      this._resolve = v => { this.question = null; this.state = 'running'; r(v); };
+      this._reject = e => { this.question = null; j(e); };
+    });
+  }
+  cancel() {
+    this.cancelled = true;
+    if (this._reject) { const f = this._reject; this._resolve = this._reject = null; f(new Cancelled()); }
+  }
   async assist(msg) { this.info(`⚠ ${msg}`); await this._ask('assist', msg); }
   async confirm(text) { return Boolean(await this._ask('confirm', text)); }
   async askInt(text) { return Number(await this._ask('int', text)); }
   async pause(text) { await this._ask('pause', text); }
-  answer(v) { if (this._resolve) { const f = this._resolve; this._resolve = null; f(v); } }
-  snapshot(since = 0) { return { kind: this.kind, state: this.state, logs: this.logs.slice(since), next: this.logs.length, question: this.question, result: this.result, error: this.error }; }
+  answer(v) { if (this._resolve) { const f = this._resolve; this._resolve = this._reject = null; f(v); } }
+  snapshot(since = 0) { return { kind: this.kind, title: this.title, state: this.state, logs: this.logs.slice(since), next: this.logs.length, question: this.question, result: this.result, error: this.error }; }
 }
 let job = null;
 
-function startJob(kind, fn) {
-  if (job && (job.state === 'running' || job.state === 'waiting')) throw new Error('이미 진행 중인 작업이 있습니다.');
-  const j = job = new Job(kind);
+function startJob(kind, fn, title) {
+  if (job && job.state === 'waiting') job.cancel();          // 사람 입력만 기다리던 이전 작업은 취소
+  else if (job && job.state === 'running') throw new Error('이전 작업이 아직 진행 중이에요. 작업창의 [취소]를 누른 뒤 다시 시도해 주세요.');
+  const j = job = new Job(kind, title);
   const env = { cfg: store.config(), store, ui: j, log: m => j.info(m), gwWindow, makeNaverWindow };
   (async () => {
     try { j.result = await fn(env); j.state = 'done'; j.info('✔ 완료'); }
-    catch (e) { j.error = e instanceof R.InputError ? `입력 오류: ${e.message}` : e.message; j.state = 'error'; }
+    catch (e) { j.error = e instanceof R.InputError ? `입력 오류: ${e.message}` : e.message; j.state = j.cancelled ? 'cancelled' : 'error'; }
     finally { if (mainWin && !mainWin.isDestroyed()) mainWin.focus(); }
   })();
   return { ok: true };
@@ -189,10 +202,11 @@ async function route(p, body = {}) {
     case '/api/update/install': return { restarting: updater.install() };
     case '/api/copy': clipboard.writeText(String(body.text || '')); return { ok: true };
     case '/api/open': if (body.path) shell.openPath(body.path); return { ok: true };
-    case '/api/job/login': return startJob('login', env => runner.runLogin(env));
-    case '/api/job/fare': return startJob('fare', env => runner.runFare({ ...env, force: Boolean(body.force) }, body));
-    case '/api/job/apply': runner.planApply(body.data, cfg); return startJob('apply', env => runner.runApply(env, body.data, { save: body.save !== false }));
-    case '/api/job/report': R.parseReport(body.data); return startJob('report', env => runner.runReport(env, body.data, { save: body.save !== false }));
+    case '/api/job/login': return startJob('login', env => runner.runLogin(env), body.title);
+    case '/api/job/fare': return startJob('fare', env => runner.runFare({ ...env, force: Boolean(body.force) }, body), body.title);
+    case '/api/job/apply': runner.planApply(body.data, cfg); return startJob('apply', env => runner.runApply(env, body.data, { save: body.save !== false }), body.title);
+    case '/api/job/report': R.parseReport(body.data); return startJob('report', env => runner.runReport(env, body.data, { save: body.save !== false }), body.title);
+    case '/api/job/cancel': if (job) job.cancel(); return { ok: true };
     case '/api/job': return job ? job.snapshot(Number(body.since || 0)) : { state: 'none' };
     case '/api/job/answer': if (job) job.answer(body.value); return { ok: true };
     default: throw new Error(`알 수 없는 요청: ${p}`);
