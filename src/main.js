@@ -12,6 +12,7 @@ const AI = require('./engine/ai');
 const updater = require('./updater');
 
 const ICON = path.join(__dirname, '..', 'assets', 'icon-512.png');
+app.setName('와니의 결재 도우미');   // 개발 모드에서도 메뉴·알림에 앱 이름
 let mainWin = null, gwWin = null, store = null;
 
 // 데이터 폴더는 앱 이름과 무관하게 고정 (이름을 바꿔도 설정·로그인 유지). 예전 이름 폴더가 있으면 옮겨온다.
@@ -230,6 +231,7 @@ ipcMain.handle('api', async (_e, p, body) => {
 });
 
 app.whenReady().then(() => {
+  if (process.platform === 'darwin' && app.dock) app.dock.setIcon(ICON);   // 개발 모드 Dock 아이콘
   store = new Store(process.env.TRIP_ASSISTANT_DATA || app.getPath('userData'));
   createMain();
   updater.start();

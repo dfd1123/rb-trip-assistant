@@ -8,14 +8,15 @@
   "license": "UNLICENSED",
   "private": true,
   "scripts": {
-    "start": "electron .",
+    "start": "node scripts/brand-dev-electron.js && electron .",
+    "postinstall": "node scripts/brand-dev-electron.js",
     "test": "node --test test/rules.test.js",
     "e2e": "electron test/e2e.js",
     "dist": "electron-builder",
     "dist:win": "electron-builder --win",
     "dist:mac": "electron-builder --mac",
     "dist:linux": "electron-builder --linux",
-    "dev": "electron ."
+    "dev": "node scripts/brand-dev-electron.js && electron ."
   },
   "dependencies": {
     "electron-updater": "^6.8.9",
