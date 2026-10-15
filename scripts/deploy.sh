@@ -1,5 +1,5 @@
 #!/bin/bash
-# 배포: 버전 올리기 → 전 플랫폼 빌드(맥 서명·공증) → 회사 릴리즈 저장소에 Release + version.json → 버전 커밋·태그
+# 배포: 버전 올리기 → 전 플랫폼 빌드(맥 서명·공증) → 이 저장소 Release(v<버전>)에 설치 파일 + version.json → 버전 커밋·태그
 # (참고: web-rainbow-ui/apps/electron/management/scripts/deploy-management.sh)
 #
 #   yarn deploy
@@ -9,9 +9,8 @@
 set -e
 
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-RELEASE_REPO="rainbow-mobile/rainbow-release-apps"
-APP_KEY="trip-assistant"
-VERSION_JSON_URL="https://raw.githubusercontent.com/${RELEASE_REPO}/main/${APP_KEY}/version.json"
+RELEASE_REPO="dfd1123/rb-trip-assistant"
+VERSION_JSON_URL="https://github.com/${RELEASE_REPO}/releases/latest/download/version.json"
 cd "$APP_DIR"
 
 # ---------- 사전 확인 ----------
@@ -43,7 +42,7 @@ read -r -p "▶ 올릴 단계 [patch/minor/major] (기본 patch): " BUMP; BUMP=$
 VERSION=$(node -e "const v='${BASE}'.split('.').map(Number);const t='${BUMP}';
   if(t==='major'){v[0]++;v[1]=0;v[2]=0}else if(t==='minor'){v[1]++;v[2]=0}else if(t==='patch'){v[2]++}else{process.exit(1)}
   process.stdout.write(v.join('.'))") || { echo "Error: 알 수 없는 단계 ${BUMP}"; exit 1; }
-TAG="${APP_KEY}-v${VERSION}"
+TAG="v${VERSION}"
 read -r -p "  → v${VERSION} 로 배포할까요? 바뀐 점 한 줄 (Release 노트): " NOTES
 NOTES=${NOTES:-"v${VERSION}"}
 read -r -p "  진행? [y/N]: " OK; [ "$OK" = "y" ] || [ "$OK" = "Y" ] || { echo "취소"; exit 0; }
@@ -74,27 +73,20 @@ for APP in dist/mac*/*.app; do
 done
 printf '  %s\n' "${FILES[@]}"
 
-# ---------- Release + version.json ----------
-echo "▶ Release ${TAG} → ${RELEASE_REPO}"
-gh release create "$TAG" --repo "$RELEASE_REPO" --title "와니의 결재 도우미 v${VERSION}" --notes "$NOTES" "${FILES[@]}"
+# ---------- 버전 커밋·태그 → Release(설치 파일 + version.json) ----------
+git add package.json
+git commit -m "chore: v${VERSION} 배포"
+git tag "$TAG"
+git push origin main "$TAG"
 
 BASE_URL="https://github.com/${RELEASE_REPO}/releases/download/${TAG}"
-CLONE=$(mktemp -d); trap 'rm -rf "$CLONE"' EXIT
-git clone --depth 1 --branch main --single-branch "https://$(gh auth token)@github.com/${RELEASE_REPO}.git" "$CLONE"
-mkdir -p "$CLONE/${APP_KEY}"
 NOTES="$NOTES" node -e "
   const files=process.argv.slice(1).map(f=>require('path').basename(f));
   const out={version:'${VERSION}',notes:process.env.NOTES,assets:files.map(n=>({name:n,url:'${BASE_URL}/'+encodeURIComponent(n)})),updated_at:new Date().toISOString()};
-  require('fs').writeFileSync('${CLONE}/${APP_KEY}/version.json',JSON.stringify(out,null,2)+'\n');
+  require('fs').writeFileSync('dist/version.json',JSON.stringify(out,null,2)+'\n');
 " "${FILES[@]}"
-( cd "$CLONE" && git add "${APP_KEY}/version.json" && git -c user.name="$(gh api user --jq .login)" -c user.email="$(gh api user --jq .login)@users.noreply.github.com" commit -m "Release ${APP_KEY} v${VERSION}" && git push origin main )
-
-# ---------- 이 저장소에 버전 커밋·태그 ----------
-git add package.json
-git commit -m "chore: v${VERSION} 배포"
-git tag "v${VERSION}"
-git push origin main --tags
-
+echo "▶ Release ${TAG} → ${RELEASE_REPO}"
+gh release create "$TAG" --repo "$RELEASE_REPO" --title "와니의 결재 도우미 v${VERSION}" --notes "$NOTES" --latest "${FILES[@]}" dist/version.json
 echo ""
 echo "✅ v${VERSION} 배포 완료 — https://github.com/${RELEASE_REPO}/releases/tag/${TAG}"
 echo "   설치된 앱은 켜거나 창에 다시 들어올 때 업데이트를 물어봐요."

@@ -1,5 +1,5 @@
 'use strict';
-// 자동 업데이트. 회사 릴리즈 저장소의 최신 버전을 앱을 켤 때·창에 다시 들어올 때 확인하고,
+// 자동 업데이트. 이 저장소 최신 Release 의 버전을 앱을 켤 때·창에 다시 들어올 때 확인하고,
 // 새 버전이 있으면 화면에서 물어본 뒤 [업데이트]를 누르면 이 PC에 맞는 설치 파일을 받아 설치하고 다시 켠다.
 // - Windows: NSIS 설치 파일 실행 / Linux: AppImage 덮어쓰기, deb·rpm 은 관리자 암호 한 번 받고 설치 (RB Management 방식 + deb·rpm 자동화)
 // - macOS: Release 의 mac zip 을 받아 앱이 꺼진 뒤 .app 을 바꿔 끼우고 다시 연다 (서명 여부와 무관하게 동작)
@@ -10,10 +10,10 @@ const os = require('os');
 const path = require('path');
 const { spawn, execFileSync } = require('child_process');
 
-// 배포: 회사 공용 릴리즈 저장소(공개)에 'trip-assistant-v<버전>' Release + trip-assistant/version.json (scripts/deploy.sh)
-// version.json 은 raw 파일이라 GitHub API 횟수 제한(사내 같은 IP 시간당 60회)에 걸리지 않는다
-const RELEASE_REPO = 'rainbow-mobile/rainbow-release-apps';
-const VERSION_URL = `https://raw.githubusercontent.com/${RELEASE_REPO}/main/trip-assistant/version.json`;
+// 배포: 이 저장소(공개) Release 'v<버전>' 에 설치 파일들 + version.json 을 올린다 (scripts/deploy.sh)
+// releases/latest/download/… 는 최신 Release 파일로 바로 넘어가는 주소라 GitHub API 횟수 제한(같은 IP 시간당 60회)에 안 걸린다
+const RELEASE_REPO = 'dfd1123/rb-trip-assistant';
+const VERSION_URL = `https://github.com/${RELEASE_REPO}/releases/latest/download/version.json`;
 const CHECK_GAP = 10 * 60 * 1000;   // 창에 다시 들어올 때마다 확인하되 10분에 한 번만
 const state = { status: 'idle', version: '', current: '', notes: '', url: `https://github.com/${RELEASE_REPO}/releases`, percent: 0, error: '' };
 let release = null, lastCheck = 0;
@@ -33,12 +33,12 @@ async function check(force = false) {
   if (!force && Date.now() - lastCheck < CHECK_GAP) return state;
   lastCheck = Date.now();
   try {
-    const res = await fetch(`${VERSION_URL}?t=${Date.now()}`, { cache: 'no-store' });
+    const res = await fetch(VERSION_URL, { cache: 'no-store' });
     if (!res.ok) return state;
     const v = await res.json();   // { version, notes, assets: [{ name, url }], updated_at }
     release = { tag_name: v.version, assets: (v.assets || []).map(a => ({ name: a.name, browser_download_url: a.url })) };
     if (newer(v.version, state.current)) Object.assign(state, { status: 'available', version: String(v.version).replace(/^v/, ''), notes: String(v.notes || '').slice(0, 1500),
-      url: `https://github.com/${RELEASE_REPO}/releases/tag/trip-assistant-v${String(v.version).replace(/^v/, '')}`, error: '' });
+      url: `https://github.com/${RELEASE_REPO}/releases/tag/v${String(v.version).replace(/^v/, '')}`, error: '' });
     else Object.assign(state, { status: 'latest', version: '' });
   } catch (e) { state.error = e.message; }
   return state;
