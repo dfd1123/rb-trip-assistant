@@ -1,6 +1,6 @@
 {
   "name": "trip-assistant",
-  "productName": "출장 결재 도우미",
+  "productName": "와니의 결재 도우미",
   "version": "0.2.0",
   "description": "아마란스10 출장신청서·출장보고서 자동 작성 (레인보우로보틱스)",
   "main": "src/main.js",
@@ -27,7 +27,7 @@
   },
   "build": {
     "appId": "com.rainbowrobotics.tripassistant",
-    "productName": "출장 결재 도우미",
+    "productName": "와니의 결재 도우미",
     "artifactName": "trip-assistant-${version}-${os}-${arch}.${ext}",
     "directories": {
       "output": "dist",
@@ -52,7 +52,7 @@
     "nsis": {
       "oneClick": true,
       "perMachine": false,
-      "shortcutName": "출장 결재 도우미"
+      "shortcutName": "와니의 결재 도우미"
     },
     "mac": {
       "target": [

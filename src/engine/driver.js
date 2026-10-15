@@ -16,9 +16,10 @@ const byText = (text, root = document, exact = true) => { const t = norm(text);
   return hits.filter(e => !hits.some(o => o !== e && e.contains(o))); };   // 가장 안쪽 요소만
 const center = el => { el.scrollIntoView({ block: 'center', inline: 'center' }); const r = el.getBoundingClientRect();
   return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }; };
+const okButtons = root => all('button, [role=button], [class*=Button], [class*=btn]', root).filter(b => norm(b.textContent) === '확인' && vis(b));
 const dialog = title => { const heads = byText(title).reverse();
   for (const h of heads) { let p = h; while (p && p !== document.body) {
-    if (all('button', p).some(b => norm(b.textContent) === '확인' && vis(b))) return p; p = p.parentElement; } }
+    if (okButtons(p).length) return p; p = p.parentElement; } }
   return null; };
 const grid = hdr => all('.rg-root').find(r => vis(r) && all('.rg-header-cell', r).some(h => norm(h.textContent) === norm(hdr)));
 const headers = g => all('.rg-header-cell', g).map(h => norm(h.textContent));

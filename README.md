@@ -1,4 +1,4 @@
-# 출장 결재 도우미
+# 와니의 결재 도우미
 
 아마란스10에서 **출장신청서**와 **출장보고서**를 대신 작성해 주는 데스크톱 앱입니다 (Windows · macOS · Ubuntu).
 품의서입력(복수) → 결재상신 → 본문 작성 → **보관(임시저장)** 까지 자동으로 하고, **상신은 사람이 확인한 뒤 직접** 누릅니다.
@@ -11,7 +11,7 @@
 | OS | 파일 | 처음 실행할 때 |
 |---|---|---|
 | Windows | `trip-assistant-x.y.z-win-x64.exe` | "Windows의 PC 보호" 창이 뜨면 **추가 정보 → 실행** |
-| macOS | `trip-assistant-x.y.z-mac-arm64.dmg` (Intel 맥은 `x64`) | 앱을 **우클릭 → 열기**. "손상되었다"고 나오면 터미널에서 `xattr -dr com.apple.quarantine "/Applications/출장 결재 도우미.app"` |
+| macOS | `trip-assistant-x.y.z-mac-arm64.dmg` (Intel 맥은 `x64`) | 앱을 **우클릭 → 열기**. "손상되었다"고 나오면 터미널에서 `xattr -dr com.apple.quarantine "/Applications/와니의 결재 도우미.app"` |
 | Ubuntu | `.deb` (`sudo apt install ./파일.deb`) 또는 `.AppImage` (실행 권한 주고 더블클릭) | — |
 
 > 회사 코드서명 인증서가 없어서 첫 실행 경고가 나옵니다. 인증서를 붙이면 사라집니다.

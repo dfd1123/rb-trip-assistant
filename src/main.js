@@ -1,5 +1,5 @@
 'use strict';
-// 출장 결재 도우미 - Electron 메인 프로세스
+// 와니의 결재 도우미 - Electron 메인 프로세스
 // 화면(렌더러) ↔ 작업(엔진) 중계. 그룹웨어와 네이버 지도는 앱 안의 별도 창(내장 Chromium)에서 조작한다.
 
 const { app, BrowserWindow, ipcMain, clipboard, shell, safeStorage } = require('electron');
@@ -14,12 +14,21 @@ const updater = require('./updater');
 const ICON = path.join(__dirname, '..', 'assets', 'icon-512.png');
 let mainWin = null, gwWin = null, store = null;
 
+// 데이터 폴더는 앱 이름과 무관하게 고정 (이름을 바꿔도 설정·로그인 유지). 예전 이름 폴더가 있으면 옮겨온다.
+{
+  const fs = require('fs');
+  const dataDir = path.join(app.getPath('appData'), 'trip-assistant');
+  const oldDir = path.join(app.getPath('appData'), '출장 결재 도우미');
+  if (!fs.existsSync(dataDir) && fs.existsSync(oldDir)) { try { fs.cpSync(oldDir, dataDir, { recursive: true }); } catch (e) { /* 새로 시작 */ } }
+  app.setPath('userData', dataDir);
+}
+
 if (!app.requestSingleInstanceLock()) app.quit();
 app.on('second-instance', () => { if (mainWin) { if (mainWin.isMinimized()) mainWin.restore(); mainWin.focus(); } });
 
 function createMain() {
   mainWin = new BrowserWindow({
-    width: 1200, height: 880, minWidth: 900, minHeight: 640, icon: ICON, title: '출장 결재 도우미',
+    width: 1200, height: 880, minWidth: 900, minHeight: 640, icon: ICON, title: '와니의 결재 도우미',
     autoHideMenuBar: true, backgroundColor: '#f4f6f9',
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
@@ -41,7 +50,7 @@ function createMain() {
 function gwWindow() {
   if (gwWin && !gwWin.isDestroyed()) return gwWin;
   gwWin = new BrowserWindow({
-    width: 1500, height: 950, icon: ICON, title: '아마란스 — 출장 결재 도우미가 입력 중', autoHideMenuBar: true,
+    width: 1500, height: 950, icon: ICON, title: '아마란스 — 와니의 결재 도우미가 입력 중', autoHideMenuBar: true,
     webPreferences: { partition: 'persist:gw', contextIsolation: true, sandbox: true },
   });
   // 결재 작성 팝업(window.open)은 앱 창으로 열고 같은 세션을 쓴다

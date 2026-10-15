@@ -1,5 +1,5 @@
 #!/bin/bash
-# 출장 결재 도우미 dev 실행 (Finder에서 더블클릭)
+# 와니의 결재 도우미 dev 실행 (Finder에서 더블클릭)
 cd "$(dirname "$0")" || exit 1
 if [ ! -d node_modules/electron/dist ]; then
   echo "▶ 의존성 설치 중 (처음 한 번, 1~2분)..."

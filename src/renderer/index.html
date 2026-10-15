@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>출장 결재 도우미</title>
+<title>와니의 결재 도우미</title>
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'">
 <link rel="icon" href="favicon.png">
 <style>
@@ -18,8 +18,10 @@ body{margin:0;background:var(--bg);color:var(--ink);font-size:14px;line-height:1
 header{background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
 .bar{max-width:1080px;margin:0 auto;padding:0 20px;display:flex;align-items:center;gap:28px;height:60px}
 .ver{margin-left:auto;color:var(--muted);font-size:12px}
-.brand{display:flex;align-items:center}
+.brand{display:flex;align-items:center;gap:8px}
 .brand img{height:34px;display:block}
+.brand b{display:block;font-size:17px;color:#16365f;letter-spacing:-.3px;line-height:1.1}
+.brand small{display:block;font-size:9px;font-weight:700;color:#16365f;letter-spacing:.4px}
 nav{display:flex;gap:4px}
 nav button{border:0;background:none;padding:8px 14px;border-radius:8px;font:inherit;color:var(--muted);cursor:pointer}
 nav button.on{background:var(--accent-soft);color:var(--accent);font-weight:600}
@@ -93,7 +95,7 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
 </head>
 <body>
 <header><div class="bar">
-  <div class="brand"><img src="logo.png" alt="출장 결재 도우미"></div>
+  <div class="brand"><img src="favicon.png" alt=""><div><b>와니의 결재 도우미</b><small>BUSINESS TRIP ASSISTANT</small></div></div>
   <nav>
     <button data-tab="apply" class="on">출장 신청</button>
     <button data-tab="trips">내 출장 · 보고서</button>

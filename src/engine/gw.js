@@ -61,13 +61,20 @@ class Amaranth {
   // ---------- 코드도움 모달 ----------
   async openCodeHelp(gridHdr, row, col, titleRe) {
     const p = this.page;
-    const pt = await this.cellPoint(gridHdr, row, col);
-    for (const count of [1, 2]) {
-      await p.click(pt, { count });
-      const ok = await p.waitFor(re => { const r = new RegExp(re); return all('*').some(e => ownText(e) && vis(e) && r.test(e.textContent.trim()) && !!dialog(e.textContent.trim())); },
-        [titleRe], { timeout: 3000 });
-      if (ok) return;
-    }
+    const opened = () => p.waitFor(re => { const r = new RegExp(re); return all('*').some(e => ownText(e) && vis(e) && r.test(e.textContent.trim()) && !!dialog(e.textContent.trim())); },
+      [titleRe], { timeout: 3000 });
+    await p.click(await this.cellPoint(gridHdr, row, col));            // 셀 선택
+    // 코드도움 칸은 오른쪽에 아이콘 버튼(.rg-button-action)이 있고 그걸 눌러야 창이 열린다
+    const btn = await p.eval((h, r, c) => {
+      const g = grid(h), td = g && cell(g, r, c); if (!td) return null;
+      const tr = td.getBoundingClientRect();
+      const b = all('.rg-button-action', g).find(e => { const q = e.getBoundingClientRect(); return vis(e) && q.left >= tr.left - 2 && q.right <= tr.right + 2 && q.top >= tr.top - 2 && q.bottom <= tr.bottom + 2; });
+      if (b) return center(b);
+      return { x: Math.round(tr.right - 12), y: Math.round(tr.top + tr.height / 2), edge: true };
+    }, gridHdr, row, col);
+    if (btn) { await p.click(btn); if (await opened()) return; }
+    await p.dblclick(await this.cellPoint(gridHdr, row, col));
+    if (await opened()) return;
     throw new Error('코드도움 창이 열리지 않았습니다.');
   }
 
@@ -82,7 +89,7 @@ class Amaranth {
     await p.waitFor(`(re, m) => { const d = (${findDlg})(re); return d && byText(m, d).length > 0; }`, [titleRe, match],
       { timeout: 6000, message: `검색 결과에서 '${match}'를 찾지 못했습니다.` });
     await p.clickWhere(`(re, m) => { const d = (${findDlg})(re); return byText(m, d)[0]; }`, titleRe, match);
-    await p.clickWhere(`(re) => { const d = (${findDlg})(re); return all('button', d).filter(b => norm(b.textContent) === '확인' && vis(b)).pop(); }`, titleRe);
+    await p.clickWhere(`(re) => { const d = (${findDlg})(re); return okButtons(d).pop(); }`, titleRe);
     await p.waitFor(`(re) => !(${findDlg})(re)`, [titleRe], { timeout: 6000 });
   }
 
@@ -105,15 +112,17 @@ class Amaranth {
     try {
       await p.dblclick(await this.cellPoint('품의구분', row, '품의구분'));
       await sleep(600);
-      const opt = await p.eval(k => { const el = all('.rg-list-editor *').find(e => ownText(e) && vis(e) && norm(e.textContent) === k); return el ? center(el) : null; }, kind);
-      if (opt) await p.click(opt); else { await p.type(kind); await p.key('Enter'); }
+      // 실제 화면: .rg-dropdownlist > .rg-dropdown-item > .rg-dropdown-label "1.지출" / "2.수입"
+      const opt = await p.waitFor(k => { const el = all('.rg-dropdown-item').find(e => vis(e) && norm(e.textContent).replace(/^\d+\./, '') === k); return el ? center(el) : null; }, [kind], { timeout: 3000 });
+      if (opt) await p.click(opt);
+      else { await p.key('Down'); if (kind !== '지출') await p.key('Down'); await p.key('Enter'); }
       await sleep(400);
       await p.click(await this.cellPoint('품의구분', row, '품의구분'));
       await p.press('Enter', 3);
     } catch (e) {
       await ui.assist(`품의구분 선택에 실패했습니다(${e.message}). 품의구분을 '${kind}'로 고르고 Enter 3번을 눌러주세요.`);
     }
-    if ((await this.rowVals('품의구분', row))['품의구분'] !== kind)
+    if (!String((await this.rowVals('품의구분', row))['품의구분'] || '').includes(kind))
       await ui.assist(`품의구분이 '${kind}'로 보이지 않습니다. 직접 선택하고 Enter 3번 눌러주세요.`);
 
     for (const [i, ex] of expenses.entries()) {

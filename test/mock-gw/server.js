@@ -35,7 +35,7 @@ function budget(){
 }
 function gridHtml(id,cols,rows){
   return '<div class="rg-root" id="'+id+'"><table class="rg-header"><tr><td class="rg-head-cell rg-checkbar-head"></td>'+cols.map(c=>'<td class="rg-header-cell"><span class="rg-header-renderer">'+c+'</span></td>').join('')+'</tr></table>'+
-   '<table class="rg-body">'+rows.map((r,i)=>'<tr class="rg-data-row"><td class="rg-checkbar-cell" data-i="'+i+'">'+(id==='top'&&S.checked===i?'☑':'☐')+'</td>'+cols.map(c=>'<td class="rg-data-cell" data-g="'+id+'" data-r="'+i+'" data-c="'+c+'">'+(r[c]||'')+'</td>').join('')+'</tr>').join('')+'</table></div>';
+   '<table class="rg-body">'+rows.map((r,i)=>'<tr class="rg-data-row"><td class="rg-checkbar-cell" data-i="'+i+'">'+(id==='top'&&S.checked===i?'☑':'☐')+'</td>'+cols.map(c=>'<td class="rg-data-cell'+((c==='부서'||c==='예산과목')&&id==='bot'?' rg2-button-codepicker':'')+'" data-g="'+id+'" data-r="'+i+'" data-c="'+c+'"><div class="rg-renderer">'+(r[c]||'')+'</div>'+((c==='부서'||c==='예산과목')&&id==='bot'?'<div class="rg-cell-buttons" style="position:absolute;right:2px;top:5px"><div class="rg-button-action" style="width:18px;height:18px;background:#ccc"></div></div>':'')+'</td>').join('')+'</tr>').join('')+'</table></div>';
 }
 function render(){
   $('#app').innerHTML=gridHtml('top',TOP,S.top)+gridHtml('bot',BOT,S.bot)+(S.checked>=0?'<div class="bar"><button id="btnAppr">결재상신</button></div>':'');
@@ -54,13 +54,13 @@ function codeHelp(title, items, onPick){
   draw(''); d.querySelector('.q').addEventListener('keydown',e=>{ if(e.key==='Enter') draw(e.target.value); });
 }
 function editCell(td, onCommit){
-  const inp=document.createElement('input'); inp.className='rg-editor'; inp.value=td.textContent; td.appendChild(inp); inp.focus();
+  const inp=document.createElement('input'); inp.className='rg-editor'; inp.value=td.querySelector('.rg-renderer').textContent; td.appendChild(inp); inp.focus();
   inp.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.stopPropagation(); const v=inp.value; inp.remove(); onCommit(v); } });
 }
 document.addEventListener('dblclick',e=>{
   const td=e.target.closest('td.rg-data-cell'); if(!td) return; const g=td.dataset.g, r=+td.dataset.r, c=td.dataset.c;
-  if(g==='top'&&c==='품의구분'){ const l=document.createElement('div'); l.className='rg-list-editor'; l.innerHTML='<div>지출</div><div>수입</div>';
-    td.appendChild(l); l.querySelectorAll('div').forEach(o=>o.onclick=ev=>{ ev.stopPropagation(); S.top[r].품의구분=o.textContent; render(); }); }
+  if(g==='top'&&c==='품의구분'){ const l=document.createElement('div'); l.className='rg-dropdownlist'; l.innerHTML='<div class="rg-dropdown-item"><span class="rg-dropdown-label">1.지출</span></div><div class="rg-dropdown-item"><span class="rg-dropdown-label">2.수입</span></div>';
+    td.appendChild(l); l.querySelectorAll('.rg-dropdown-item').forEach(o=>o.onclick=ev=>{ ev.stopPropagation(); S.top[r].품의구분=o.textContent.replace(/^[0-9]+[.]/,''); render(); }); }
   if(g==='bot'&&(c==='품의금액'||c==='적요')) editCell(td,v=>{ S.bot[r][c]=c==='품의금액'?Number(v.replace(/,/g,'')).toLocaleString('en-US'):v; S.focus={g,r,c:c==='적요'?'첨부파일':c}; render(); });
 });
 document.addEventListener('click',e=>{
@@ -68,8 +68,11 @@ document.addEventListener('click',e=>{
   if(cb&&cb.closest('#top')){ S.checked=+cb.dataset.i; S.top[S.checked].총금액=total().toLocaleString('en-US'); render(); return; }
   const td=e.target.closest('td.rg-data-cell'); if(!td) return; const g=td.dataset.g, r=+td.dataset.r, c=td.dataset.c;
   S.focus={g,r,c};
-  if(g==='bot'&&c==='부서') codeHelp('사업코드도움',DEPTS.map((d,i)=>[d,'MBU'+i]),it=>{ S.bot[r].부서=it[0]; render(); });
-  if(g==='bot'&&c==='예산과목') codeHelp('예산과목코드도움',CODES,it=>{ S.bot[r].예산과목=it[1]; render(); });
+  // 실제처럼 셀 오른쪽 아이콘(.rg-button-action)을 눌러야 코드도움이 열림
+  if(e.target.closest('.rg-button-action')){
+    if(g==='bot'&&c==='부서') codeHelp('사업코드도움',DEPTS.map((d,i)=>[d,'MBU'+i]),it=>{ S.bot[r].부서=it[0]; render(); });
+    if(g==='bot'&&c==='예산과목') codeHelp('예산과목코드도움',CODES,it=>{ S.bot[r].예산과목=it[1]; render(); });
+  }
 });
 document.addEventListener('keydown',e=>{
   if(e.key!=='Enter'||!S||!S.focus) return;
