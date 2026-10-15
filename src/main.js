@@ -192,7 +192,7 @@ async function route(p, body = {}) {
     case '/api/report-quick': return quickReport(body.id, String(body.memo || ''));
     case '/api/expenses': { const r = Q.computeExpenses({ start: body.start, end: body.end || body.start, startTime: body.start_time, endTime: body.end_time, reason: body.reason || '', rates: cfg.rates, mealTimes: cfg.mealTimes }); return { expenses: r.expenses, summary: r.summary, timed: r.timed }; }
     case '/api/repeat': { const a = store.load(body.id).apply; return { data: { ...a, dates: { start: '', end: '' }, transport: { ...a.transport, total: null, screenshot: '' } } }; }
-    case '/api/prompt': return { text: R.applyPrompt() };
+    case '/api/prompt': return { text: R.applyPrompt() + String(body.memo || '').trim() + '\n' };
     case '/api/parse': return { data: R.extractYaml(body.text || '') };
     case '/api/title': { const r = String(body.reason || '').trim(); return { apply: r ? R.applyTitle(r) : '', report: r ? R.reportTitle(r) : '' }; }
     case '/api/plan': return runner.planApply(body, cfg);

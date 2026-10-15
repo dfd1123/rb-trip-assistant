@@ -96,9 +96,12 @@ $('#btnAddExp').onclick = () => expRow($('#a_exp tbody'), {}, refreshApply);
 $('#a_fare').addEventListener('input', () => { const v=$('#a_fare'); v.value = v.value ? num(v.value).toLocaleString('ko-KR') : ''; fareShot=''; $('#a_fare_desc').textContent='직접 입력'; });
 
 $('#btnPrompt').onclick = async () => {
-  const r = await rpc('/api/prompt'); await rpc('/api/copy', {text: r.text});
-  $('#copied').textContent = '복사됨. AI 채팅에 붙여 넣으세요.';
+  const memo = $('#q_memo').value.trim();
+  if(!memo){ $('#copied').textContent = '위 "한 줄로 신청" 칸에 출장 메모를 먼저 써 주세요.'; $('#q_memo').classList.add('need'); $('#q_memo').focus(); return; }
+  const r = await rpc('/api/prompt', {memo}); await rpc('/api/copy', {text: r.text});
+  $('#copied').textContent = '메모까지 포함해 복사됨. AI 채팅에 붙여 넣고 보내세요.';
 };
+$('#q_memo').addEventListener('input', () => $('#q_memo').classList.remove('need'));
 $('#btnFill').onclick = async () => {
   $('#aiErr').textContent = '';
   try { fillApply((await rpc('/api/parse', {text: $('#aiPaste').value})).data); }
@@ -242,7 +245,11 @@ $('#btnRQuick').onclick = async () => {
 $('#btnAddDay').onclick = () => schedRow();
 $('#btnAddRExp').onclick = () => expRow($('#r_exp tbody'), {}, refreshReport);
 $('#btnBack').onclick = () => { $('#reportView').classList.add('hidden'); $('#tripList').classList.remove('hidden'); };
-$('#btnRPrompt').onclick = async () => { await rpc('/api/copy', {text: reportPrompt}); $('#rcopied').textContent = '복사됨'; };
+$('#btnRPrompt').onclick = async () => {
+  const memo = $('#rq_memo').value.trim();
+  if(!memo){ $('#rcopied').textContent = '위 "한 줄 메모" 칸에 한 일을 먼저 써 주세요.'; $('#rq_memo').focus(); return; }
+  await rpc('/api/copy', {text: reportPrompt + memo + '\n'}); $('#rcopied').textContent = '메모까지 포함해 복사됨';
+};
 $('#btnRFill').onclick = async () => {
   $('#rErr').textContent = '';
   try { const d = (await rpc('/api/parse', {text: $('#rPaste').value})).data; fillReport({...reportData(), ...d}); }
