@@ -292,7 +292,7 @@ let jobTimer = null, jobSince = 0;
 async function runJob(title, path, body, onDone){
   try { await rpc(path, body); } catch(e){ alertErr(e.message); return; }
   $('#jobTitle').textContent = title; $('#jobLog').textContent = ''; jobSince = 0;
-  $('#jobPanel').style.display = 'block'; $$('.btn.primary').forEach(b => b.disabled = true);
+  $('#jobPanel').style.display = 'block'; $$('main .btn.primary').forEach(b => b.disabled = true);
   clearInterval(jobTimer);
   jobTimer = setInterval(async () => {
     const s = await rpc('/api/job', {since: jobSince});
@@ -306,7 +306,7 @@ async function runJob(title, path, body, onDone){
       $('#jobYes').textContent = q.type==='confirm' ? '예' : q.type==='int' ? '입력' : '계속';
     }
     if(s.state==='done' || s.state==='error'){
-      clearInterval(jobTimer); $$('.btn.primary').forEach(b => b.disabled = false);
+      clearInterval(jobTimer); $$('main .btn.primary').forEach(b => b.disabled = false);
       if(s.state==='error') $('#jobLog').textContent += '\n✖ ' + s.error + '\n';
       if(s.state==='done' && onDone) onDone(s.result);
     }
