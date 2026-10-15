@@ -130,6 +130,18 @@ class Page {
     return pt;
   }
 
+  /** 마우스 휠 (deltaY > 0 = 아래로) */
+  async wheel(pt, deltaY) {
+    // 숨긴 창에서는 실제 휠 입력이 전달되지 않아, 그 위치의 요소에 휠 이벤트를 직접 보낸다 (그리드는 JS 로 휠을 처리)
+    if (this.win.isVisible()) {
+      this.wc.sendInputEvent({ type: 'mouseMove', x: pt.x, y: pt.y });
+      this.wc.sendInputEvent({ type: 'mouseWheel', x: pt.x, y: pt.y, deltaX: 0, deltaY: -deltaY, canScroll: true });
+    } else {
+      await this.eval((x, y, d) => { const el = document.elementFromPoint(x, y); if (el) el.dispatchEvent(new WheelEvent('wheel', { deltaY: d, deltaMode: 0, clientX: x, clientY: y, bubbles: true, cancelable: true })); }, pt.x, pt.y, deltaY);
+    }
+    await sleep(250);
+  }
+
   async key(keyCode, modifiers = []) {
     this.wc.sendInputEvent({ type: 'keyDown', keyCode, modifiers });
     if (keyCode === 'Enter') this.wc.sendInputEvent({ type: 'char', keyCode: '\r', modifiers });

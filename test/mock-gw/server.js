@@ -42,13 +42,17 @@ const CODES=[['8120002','여비교통비(판)_국내교통비'],['8120003','여�
 let S;
 function budget(){
   // 위쪽 품의 목록은 새로고침해도 남도록 localStorage 에 보관 (삭제 테스트용). 순번 44 는 결재 진행 중인 기존 품의
-  const def=[{품의연월:'2026-10',품의일:'14',순번:'44',품의구분:'지출',적요:'기존 품의',총금액:'10,000',결재상태:'진행중'},{품의연월:'2026-10',품의일:'14'}];
-  S={top:JSON.parse(localStorage.top||'null')||def,bot:[],focus:null,enter:0,checked:-1,marks:new Set()};
+  const def=[1,2,3,4].map(n=>({품의연월:'2026-10',품의일:'14',순번:String(39+n),품의구분:'지출',적요:'예전 품의',총금액:'1,000',결재상태:'결재완료'}))
+    .concat([{품의연월:'2026-10',품의일:'14',순번:'44',품의구분:'지출',적요:'기존 품의',총금액:'10,000',결재상태:'진행중'},{품의연월:'2026-10',품의일:'14'}]);
+  S={top:JSON.parse(localStorage.top||'null')||def,bot:[],focus:null,enter:0,checked:-1,marks:new Set(),off:null,stick:true};
   render();
 }
-function gridHtml(id,cols,rows){
+// 실제 RealGrid 처럼 보이는 행만 DOM 에 그림: 위쪽 목록은 마지막 5행만 (화면상 행 번호 ≠ 데이터 행 번호)
+function gridHtml(id,cols,all){
+  const maxOff=Math.max(0,all.length-5); if(id==='top'&&(S.off==null||S.off>maxOff||S.stick)) S.off=maxOff;
+  const off=id==='top'?S.off:0, rows=id==='top'?all.slice(off,off+5):all;
   return '<div class="rg-root" id="'+id+'"><table class="rg-header"><tr><td class="rg-head-cell rg-checkbar-head"></td>'+cols.map(c=>'<td class="rg-header-cell"><span class="rg-header-renderer">'+c+'</span></td>').join('')+'</tr></table>'+
-   '<table class="rg-body">'+rows.map((r,i)=>'<tr class="rg-data-row"><td class="rg-checkbar-cell" data-i="'+i+'">'+(id==='top'&&S.marks&&S.marks.has(i)?'☑':'☐')+'</td>'+cols.map(c=>'<td class="rg-data-cell'+((c==='부서'||c==='예산과목')&&id==='bot'?' rg2-button-codepicker':'')+'" data-g="'+id+'" data-r="'+i+'" data-c="'+c+'"><div class="rg-renderer">'+(r[c]||'')+'</div>'+((c==='부서'||c==='예산과목')&&id==='bot'?'<div class="rg-cell-buttons" style="position:absolute;right:2px;top:5px"><div class="rg-button-action" style="width:18px;height:18px;background:#ccc"></div></div>':'')+'</td>').join('')+'</tr>').join('')+'</table></div>';
+   '<table class="rg-body">'+rows.map((r,j)=>{const i=j+off; return '<tr class="rg-data-row"><td class="rg-checkbar-cell" data-i="'+i+'">'+(id==='top'&&S.marks&&S.marks.has(i)?'☑':'☐')+'</td>'+cols.map(c=>'<td class="rg-data-cell'+((c==='부서'||c==='예산과목')&&id==='bot'?' rg2-button-codepicker':'')+'" data-g="'+id+'" data-r="'+i+'" data-c="'+c+'"><div class="rg-renderer">'+(r[c]||'')+'</div>'+((c==='부서'||c==='예산과목')&&id==='bot'?'<div class="rg-cell-buttons" style="position:absolute;right:2px;top:5px"><div class="rg-button-action" style="width:18px;height:18px;background:#ccc"></div></div>':'')+'</td>').join('')+'</tr>';}).join('')+'</table></div>';
 }
 function render(){
   localStorage.top=JSON.stringify(S.top);
@@ -83,6 +87,8 @@ function editCell(td, onCommit){
   const inp=document.createElement('input'); inp.className='rg-editor'; inp.value=td.querySelector('.rg-renderer').textContent; td.appendChild(inp); inp.focus();
   inp.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.stopPropagation(); const v=inp.value; inp.remove(); onCommit(v); } });
 }
+document.addEventListener('wheel',e=>{ if(!S||!e.target.closest('#top')) return; const maxOff=Math.max(0,S.top.length-5);
+  S.off=Math.max(0,Math.min(maxOff,S.off+(e.deltaY>0?1:-1))); S.stick=S.off===maxOff; render(); },{passive:true});
 document.addEventListener('dblclick',e=>{
   const td=e.target.closest('td.rg-data-cell'); if(!td) return; const g=td.dataset.g, r=+td.dataset.r, c=td.dataset.c;
   if(g==='top'&&c==='품의구분'){ const l=document.createElement('div'); l.className='rg-dropdownlist'; l.innerHTML='<div class="rg-dropdown-item"><span class="rg-dropdown-label">1.지출</span></div><div class="rg-dropdown-item"><span class="rg-dropdown-label">2.수입</span></div>';

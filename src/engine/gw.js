@@ -219,6 +219,7 @@ class Amaranth {
       row = (await this.rowCount('품의구분')) - 1;
     }
 
+    const seqBefore = await p.eval(() => { const g = grid('품의구분'); return rows(g).map((_, i) => (rowVals(g, i) || {})['순번']).filter(Boolean); });
     this.log(`품의구분 '${kind}' 선택`);
     try {
       await p.dblclick(await this.cellPoint('품의구분', row, '품의구분'));
@@ -233,8 +234,16 @@ class Amaranth {
     } catch (e) {
       await ui.assist(`품의구분 선택에 실패했습니다(${e.message}). 품의구분을 '${kind}'로 고르고 Enter 3번을 눌러주세요.`);
     }
-    if (!String((await this.rowVals('품의구분', row))['품의구분'] || '').includes(kind))
-      await ui.assist(`품의구분이 '${kind}'로 보이지 않습니다. 직접 선택하고 Enter 3번 눌러주세요.`);
+    // 저장되면 새 순번이 붙고 그리드가 스크롤돼 화면상 행 위치가 바뀐다 → 행 번호가 아니라 '새 순번'으로 찾는다
+    let seq = await p.waitFor((k, before) => { const g = grid('품의구분'); if (!g) return null;
+      const vs = rows(g).map((_, i) => rowVals(g, i)).filter(v => v && v['순번'] && !before.includes(v['순번']) && String(v['품의구분'] || '').includes(k));
+      return vs.length ? vs[vs.length - 1]['순번'] : null; }, [kind, seqBefore], { timeout: 6000 });
+    if (!seq) {
+      await ui.assist(`품의구분이 '${kind}'로 저장되지 않은 것 같아요. 그룹웨어 창을 열어 맨 아래 빈 행의 품의구분을 '${kind}'로 고르고 Enter 3번 누른 뒤 [계속]을 눌러주세요.`);
+      seq = await p.eval((k, before) => { const g = grid('품의구분'); const vs = rows(g).map((_, i) => rowVals(g, i)).filter(v => v && v['순번'] && !before.includes(v['순번']));
+        return vs.length ? vs[vs.length - 1]['순번'] : null; }, kind, seqBefore);
+    }
+    this.log(`새 품의 순번 ${seq || '?'}`);
 
     for (const [i, ex] of expenses.entries()) {
       this.log(`예산 라인 ${i + 1}/${expenses.length}: ${ex.label} ${ex.amount.toLocaleString('ko-KR')}원`);
@@ -269,15 +278,19 @@ class Amaranth {
 
     // 품의 행 체크 → 총금액 확인
     await sleep(800);
-    await p.clickWhere(r => all('td.rg-checkbar-cell', grid('품의구분'))[r], row);
+    const rowOf = () => p.eval(q => { const g = grid('품의구분'); return rows(g).findIndex((_, i) => (rowVals(g, i) || {})['순번'] === q); }, seq);
+    let ri = seq ? await rowOf() : -1;
+    if (ri < 0) ri = row;
+    await this.setRowChecked(ri, true, seq);
     await sleep(1500);
     const total = expenses.reduce((s, e) => s + e.amount, 0);
-    const vals = await this.rowVals('품의구분', row);
+    if (seq) { const r2 = await rowOf(); if (r2 >= 0) ri = r2; }
+    const vals = await this.rowVals('품의구분', ri);
     if (amountOf(vals['총금액']) !== total)
       await ui.assist(`품의 총금액이 ${amountOf(vals['총금액']).toLocaleString('ko-KR')}원입니다(예상 ${total.toLocaleString('ko-KR')}원). 확인 후 품의 행만 체크된 상태로 두세요.`);
     this.log(`품의 입력 완료: 총 ${total.toLocaleString('ko-KR')}원 (순번 ${vals['순번'] || '?'})`);
     this.lastBudget = vals['순번'] ? { key: [vals['품의연월'], vals['품의일'], vals['순번']].join('|'), ym: vals['품의연월'], day: vals['품의일'], seq: vals['순번'] } : null;
-    return row;
+    return ri;
   }
 
   // ---------- 올린 품의 목록·삭제 ----------
@@ -300,16 +313,71 @@ class Amaranth {
   }
 
   /** 품의서입력(복수) 위쪽 목록 (순번이 있는 = 저장된 품의만) */
-  async listBudgetRows() {
-    await this.openBudgetList();
-    const rows = await this.page.eval(() => { const g = grid('품의구분'); return rows(g).map((_, i) => rowVals(g, i)); });
-    return rows.map((r, i) => ({ ...r, index: i })).filter(r => r && r['순번'])
-      .map(r => ({ index: r.index, key:[r['품의연월'], r['품의일'], r['순번']].join('|'), ym: r['품의연월'] || '', day: r['품의일'] || '', seq: r['순번'],
-        kind: r['품의구분'] || '', memo: r['적요'] || '', total: r['총금액'] || '', status: r['결재상태'] || '', docNo: r['문서번호'] || '',
-        locked: Amaranth.locked(r['결재상태']) }));
+  /** 위쪽 품의 그리드 가운데 좌표 (휠 스크롤용) */
+  topGridPoint() { return this.page.eval(() => { const g = grid('품의구분'); const b = g && g.querySelector('.rg-body, table:last-of-type') || g; const r = b.getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + Math.min(r.height / 2, 120)) }; }); }
+  visibleBudgetRows() { return this.page.eval(() => { const g = grid('품의구분'); return g ? rows(g).map((_, i) => rowVals(g, i)) : []; }); }
+
+  /** 위쪽 그리드 한 칸 스크롤 (dir -1 위 / +1 아래). 휠이 안 먹으면 셀을 잡고 방향키. 움직였으면 true */
+  async scrollTop(dir, big = false) {
+    const p = this.page;
+    const sig = async () => JSON.stringify((await this.visibleBudgetRows()).map(r => r && r['순번']));
+    const before = await sig();
+    await p.wheel(await this.topGridPoint(), dir * (big ? 600 : 120));
+    if ((await sig()) !== before) return true;
+    // 방향키: 위쪽 그리드의 맨 위/아래 보이는 행 '품의연월' 칸을 잡고 이동
+    const n = (await this.visibleBudgetRows()).length;
+    if (!n) return false;
+    if (!this._kbFocus) { await p.click(await this.cellPoint('품의구분', dir < 0 ? 0 : n - 1, '품의연월')); this._kbFocus = true; await sleep(200); }
+    for (let k = 0; k < (big ? 10 : 2); k++) await p.key(dir < 0 ? 'Up' : 'Down');
+    await sleep(200);
+    return (await sig()) !== before;
   }
 
-  /** keys(품의연월|품의일|순번) 품의 삭제. 결재 진행 중인 건은 건너뜀. 삭제된 개수를 돌려준다 */
+  /** 품의서입력(복수) 위쪽 목록 전체 (보이는 행만 그리는 그리드라 스크롤하며 모은다). 순번이 있는 = 저장된 품의만 */
+  async listBudgetRows({ reopen = true } = {}) {
+    if (reopen) await this.openBudgetList();
+    this._kbFocus = false;
+    const keyOf = r => [r['품의연월'], r['품의일'], r['순번']].join('|');
+    for (let i = 0; i < 40; i++) if (!(await this.scrollTop(-1, true))) break;   // 맨 위로
+    const seen = new Map();
+    for (let i = 0; i < 300; i++) {
+      for (const r of await this.visibleBudgetRows()) if (r && r['순번']) seen.set(keyOf(r), r);
+      if (!(await this.scrollTop(1))) break;
+    }
+    for (const r of await this.visibleBudgetRows()) if (r && r['순번']) seen.set(keyOf(r), r);
+    return [...seen.values()].map(r => ({ key: keyOf(r), ym: r['품의연월'] || '', day: r['품의일'] || '', seq: r['순번'],
+      kind: r['품의구분'] || '', memo: r['적요'] || '', total: r['총금액'] || '', status: r['결재상태'] || '', docNo: r['문서번호'] || '',
+      locked: Amaranth.locked(r['결재상태']) }));
+  }
+
+  /** 위쪽 그리드 화면상 i번째 행 체크 (RealGrid2 체크바는 별도 표: tr.rg-row-bar / span.rg-checkbar-checked) */
+  async setRowChecked(i, on, seq = '') {
+    const p = this.page;
+    const state = () => p.eval(k => { const g = grid('품의구분'); const c = all('td.rg-checkbar-cell', g)[k]; if (!c) return null;
+      const inp = c.querySelector('input[type=checkbox]'); const sp = c.querySelector('[class*=checkbar-checked], [class*=checkbar-unchecked]');
+      return sp ? /checkbar-checked/.test(sp.className) : inp ? inp.checked : /☑/.test(c.textContent); }, i);
+    for (let t = 0; t < 3; t++) {
+      if ((await state()) === on) return;
+      await p.clickWhere(k => { const g = grid('품의구분'); const c = all('td.rg-checkbar-cell', g)[k]; return c && (t => t)(c.querySelector('label, span, input') || c); }, i);
+      await sleep(300);
+    }
+    if ((await state()) !== on) throw new Error(`순번 ${seq} 행을 ${on ? '체크' : '해제'}하지 못했습니다.`);
+  }
+
+  /** key 품의 행이 화면에 보이게 스크롤하고 화면상 행 번호를 돌려준다 */
+  async revealBudgetRow(key) {
+    const p = this.page;
+    const find = () => p.eval(k => { const g = grid('품의구분'); return rows(g).findIndex((_, i) => { const v = rowVals(g, i) || {}; return [v['품의연월'], v['품의일'], v['순번']].join('|') === k; }); }, key);
+    for (const dir of [-1, 1]) {
+      for (let i = 0; i < 200; i++) {
+        const idx = await find(); if (idx >= 0) return idx;
+        if (!(await this.scrollTop(dir))) break;
+      }
+    }
+    return -1;
+  }
+
+
   async deleteBudgetRows(keys) {
     const p = this.page, ui = this.ui;
     const want = new Set(keys);
@@ -321,29 +389,40 @@ class Amaranth {
     if (!del.length) { this.log('삭제할 품의가 없습니다.'); return { deleted: 0, skipped: skip.length }; }
     for (const r of del) {
       this.log(`선택: ${r.ym} ${r.day}일 순번 ${r.seq} ${r.memo} ${r.total}`);
-      await p.clickWhere(i => { const g = grid('품의구분'); return g && all('td.rg-checkbar-cell', g)[i]; }, r.index).catch(async e => { throw new Error(`품의 행(순번 ${r.seq})을 체크하지 못했습니다: ${JSON.stringify(await p.eval(() => { const g = grid('품의구분'); return g ? [all('td.rg-checkbar-cell', g).length, location.href] : ['no grid', location.href]; }))}`); });
+      const idx = await this.revealBudgetRow(r.key);
+      if (idx < 0) throw new Error(`순번 ${r.seq} 품의를 목록에서 찾지 못했습니다.`);
+      await this.setRowChecked(idx, true, r.seq);
       await sleep(250);
     }
-    // 상단 도구 모음의 삭제(휴지통) 버튼
+    const okBefore = await p.eval(() => all('button, [role=button]').filter(b => vis(b) && /^(확인|예)$/.test(norm(b.textContent))).length);
+    // 삭제 버튼: 체크하면 나타나는 하단 바 [삭제] → 없으면 상단 휴지통 아이콘
     const btn = await p.eval(() => {
       const g = grid('품의구분'); const gt = g ? g.getBoundingClientRect().top : 9999;
-      const exact = all('button, [role=button]').filter(b => vis(b) && !b.disabled && norm(b.textContent) === '삭제');   // 하단 바 [삭제]
-      if (exact.length) return center(exact.pop());
+      const exact = all('button, [role=button]').filter(b => vis(b) && !b.disabled && norm(b.textContent) === '삭제' && b.getBoundingClientRect().top > gt);
+      if (exact.length) return { ...center(exact.pop()), how: '하단 [삭제]' };
       const c = all('button, [role=button]').filter(b => vis(b) && b.getBoundingClientRect().bottom <= gt + 5).filter(b => {
         const t = norm(b.textContent) + (b.getAttribute('title') || '') + (b.getAttribute('aria-label') || '') + (b.id || '') + (b.className || '');
         const img = b.querySelector('img'); const src = img ? img.getAttribute('src') || '' : '';
         return /삭제|delete|trash|remove/i.test(t) || /del|trash|remove/i.test(src);
       });
-      const b = c.pop(); return b ? center(b) : null; });
-    if (btn) await p.click(btn);
-    else await ui.assist(`삭제할 품의 ${del.length}건을 체크해 두었어요. 위쪽 휴지통(삭제) 버튼을 눌러 주세요.`);
-    // "삭제하시겠습니까?" 확인
-    const ok = await p.waitFor(() => { const h = all('*').filter(e => ownText(e) && vis(e) && /삭제/.test(e.textContent) && /(\?|하시겠|할까요)/.test(e.textContent)).pop();
-      const d = h && dialog(h.textContent.trim()); const b = d && okButtons(d).pop(); return b ? center(b) : null; }, [], { timeout: 5000 });
-    if (ok) await p.click(ok);
+      const b = c.pop(); return b ? { ...center(b), how: '상단 휴지통' } : null; });
+    if (btn) { this.log(`삭제 버튼 클릭 (${btn.how})`); await p.click(btn); }
+    else await ui.assist(`삭제할 품의 ${del.length}건을 체크해 두었어요. [그룹웨어 창 열기]로 창을 띄워 삭제 버튼을 눌러 주세요.`);
+    // 확인 창: "삭제하시겠습니까?" 등 — 새로 뜬 창의 [확인]/[예]
+    const ok = await p.waitFor(n => {
+      const h = all('*').filter(e => ownText(e) && vis(e) && /삭제/.test(e.textContent) && /(\?|하시겠|할까요)/.test(e.textContent)).pop();
+      const d = h && dialog(h.textContent.trim()); const b1 = d && okButtons(d).pop(); if (b1) return center(b1);
+      const bs = all('button, [role=button]').filter(b => vis(b) && /^(확인|예)$/.test(norm(b.textContent)));
+      return bs.length > n ? center(bs[bs.length - 1]) : null; }, [okBefore], { timeout: 6000 });
+    if (ok) { this.log('삭제 확인 클릭'); await p.click(ok); } else this.log('(삭제 확인 창이 보이지 않았어요)');
+    await sleep(1500);
+    // 완료 알림(삭제되었습니다 등)이 뜨면 닫기
+    const done = await p.eval(n => { const bs = all('button, [role=button]').filter(b => vis(b) && /^(확인|예)$/.test(norm(b.textContent))); return bs.length > n ? center(bs[bs.length - 1]) : null; }, okBefore);
+    if (done) await p.click(done);
     await sleep(2000);
     const after = await this.listBudgetRows();
     const left = after.filter(r => del.some(d => d.key === r.key));
+    if (left.length) await this.debugDump('delete', '삭제');
     if (left.length) throw new Error(`${left.length}건이 아직 남아 있어요. 그룹웨어에서 확인해 주세요.`);
     this.log(`✔ ${del.length}건 삭제됨${skip.length ? `, ${skip.length}건은 결재 진행 중이라 건너뜀` : ''}`);
     return { deleted: del.length, skipped: skip.length, rows: after };

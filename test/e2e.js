@@ -60,8 +60,9 @@ app.whenReady().then(async () => {
     // 그리드 상태
     const st = await gw.webContents.executeJavaScript('JSON.stringify({top:S.top, bot:S.bot, approval:window.__approval})');
     const s = JSON.parse(st);
-    assert.equal(s.top[1].품의구분, '지출');
-    assert.equal(s.top[1].총금액, '324,814');
+    const mineTop = s.top.find(r => r.순번 === '45');
+    assert.equal(mineTop.품의구분, '지출');
+    assert.equal(mineTop.총금액, '324,814');
     assert.deepEqual(s.bot.slice(0, 3).map(r => [r.부서, r.예산과목, r.품의금액]), [
       ['매니퓰레이터 사업부', '여비교통비(판)_국내교통비', '74,814'],
       ['매니퓰레이터 사업부', '여비교통비(판)_국내숙박비', '160,000'],
@@ -108,7 +109,7 @@ app.whenReady().then(async () => {
     assert.ok(mine.length >= 2, `삭제 가능한 품의가 2건 이상이어야 함: ${JSON.stringify(rows)}`);
     const res = await runner.runDeleteBudget(env, [...mine.map(r => r.key), rows.find(r => r.seq === '44').key]);
     assert.equal(res.deleted, mine.length); assert.equal(res.skipped, 1);
-    assert.deepEqual(res.rows.map(r => r.seq), ['44']);
+    assert.deepEqual(res.rows.map(r => r.seq), ['40', '41', '42', '43', '44']);   // 결재완료·진행중만 남음
     console.log('E2E 품의 삭제 OK');
 
     // 출장 기록 삭제: 연결된 품의(신청)까지 삭제. 새로 신청 하나 더 만든 뒤 지운다
