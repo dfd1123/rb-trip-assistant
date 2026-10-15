@@ -100,4 +100,20 @@ async function runLogin(env) {
   return {};
 }
 
-module.exports = { planApply, runFare, runApply, reportDraft, runReport, runLogin };
+async function runListBudget(env) {
+  const gw = new Amaranth({ win: env.gwWindow(), baseUrl: env.cfg.baseUrl, ui: env.ui, log: env.log, debugDir: env.debugDir, creds: env.creds });
+  await gw.ensureLogin();
+  const rows = await gw.listBudgetRows();
+  env.log(`품의 ${rows.length}건 (삭제 가능 ${rows.filter(r => !r.locked).length}건)`);
+  return { rows };
+}
+
+async function runDeleteBudget(env, keys) {
+  if (!Array.isArray(keys) || !keys.length) throw new Error('삭제할 품의를 골라 주세요.');
+  const gw = new Amaranth({ win: env.gwWindow(), baseUrl: env.cfg.baseUrl, ui: env.ui, log: env.log, debugDir: env.debugDir, creds: env.creds });
+  await gw.ensureLogin();
+  const r = await gw.deleteBudgetRows(keys);
+  return { ...r, rows: r.rows || await gw.listBudgetRows() };
+}
+
+module.exports = { planApply, runFare, runApply, reportDraft, runReport, runLogin, runListBudget, runDeleteBudget };

@@ -195,6 +195,38 @@ async function loadTrips(){
     $('#trips').appendChild(el);
   });
 }
+/* ---------- 그룹웨어에 올린 품의 (목록·삭제) ---------- */
+let gwRows = [];
+function renderGwRows(rows){
+  gwRows = rows || [];
+  const box = $('#gwRows');
+  if(!gwRows.length){ box.innerHTML = '<p class="sub">저장된 품의가 없어요.</p>'; $('#btnGwDel').disabled = true; return; }
+  box.innerHTML = '<table class="gw"><thead><tr><th style="width:28px"><input type="checkbox" id="gwAll" style="width:auto"></th><th>품의일</th><th>순번</th><th>적요</th><th class="num">총금액</th><th>결재상태</th></tr></thead><tbody></tbody></table>';
+  const tb = box.querySelector('tbody');
+  gwRows.forEach(r => {
+    const tr = document.createElement('tr'); if(r.locked) tr.className = 'locked';
+    tr.innerHTML = '<td><input type="checkbox" style="width:auto"></td><td></td><td></td><td></td><td class="num"></td><td></td>';
+    const cb = tr.querySelector('input'); cb.dataset.key = r.key; cb.disabled = r.locked; cb.title = r.locked ? '결재가 진행 중이거나 끝나서 삭제할 수 없어요' : '';
+    const td = tr.querySelectorAll('td');
+    td[1].textContent = `${r.ym} ${r.day}일`; td[2].textContent = r.seq; td[3].textContent = r.memo || r.kind; td[4].textContent = r.total; td[5].textContent = r.status || '-';
+    if(r.locked) td[5].textContent += ' (삭제 불가)';
+    tb.appendChild(tr);
+  });
+  const sync = () => { $('#btnGwDel').disabled = !$$('#gwRows tbody input:checked').length; };
+  tb.querySelectorAll('input').forEach(c => c.onchange = sync);
+  $('#gwAll').onchange = e => { tb.querySelectorAll('input:not(:disabled)').forEach(c => c.checked = e.target.checked); sync(); };
+  sync();
+}
+$('#btnGwList').onclick = () => runJob('그룹웨어 품의 불러오기', '/api/job/gw-list', {}, r => renderGwRows(r.rows));
+$('#btnGwDel').onclick = () => {
+  const keys = $$('#gwRows tbody input:checked').map(c => c.dataset.key);
+  const pick = gwRows.filter(r => keys.includes(r.key));
+  if(!pick.length) return;
+  const lines = pick.map(r => `· ${r.ym} ${r.day}일 순번 ${r.seq}  ${r.memo || ''}  ${r.total}`).join('\n');
+  if(!confirm(`그룹웨어에서 품의 ${pick.length}건을 삭제할까요? 되돌릴 수 없어요.\n\n${lines}`)) return;
+  runJob(`품의 ${pick.length}건 삭제`, '/api/job/gw-delete', { keys }, r => renderGwRows(r.rows));
+};
+
 async function repeatTrip(id){
   const {data} = await rpc('/api/repeat', {id});
   $$('nav button')[0].click();

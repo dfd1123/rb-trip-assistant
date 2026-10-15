@@ -279,6 +279,69 @@ class Amaranth {
     return row;
   }
 
+  // ---------- 올린 품의 목록·삭제 ----------
+  /** 결재가 진행 중이거나 끝난 품의는 삭제하지 않는다 */
+  static locked(status) { return /(진행|완료|승인|결재중|종결|상신|결재대기|합의)/.test(String(status || '')); }
+
+  async openBudgetList() {
+    const p = this.page;
+    // 같은 주소면 해시만 바뀌고 새로고침이 안 돼 이전 체크가 남을 수 있음 → 확실히 새로 연다
+    if (p.url() === this.baseUrl + BUDGET_PATH) { p.wc.reload(); await new Promise(r => p.wc.once('did-finish-load', r)); }
+    else await p.goto(this.baseUrl + BUDGET_PATH);
+    await sleep(1500);
+    if (await this.isLoginPage()) { await this.ensureLogin(); await p.goto(this.baseUrl + BUDGET_PATH); }
+    await p.waitFor(() => !!grid('품의구분'), [], { timeout: 30000, message: '품의서입력 화면이 열리지 않았습니다.' });
+    await sleep(1500);
+  }
+
+  /** 품의서입력(복수) 위쪽 목록 (순번이 있는 = 저장된 품의만) */
+  async listBudgetRows() {
+    await this.openBudgetList();
+    const rows = await this.page.eval(() => { const g = grid('품의구분'); return rows(g).map((_, i) => rowVals(g, i)); });
+    return rows.map((r, i) => ({ ...r, index: i })).filter(r => r && r['순번'])
+      .map(r => ({ index: r.index, key:[r['품의연월'], r['품의일'], r['순번']].join('|'), ym: r['품의연월'] || '', day: r['품의일'] || '', seq: r['순번'],
+        kind: r['품의구분'] || '', memo: r['적요'] || '', total: r['총금액'] || '', status: r['결재상태'] || '', docNo: r['문서번호'] || '',
+        locked: Amaranth.locked(r['결재상태']) }));
+  }
+
+  /** keys(품의연월|품의일|순번) 품의 삭제. 결재 진행 중인 건은 건너뜀. 삭제된 개수를 돌려준다 */
+  async deleteBudgetRows(keys) {
+    const p = this.page, ui = this.ui;
+    const want = new Set(keys);
+    const before = await this.listBudgetRows();          // 새로 열어 체크가 하나도 없는 상태에서 시작
+    const targets = before.filter(r => want.has(r.key));
+    const skip = targets.filter(r => r.locked);
+    for (const r of skip) this.log(`건너뜀: ${r.day}일 순번 ${r.seq} (결재상태 '${r.status}')`);
+    const del = targets.filter(r => !r.locked);
+    if (!del.length) { this.log('삭제할 품의가 없습니다.'); return { deleted: 0, skipped: skip.length }; }
+    for (const r of del) {
+      this.log(`선택: ${r.ym} ${r.day}일 순번 ${r.seq} ${r.memo} ${r.total}`);
+      await p.clickWhere(i => { const g = grid('품의구분'); return g && all('td.rg-checkbar-cell', g)[i]; }, r.index).catch(async e => { throw new Error(`품의 행(순번 ${r.seq})을 체크하지 못했습니다: ${JSON.stringify(await p.eval(() => { const g = grid('품의구분'); return g ? [all('td.rg-checkbar-cell', g).length, location.href] : ['no grid', location.href]; }))}`); });
+      await sleep(250);
+    }
+    // 상단 도구 모음의 삭제(휴지통) 버튼
+    const btn = await p.eval(() => {
+      const g = grid('품의구분'); const gt = g ? g.getBoundingClientRect().top : 9999;
+      const c = all('button, [role=button]').filter(b => vis(b) && b.getBoundingClientRect().bottom <= gt + 5).filter(b => {
+        const t = norm(b.textContent) + (b.getAttribute('title') || '') + (b.getAttribute('aria-label') || '') + (b.id || '') + (b.className || '');
+        const img = b.querySelector('img'); const src = img ? img.getAttribute('src') || '' : '';
+        return /삭제|delete|trash|remove/i.test(t) || /del|trash|remove/i.test(src);
+      });
+      const b = c.pop(); return b ? center(b) : null; });
+    if (btn) await p.click(btn);
+    else await ui.assist(`삭제할 품의 ${del.length}건을 체크해 두었어요. 위쪽 휴지통(삭제) 버튼을 눌러 주세요.`);
+    // "삭제하시겠습니까?" 확인
+    const ok = await p.waitFor(() => { const h = all('*').filter(e => ownText(e) && vis(e) && /삭제/.test(e.textContent) && /(\?|하시겠|할까요)/.test(e.textContent)).pop();
+      const d = h && dialog(h.textContent.trim()); const b = d && okButtons(d).pop(); return b ? center(b) : null; }, [], { timeout: 5000 });
+    if (ok) await p.click(ok);
+    await sleep(2000);
+    const after = await this.listBudgetRows();
+    const left = after.filter(r => del.some(d => d.key === r.key));
+    if (left.length) throw new Error(`${left.length}건이 아직 남아 있어요. 그룹웨어에서 확인해 주세요.`);
+    this.log(`✔ ${del.length}건 삭제됨${skip.length ? `, ${skip.length}건은 결재 진행 중이라 건너뜀` : ''}`);
+    return { deleted: del.length, skipped: skip.length, rows: after };
+  }
+
   // ---------- 결재상신 ----------
   /** 하단 [결재상신] → 결재양식/제목 → 확인 → 전자결재 팝업(BrowserWindow) */
   async openApproval(formName, title) {

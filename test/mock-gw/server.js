@@ -41,16 +41,20 @@ const SEARCH='__SEARCH__';   // enter: Enter로 검색 / button: 돋보기 버�
 const CODES=[['8120002','여비교통비(판)_국내교통비'],['8120003','여비교통비(판)_국내숙박비'],['8120004','여비교통비(판)_식대']];
 let S;
 function budget(){
-  S={top:[{품의연월:'2026-10',품의일:'14',순번:'44',품의구분:'지출',적요:'',총금액:'10,000'},{품의연월:'2026-10',품의일:'14'}],bot:[],focus:null,enter:0,checked:-1};
+  // 위쪽 품의 목록은 새로고침해도 남도록 localStorage 에 보관 (삭제 테스트용). 순번 44 는 결재 진행 중인 기존 품의
+  const def=[{품의연월:'2026-10',품의일:'14',순번:'44',품의구분:'지출',적요:'기존 품의',총금액:'10,000',결재상태:'진행중'},{품의연월:'2026-10',품의일:'14'}];
+  S={top:JSON.parse(localStorage.top||'null')||def,bot:[],focus:null,enter:0,checked:-1,marks:new Set()};
   render();
 }
 function gridHtml(id,cols,rows){
   return '<div class="rg-root" id="'+id+'"><table class="rg-header"><tr><td class="rg-head-cell rg-checkbar-head"></td>'+cols.map(c=>'<td class="rg-header-cell"><span class="rg-header-renderer">'+c+'</span></td>').join('')+'</tr></table>'+
-   '<table class="rg-body">'+rows.map((r,i)=>'<tr class="rg-data-row"><td class="rg-checkbar-cell" data-i="'+i+'">'+(id==='top'&&S.checked===i?'☑':'☐')+'</td>'+cols.map(c=>'<td class="rg-data-cell'+((c==='부서'||c==='예산과목')&&id==='bot'?' rg2-button-codepicker':'')+'" data-g="'+id+'" data-r="'+i+'" data-c="'+c+'"><div class="rg-renderer">'+(r[c]||'')+'</div>'+((c==='부서'||c==='예산과목')&&id==='bot'?'<div class="rg-cell-buttons" style="position:absolute;right:2px;top:5px"><div class="rg-button-action" style="width:18px;height:18px;background:#ccc"></div></div>':'')+'</td>').join('')+'</tr>').join('')+'</table></div>';
+   '<table class="rg-body">'+rows.map((r,i)=>'<tr class="rg-data-row"><td class="rg-checkbar-cell" data-i="'+i+'">'+(id==='top'&&S.marks&&S.marks.has(i)?'☑':'☐')+'</td>'+cols.map(c=>'<td class="rg-data-cell'+((c==='부서'||c==='예산과목')&&id==='bot'?' rg2-button-codepicker':'')+'" data-g="'+id+'" data-r="'+i+'" data-c="'+c+'"><div class="rg-renderer">'+(r[c]||'')+'</div>'+((c==='부서'||c==='예산과목')&&id==='bot'?'<div class="rg-cell-buttons" style="position:absolute;right:2px;top:5px"><div class="rg-button-action" style="width:18px;height:18px;background:#ccc"></div></div>':'')+'</td>').join('')+'</tr>').join('')+'</table></div>';
 }
 function render(){
-  $('#app').innerHTML=gridHtml('top',TOP,S.top)+gridHtml('bot',BOT,S.bot)+(S.checked>=0?'<div class="bar"><button id="btnAppr">결재상신</button></div>':'');
+  localStorage.top=JSON.stringify(S.top);
+  $('#app').innerHTML='<div class="tools"><button id="btnPrint" title="인쇄"><img src="/ic_print.png" alt=""></button><button id="btnDel" title="삭제"><img src="/ic_delete.png" alt=""></button></div>'+gridHtml('top',TOP,S.top)+gridHtml('bot',BOT,S.bot)+(S.checked>=0?'<div class="bar"><button id="btnAppr">결재상신</button></div>':'');
   if($('#btnAppr')) $('#btnAppr').onclick=approvalDialog;
+  $('#btnDel').onclick=()=>{ if(!S.marks.size) return; dialog('알림','<p>선택한 품의를 삭제하시겠습니까?</p>',()=>{ S.top=S.top.filter((r,i)=>!S.marks.has(i)||/진행|완료/.test(r.결재상태||'')); S.marks.clear(); S.checked=-1; render(); }); };
 }
 // 실제처럼 첨부파일 칸에서 Enter 로 확정된 행만 합계에 반영
 const total=()=>S.bot.filter(r=>r.done).reduce((s,r)=>s+Number(String(r.품의금액||'0').replace(/,/g,'')),0);
@@ -87,7 +91,7 @@ document.addEventListener('dblclick',e=>{
 });
 document.addEventListener('click',e=>{
   const cb=e.target.closest('td.rg-checkbar-cell');
-  if(cb&&cb.closest('#top')){ S.checked=+cb.dataset.i; S.top[S.checked].총금액=total().toLocaleString('en-US'); render(); return; }
+  if(cb&&cb.closest('#top')){ const k=+cb.dataset.i; if(S.marks.has(k)) S.marks.delete(k); else S.marks.add(k); S.checked=k; S.top[S.checked].총금액=total().toLocaleString('en-US'); render(); return; }
   const td=e.target.closest('td.rg-data-cell'); if(!td) return; const g=td.dataset.g, r=+td.dataset.r, c=td.dataset.c;
   S.focus={g,r,c};
   // 실제처럼 셀 오른쪽 아이콘(.rg-button-action)을 눌러야 코드도움이 열림
@@ -99,7 +103,7 @@ document.addEventListener('click',e=>{
 document.addEventListener('keydown',e=>{
   if(e.key!=='Enter'||!S||!S.focus) return;
   const f=S.focus;
-  if(f.g==='top'&&f.c==='품의구분'&&S.top[f.r].품의구분){ if(++S.enter===3){ S.top[f.r].순번='45'; S.top.push({품의연월:'2026-10',품의일:'14'}); S.bot.push({}); S.focus={g:'bot',r:0,c:'부서'}; render(); } }
+  if(f.g==='top'&&f.c==='품의구분'&&S.top[f.r].품의구분){ if(++S.enter===3){ S.top[f.r].순번=String(Math.max(...S.top.map(r=>+r.순번||0))+1); S.top[f.r].적요='출장'; S.top[f.r].결재상태='작성'; S.top.push({품의연월:'2026-10',품의일:'14'}); S.bot.push({}); S.focus={g:'bot',r:0,c:'부서'}; render(); } }
   else if(f.g==='bot'&&f.c==='첨부파일'){ S.bot[f.r].done=true; S.bot.push({}); S.focus={g:'bot',r:f.r+1,c:'부서'}; render(); }
 });
 function approvalDialog(){

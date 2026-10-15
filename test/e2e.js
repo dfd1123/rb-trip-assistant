@@ -92,13 +92,23 @@ app.whenReady().then(async () => {
     await runner.runReport(env, draft);
     const st2 = JSON.parse(await gw.webContents.executeJavaScript('JSON.stringify({top:S.top, approval:window.__approval})'));
     assert.equal(st2.approval.form, '출장보고서 및 정산 품의서');
-    assert.equal(st2.top[1].총금액, '314,814');
+    assert.equal(st2.top[st2.top.length - 2].총금액, '314,814');
     const rep = saved[1];
     assert.equal(rep.title, '[출장보고서 및 정산 품의서] 판교 AI 사무소 RBY1-Muscat 연동 검증으로 인한 출장 보고의 건');
     for (const needle of ['김종완', 'SDK 래핑 완료<br>실기 검증 3건 통과', '로봇 셋업', '결과 공유', '10/22'])
       assert.ok(rep.body.includes(needle), `보고서 본문에 '${needle}' 없음`);
     assert.equal(store.load(id).reportStatus, '보관됨');
     console.log('E2E 보고서 OK');
+
+    // 올린 품의 목록·삭제: 결재 진행 중(순번 44)은 잠김, 나머지만 삭제
+    const { rows } = await runner.runListBudget(env);
+    assert.equal(rows.find(r => r.seq === '44').locked, true);
+    const mine = rows.filter(r => !r.locked);
+    assert.ok(mine.length >= 2, `삭제 가능한 품의가 2건 이상이어야 함: ${JSON.stringify(rows)}`);
+    const res = await runner.runDeleteBudget(env, [...mine.map(r => r.key), rows.find(r => r.seq === '44').key]);
+    assert.equal(res.deleted, mine.length); assert.equal(res.skipped, 1);
+    assert.deepEqual(res.rows.map(r => r.seq), ['44']);
+    console.log('E2E 품의 삭제 OK');
   } catch (e) {
     console.error('E2E FAIL:', e.stack || e.message);
     code = 1;

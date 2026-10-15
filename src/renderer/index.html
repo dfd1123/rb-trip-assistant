@@ -53,6 +53,9 @@ textarea{resize:vertical;min-height:84px}
 .btn{border:1px solid var(--line);background:#fff;border-radius:8px;padding:8px 14px;font:inherit;cursor:pointer;white-space:nowrap}
 .btn:hover{border-color:#c9ced6}
 .btn.primary{background:linear-gradient(135deg,var(--accent),#1f6aa8);border-color:var(--accent);color:var(--accent-ink);font-weight:600}
+.btn.danger{border-color:#f3c2c2;color:#b42318} .btn.danger:disabled{opacity:.45;cursor:not-allowed}
+table.gw{width:100%;border-collapse:collapse;font-size:13px} table.gw td,table.gw th{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left} table.gw th{color:var(--muted);font-weight:600}
+table.gw tr.locked{color:var(--muted)} table.gw td.num{text-align:right;white-space:nowrap}
 .btn.primary:disabled{opacity:.5;cursor:not-allowed}
 .btn.small{padding:5px 10px;font-size:13px}
 .inline{display:flex;gap:8px;align-items:center}
@@ -196,6 +199,12 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
 
 <!-- ================= 내 출장 / 보고서 ================= -->
 <section id="tab-trips" class="hidden">
+  <div class="card" id="gwList">
+    <div class="inline" style="justify-content:space-between"><div><h2 style="margin:0">그룹웨어에 올린 품의</h2>
+      <p class="sub" style="margin:2px 0 0">품의서입력(복수)에 저장된 품의예요. 결재가 진행 중이거나 끝난 건은 삭제할 수 없어요.</p></div>
+      <div class="inline" style="gap:8px"><button class="btn" id="btnGwList">불러오기</button><button class="btn danger" id="btnGwDel" disabled>선택 삭제</button></div></div>
+    <div id="gwRows" style="margin-top:10px"></div>
+  </div>
   <div class="card list" id="tripList"><h2>신청한 출장</h2><p class="sub">이 PC에서 신청한 기록이에요. [보고서 작성]을 누르면 신청 내용이 미리 채워집니다.</p><div id="trips"></div></div>
 
   <div id="reportView" class="hidden">

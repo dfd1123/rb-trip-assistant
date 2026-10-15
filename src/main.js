@@ -256,6 +256,8 @@ async function route(p, body = {}) {
     case '/api/gw/login': return gwLogin(body);
     case '/api/gw/forget': sessionCreds = null; store.saveConfig({ gwId: '', gwPwEnc: '' }); return { ok: true };
     case '/api/gw/show': gwWindow(true).focus(); return { ok: true };
+    case '/api/job/gw-list': return startJob('gw-list', env => runner.runListBudget(env), body.title);
+    case '/api/job/gw-delete': return startJob('gw-delete', env => runner.runDeleteBudget(env, body.keys), body.title);
     case '/api/job/login': return startJob('login', env => runner.runLogin(env), body.title);
     case '/api/job/fare': return startJob('fare', env => runner.runFare({ ...env, force: Boolean(body.force) }, body), body.title);
     case '/api/job/apply': runner.planApply(body.data, cfg); return startJob('apply', env => runner.runApply(env, body.data, { save: body.save !== false }), body.title);
