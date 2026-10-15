@@ -15,6 +15,7 @@
 | Ubuntu | `.deb` (`sudo apt install ./파일.deb`) 또는 `.AppImage` (실행 권한 주고 더블클릭) | — |
 
 > 회사 코드서명 인증서가 없어서 첫 실행 경고가 나옵니다. 인증서를 붙이면 사라집니다.
+> 설치 파일은 [Releases](https://github.com/dfd1123/rb-trip-assistant/releases/latest) 에서 받습니다. 이후 새 버전은 앱이 알려줍니다.
 
 ### 처음 한 번
 1. **설정** 탭에서 이름, 예산 부서(기본: 매니퓰레이터 사업부), 기본 출발지(기본: 세종특별자치시 집현동 1095)를 저장
@@ -63,7 +64,16 @@ npx electron test/e2e.js  # 가짜 아마란스로 신청서·보고서 전체 �
 npx electron-builder --mac|--win|--linux --publish never
 ```
 
-배포: `git tag v0.2.0 && git push --tags` → GitHub Actions 가 테스트 후 3개 OS 설치 파일을 만들어 Release 에 올립니다.
+### 배포와 자동 업데이트
+1. `package.json` 의 `version` 을 올리고 커밋
+2. `git tag v0.3.0 && git push origin main --tags`
+3. GitHub Actions: 테스트 → Release 생성 → Windows/macOS/Linux 빌드가 Release 에 업로드 (태그와 package.json 버전이 다르면 실패)
+
+설치된 앱은 시작할 때와 6시간마다 [Releases](https://github.com/dfd1123/rb-trip-assistant/releases) 를 확인합니다.
+- **Windows · AppImage**: 백그라운드로 받아두고 상단 알림의 [지금 재시작]으로 적용
+- **macOS · deb**: 코드서명이 없어 자동 설치가 막혀 있어서 [다운로드] 알림 → 새 버전을 설치 (Apple 개발자 인증서를 붙이면 macOS 도 자동 설치 가능)
+
+자동 업데이트가 GitHub Releases 에서 파일을 받기 때문에 저장소는 Public 이어야 합니다. 실제 결재 문서 데이터는 저장소에 넣지 마세요.
 
 ### 구조
 ```

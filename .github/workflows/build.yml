@@ -1,11 +1,18 @@
 name: build
 
-# v0.2.0 처럼 태그를 푸시하면 3개 OS 설치 파일을 만들고 Release 에 올린다.
-# Actions 탭에서 수동 실행(workflow_dispatch)하면 Artifacts 로만 받을 수 있다.
+# 릴리즈:  package.json version 을 올리고  git tag v0.3.0 && git push --tags
+#   → 테스트 → GitHub Release 생성 → Windows/macOS/Linux 빌드가 Release 에 업로드
+#   → 설치된 앱이 latest*.yml 을 보고 자동 업데이트 (Windows·AppImage 자동 설치, macOS·deb 는 다운로드 알림)
+# 수동 실행(Actions 탭 → Run workflow)은 Release 없이 Artifacts 로만 빌드.
 on:
   push:
     tags: ['v*']
+    branches: [main]
+  pull_request:
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   test:
@@ -19,46 +26,50 @@ jobs:
       - name: E2E (가짜 아마란스에 신청서·보고서 입력)
         run: xvfb-run -a -s "-screen 0 1600x1100x24" npx electron test/e2e.js --no-sandbox
 
-  build:
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
     needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 태그와 package.json 버전 일치 확인
+        run: |
+          v=$(node -p "require('./package.json').version")
+          [ "v$v" = "${GITHUB_REF_NAME}" ] || { echo "package.json 버전(v$v)과 태그(${GITHUB_REF_NAME})가 다릅니다"; exit 1; }
+      - name: Release 만들기
+        env: { GH_TOKEN: '${{ github.token }}' }
+        run: gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
+
+  build:
+    needs: [test, release]
+    if: always() && needs.test.result == 'success' && (needs.release.result == 'success' || needs.release.result == 'skipped') && github.event_name != 'pull_request'
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: windows-latest
-            args: --win
-          - os: macos-latest
-            args: --mac
-          - os: ubuntu-latest
-            args: --linux
+          - { os: windows-latest, args: --win }
+          - { os: macos-latest, args: --mac }
+          - { os: ubuntu-latest, args: --linux }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm }
       - run: npm ci
-      - run: npx electron-builder ${{ matrix.args }} --publish never
+      - name: 빌드 (태그면 Release 에 업로드)
+        shell: bash
+        run: npx electron-builder ${{ matrix.args }} --publish ${{ startsWith(github.ref, 'refs/tags/v') && 'always' || 'never' }}
         env:
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'   # 코드서명 인증서가 없으면 서명 없이 빌드
+          GH_TOKEN: ${{ github.token }}
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'   # 코드서명 인증서 없음
       - uses: actions/upload-artifact@v4
         with:
           name: trip-assistant-${{ matrix.os }}
           path: |
             dist/*.exe
             dist/*.dmg
+            dist/*.zip
             dist/*.AppImage
             dist/*.deb
+            dist/latest*.yml
           if-no-files-found: error
-
-  release:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
-    runs-on: ubuntu-latest
-    permissions: { contents: write }
-    steps:
-      - uses: actions/download-artifact@v4
-        with: { path: out, merge-multiple: true }
-      - uses: softprops/action-gh-release@v2
-        with:
-          files: out/*
-          generate_release_notes: true

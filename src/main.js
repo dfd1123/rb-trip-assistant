@@ -9,6 +9,7 @@ const runner = require('./engine/runner');
 const { Store } = require('./engine/store');
 const Q = require('./engine/quick');
 const AI = require('./engine/ai');
+const updater = require('./updater');
 
 const ICON = path.join(__dirname, '..', 'assets', 'icon-512.png');
 let mainWin = null, gwWin = null, store = null;
@@ -167,6 +168,8 @@ async function route(p, body = {}) {
     case '/api/plan': return runner.planApply(body, cfg);
     case '/api/trips': return { trips: store.list() };
     case '/api/draft': { const d = runner.reportDraft(store, cfg, body.id); return { draft: d, prompt: R.reportPrompt(d) }; }
+    case '/api/update': return { ...updater.state, current: app.getVersion() };
+    case '/api/update/install': return { restarting: updater.install() };
     case '/api/copy': clipboard.writeText(String(body.text || '')); return { ok: true };
     case '/api/open': if (body.path) shell.openPath(body.path); return { ok: true };
     case '/api/job/login': return startJob('login', env => runner.runLogin(env));
@@ -187,6 +190,7 @@ ipcMain.handle('api', async (_e, p, body) => {
 app.whenReady().then(() => {
   store = new Store(process.env.TRIP_ASSISTANT_DATA || app.getPath('userData'));
   createMain();
+  updater.start();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createMain(); });
 });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });

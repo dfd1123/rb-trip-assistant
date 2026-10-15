@@ -328,6 +328,17 @@ function alertErr(m){ $('#jobPanel').style.display='block'; $('#jobTitle').textC
   $('#s_name').value = c.name; $('#s_dept').value = c.budgetDept; $('#s_origin').value = c.defaultOrigin;
   $('#a_from').value = c.defaultOrigin;
   renderPlaces(); loadAiSettings();
+  const checkUpdate = async () => {
+    const u = await rpc('/api/update').catch(() => null);
+    if(!u || !['available','downloaded','downloading'].includes(u.status)) return;
+    $('#updBar').classList.remove('hidden');
+    $('#updText').textContent = u.status === 'downloaded' ? `새 버전 v${u.version} 준비 완료. 재시작하면 적용돼요.`
+      : u.status === 'downloading' ? `새 버전 v${u.version} 받는 중…` : `새 버전 v${u.version}이 나왔어요 (지금 v${u.current}).`;
+    $('#updBtn').classList.toggle('hidden', u.status === 'downloading');
+    $('#updBtn').textContent = u.status === 'downloaded' ? '지금 재시작' : '다운로드';
+  };
+  $('#updBtn').onclick = () => rpc('/api/update/install');
+  setTimeout(checkUpdate, 8000); setInterval(checkUpdate, 60000);
   $('#q_memo').focus();
   if(!META.configured || !c.name){ $$('nav button')[2].click(); $('#s_msg').textContent = '처음이면 이름부터 저장해 주세요'; }
 })();

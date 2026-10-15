@@ -17,6 +17,7 @@
     "dist:linux": "electron-builder --linux"
   },
   "dependencies": {
+    "electron-updater": "^6.8.9",
     "js-yaml": "^4.1.0"
   },
   "devDependencies": {
@@ -60,6 +61,13 @@
             "arm64",
             "x64"
           ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
         }
       ],
       "category": "public.app-category.productivity",
@@ -76,7 +84,18 @@
       "executableName": "trip-assistant",
       "synopsis": "아마란스10 출장신청서·보고서 자동 작성"
     },
-    "publish": []
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "dfd1123",
+        "repo": "rb-trip-assistant",
+        "releaseType": "release"
+      }
+    ]
   },
-  "homepage": "https://www.rainbow-robotics.com"
+  "homepage": "https://www.rainbow-robotics.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dfd1123/rb-trip-assistant.git"
+  }
 }
