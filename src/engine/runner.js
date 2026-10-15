@@ -30,6 +30,12 @@ async function runFare(env, { mode, to, from }) {
   return r;
 }
 
+/** 취소·오류로 중단: 작성 팝업 닫고 그룹웨어에 만들어 둔 품의 삭제. 취소 뒤엔 log 가 던지므로 logs 에 직접 남긴다 */
+async function abort(env, gw) {
+  const msg = await gw.rollback();
+  if (msg && Array.isArray(env.ui.logs)) env.ui.logs.push(msg);
+}
+
 async function runApply(env, data, { save = true } = {}) {
   const { cfg, store, ui, log } = env;
   const a = R.parseApply(data);
@@ -49,11 +55,13 @@ async function runApply(env, data, { save = true } = {}) {
   store.save(id, rec);
 
   const gw = new Amaranth({ win: env.gwWindow(), baseUrl: cfg.baseUrl, ui, log, debugDir: env.debugDir, creds: env.creds });
-  await gw.ensureLogin();
-  await gw.enterBudget(cfg.budgetDept, expenses);
-  if (gw.lastBudget) { rec.gwApply = gw.lastBudget; store.save(id, rec); }   // 그룹웨어 품의와 연결 (목록·삭제용)
-  const popup = await gw.openApproval(R.APPLY_FORM, title);
-  await gw.fillAndKeep(popup, { title, probe: '출장일', payload: applyPayload(a), save });
+  try {
+    await gw.ensureLogin();
+    await gw.enterBudget(cfg.budgetDept, expenses);
+    if (gw.lastBudget) { rec.gwApply = gw.lastBudget; store.save(id, rec); }   // 그룹웨어 품의와 연결 (목록·삭제용)
+    const popup = await gw.openApproval(R.APPLY_FORM, title);
+    await gw.fillAndKeep(popup, { title, probe: '출장일', payload: applyPayload(a), save });
+  } catch (e) { await abort(env, gw); if (ui.cancelled) store.remove(id); throw e; }
   rec.status = save ? '보관됨' : '입력됨(미보관)';
   store.save(id, rec);
   log(`완료. 출장 ID: ${id}`);
@@ -83,11 +91,13 @@ async function runReport(env, data, { save = true } = {}) {
   const title = R.reportTitle(rep.reason);
   log(`[보고서] ${title}`);
   const gw = new Amaranth({ win: env.gwWindow(), baseUrl: cfg.baseUrl, ui, log, debugDir: env.debugDir, creds: env.creds });
-  await gw.ensureLogin();
-  await gw.enterBudget(cfg.budgetDept, rep.expenses);
+  try {
+    await gw.ensureLogin();
+    await gw.enterBudget(cfg.budgetDept, rep.expenses);
+    const popup = await gw.openApproval(R.REPORT_FORM, title);
+    await gw.fillAndKeep(popup, { title, probe: '출장일시', payload: reportPayload(rep), attachments: rep.attachments, save });
+  } catch (e) { await abort(env, gw); throw e; }
   if (rep.trip_id && gw.lastBudget) { try { const rec = store.load(rep.trip_id); rec.gwReport = gw.lastBudget; store.save(rep.trip_id, rec); } catch (e) { /* 기록 없음 */ } }
-  const popup = await gw.openApproval(R.REPORT_FORM, title);
-  await gw.fillAndKeep(popup, { title, probe: '출장일시', payload: reportPayload(rep), attachments: rep.attachments, save });
   if (rep.trip_id) {
     try { const rec = store.load(rep.trip_id); rec.reportStatus = save ? '보관됨' : '입력됨(미보관)'; rec.report = data; store.save(rep.trip_id, rec); } catch (e) { /* 기록 없음 */ }
   }

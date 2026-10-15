@@ -372,7 +372,8 @@ async function runJob(title, path, body, onDone, opt = {}){
 /** 진행 중인 작업 화면에 붙기 (새 작업 시작, 또는 새로고침 후 이어보기) */
 function watchJob(title, onDone, {quiet = false} = {}){
   $('#jobTitle').textContent = title; $('#jobLog').textContent = ''; jobSince = 0;
-  if(!quiet) $('#jobPanel').style.display = 'block';   // quiet: 물어볼 게 있거나 실패할 때만 창을 띄움 $('#jobCancel').classList.remove('hidden'); $$('main .btn.primary').forEach(b => b.disabled = true);
+  if(!quiet) $('#jobPanel').style.display = 'block';   // quiet: 물어볼 게 있거나 실패할 때만 창을 띄움
+  $('#jobCancel').classList.remove('hidden'); $$('main .btn.primary').forEach(b => b.disabled = true);
   clearInterval(jobTimer);
   jobTimer = setInterval(async () => {
     const s = await rpc('/api/job', {since: jobSince});
@@ -400,7 +401,7 @@ $('#jobYes').onclick = () => {
   answer(true);
 };
 $('#jobNo').onclick = () => answer(false);
-$('#jobClose').onclick = () => $('#jobPanel').style.display = 'none';
+$('#jobClose').onclick = () => { rpc('/api/job/cancel'); $('#jobPanel').style.display = 'none'; };   // 닫기 = 진행 중이던 작업 취소(그룹웨어 품의도 삭제)
 $('#jobCancel').onclick = () => rpc('/api/job/cancel');
 $('#jobShow').onclick = () => rpc('/api/gw/show');
 function alertErr(m){ $('#jobPanel').style.display='block'; $('#jobTitle').textContent='오류'; $('#jobLog').textContent = m; $('#jobAsk').style.display='none'; }

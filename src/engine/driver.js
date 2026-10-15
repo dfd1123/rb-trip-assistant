@@ -112,6 +112,7 @@ class Page {
   async click(pt, { count = 1 } = {}) {
     if (!pt) throw new Error('클릭할 위치를 찾지 못했습니다.');
     const { x, y } = pt;
+    this.wc.focus();   // 숨긴 창은 포커스 이벤트가 안 와 RealGrid 편집기·코드도움이 안 열린다 (document.hasFocus() false)
     this.wc.sendInputEvent({ type: 'mouseMove', x, y });
     for (let i = 1; i <= count; i++) {
       this.wc.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: i });
@@ -143,6 +144,7 @@ class Page {
   }
 
   async key(keyCode, modifiers = []) {
+    this.wc.focus();
     this.wc.sendInputEvent({ type: 'keyDown', keyCode, modifiers });
     if (keyCode === 'Enter') this.wc.sendInputEvent({ type: 'char', keyCode: '\r', modifiers });
     this.wc.sendInputEvent({ type: 'keyUp', keyCode, modifiers });

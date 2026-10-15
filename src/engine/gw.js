@@ -244,6 +244,7 @@ class Amaranth {
         return vs.length ? vs[vs.length - 1]['순번'] : null; }, kind, seqBefore);
     }
     this.log(`새 품의 순번 ${seq || '?'}`);
+    if (seq) { const v = await p.eval(q => { const g = grid('품의구분'); return rows(g).map((_, i) => rowVals(g, i)).find(x => x && x['순번'] === q) || null; }, seq); this.rememberBudget(v); }   // 확정되면 바로 기억 → 중단 시 삭제
 
     for (const [i, ex] of expenses.entries()) {
       this.log(`예산 라인 ${i + 1}/${expenses.length}: ${ex.label} ${ex.amount.toLocaleString('ko-KR')}원`);
@@ -289,8 +290,19 @@ class Amaranth {
     if (amountOf(vals['총금액']) !== total)
       await ui.assist(`품의 총금액이 ${amountOf(vals['총금액']).toLocaleString('ko-KR')}원입니다(예상 ${total.toLocaleString('ko-KR')}원). 확인 후 품의 행만 체크된 상태로 두세요.`);
     this.log(`품의 입력 완료: 총 ${total.toLocaleString('ko-KR')}원 (순번 ${vals['순번'] || '?'})`);
-    this.lastBudget = vals['순번'] ? { key: [vals['품의연월'], vals['품의일'], vals['순번']].join('|'), ym: vals['품의연월'], day: vals['품의일'], seq: vals['순번'] } : null;
+    this.rememberBudget(vals);
     return ri;
+  }
+  rememberBudget(vals) {
+    if (vals && vals['순번']) this.lastBudget = { key: [vals['품의연월'], vals['품의일'], vals['순번']].join('|'), ym: vals['품의연월'], day: vals['품의일'], seq: vals['순번'] };
+  }
+  /** 취소·오류로 중단할 때: 작성 팝업 닫고, 만들어 둔 품의 행 삭제 (ui 가 이미 취소 상태라 log/assist 없이 돈다) */
+  async rollback() {
+    for (const w of popupsOf.get(this.win.webContents)) if (!w.isDestroyed()) w.destroy();
+    if (!this.lastBudget) return '';
+    const g = new Amaranth({ win: this.win, baseUrl: this.baseUrl, ui: { assist: async m => { throw new Error(m); } }, log: () => {}, debugDir: this.debugDir, creds: this.creds });
+    try { await g.deleteBudgetRows([this.lastBudget.key]); return `— 그룹웨어에 올리던 품의(순번 ${this.lastBudget.seq})는 삭제했어요.`; }
+    catch (e) { return `— 그룹웨어 품의(순번 ${this.lastBudget.seq}) 삭제 실패: ${e.message}. 품의서입력(복수) 화면에서 직접 지워 주세요.`; }
   }
 
   // ---------- 올린 품의 목록·삭제 ----------

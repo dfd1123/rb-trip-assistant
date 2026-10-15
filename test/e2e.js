@@ -121,6 +121,17 @@ app.whenReady().then(async () => {
     assert.ok(!dr.rows.some(r => r.key === link.key), '연결된 품의가 지워져야 함');
     assert.ok(!store.list().some(t => t.id === id2), '출장 기록이 지워져야 함');
     console.log('E2E 출장 삭제 OK');
+
+    // 취소: 품의 입력이 끝난 직후 [취소] → 그룹웨어 품의 행 삭제 + 출장 기록 삭제
+    {
+      const before = (await runner.runListBudget(env)).rows.length;
+      const cui = { ...ui, cancelled: false, logs: [], info(m) { if (this.cancelled) throw new Error('취소했어요.'); this.logs.push(m); if (/품의 입력 완료/.test(m)) this.cancelled = true; } };
+      await assert.rejects(runner.runApply({ ...env, ui: cui, log: m => cui.info(m) }, { ...data, reason: '취소 테스트 출장' }), /취소했어요/);
+      assert.ok(cui.logs.some(m => /품의.*삭제했어요/.test(m)), `롤백 로그 없음: ${cui.logs.slice(-3).join(' / ')}`);
+      assert.equal((await runner.runListBudget(env)).rows.length, before, '취소한 품의가 그룹웨어에 남아 있음');
+      assert.ok(!store.list().some(t => t.apply && t.apply.reason === '취소 테스트 출장'), '취소한 출장 기록이 남아 있음');
+      console.log('E2E 취소 롤백 OK');
+    }
   } catch (e) {
     console.error('E2E FAIL:', e.stack || e.message);
     code = 1;
