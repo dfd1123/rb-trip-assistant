@@ -26,7 +26,9 @@ function route(){
 }
 window.addEventListener('hashchange', route);
 const TOP=['품의연월','품의일','순번','품의구분','적요','총금액','결재상태','문서번호'], BOT=['부서','예산과목','품의금액','적요','첨부파일'];
-const DEPTS=['가 사업부','나 사업부','다 지원부','매니퓰레이터 사업부'];
+// 실제 사업코드도움: 부서코드 | 부서명, 행이 많고 보이는 행만 그림(가상 스크롤). 매니퓰레이터 사업부는 아래쪽.
+const DEPTS=[];for(let i=0;i<30;i++)DEPTS.push(['D'+(1000+i),'테스트부서'+i]);DEPTS.splice(24,0,['MBU1000','매니퓰레이터 사업부']);
+const SEARCH='__SEARCH__';   // enter: Enter로 검색 / button: 돋보기 버튼만 / none: 검색 안 됨(스크롤로 찾기)
 const CODES=[['8120002','여비교통비(판)_국내교통비'],['8120003','여비교통비(판)_국내숙박비'],['8120004','여비교통비(판)_식대']];
 let S;
 function budget(){
@@ -47,11 +49,19 @@ function dialog(title, bodyHtml, onOk){
   document.body.appendChild(d); d.querySelector('.cancel').onclick=()=>d.remove(); d.querySelector('.ok').onclick=()=>{ if(onOk(d)!==false) d.remove(); }; return d;
 }
 function codeHelp(title, items, onPick){
-  let sel=null;
-  const d=dialog(title,'<label>검색어 <input type="text" class="q"></label> <input type="text" value="2026-10-14"><div class="list"></div>',()=>{ if(!sel) return false; onPick(sel); });
-  const draw=q=>{ d.querySelector('.list').innerHTML=items.filter(it=>!q||it.join(' ').includes(q)).map(it=>'<div class="r" data-k="'+it[0]+'"><span>'+it[0]+'</span> <span>'+it[1]+'</span></div>').join('');
-    d.querySelectorAll('.r').forEach(r=>r.onclick=()=>{ sel=items.find(it=>it[0]===r.dataset.k); d.querySelectorAll('.r').forEach(x=>x.style.background=''); r.style.background='#cde'; }); };
-  draw(''); d.querySelector('.q').addEventListener('keydown',e=>{ if(e.key==='Enter') draw(e.target.value); });
+  let sel=null, shown=items;
+  const d=dialog(title,'<label>검색어 <input type="text" class="q"></label> <button class="btnSearch" style="width:28px;height:24px"><i>&#128269;</i></button> <input type="text" value="2026-10-14"><div class="list" style="height:224px;overflow-y:auto;position:relative"><div class="sp"></div></div>',()=>{ if(!sel) return false; onPick(sel); });
+  const list=d.querySelector('.list'), H=28;
+  const paint=()=>{ const from=Math.floor(list.scrollTop/H), to=Math.min(shown.length,from+9);
+    list.querySelector('.sp').style.height=(shown.length*H)+'px';
+    list.querySelectorAll('.r').forEach(x=>x.remove());
+    for(let i=from;i<to;i++){ const it=shown[i]; const r=document.createElement('div'); r.className='r'; r.dataset.k=it[0];
+      r.style.cssText='position:absolute;left:0;right:0;height:'+(H-8)+'px;top:'+(i*H)+'px'+(sel===it?';background:#cde':'');
+      r.innerHTML='<span>'+it[0]+'</span> <span>'+it[1]+'</span>'; r.onclick=()=>{ sel=it; paint(); }; list.appendChild(r); } };
+  const draw=q=>{ shown=items.filter(it=>!q||it.join(' ').includes(q)); list.scrollTop=0; paint(); };
+  list.addEventListener('scroll',paint); draw('');
+  d.querySelector('.q').addEventListener('keydown',e=>{ if(e.key==='Enter'&&SEARCH==='enter') draw(e.target.value); });
+  d.querySelector('.btnSearch').onclick=()=>{ if(SEARCH!=='none') draw(d.querySelector('.q').value); };
 }
 function editCell(td, onCommit){
   const inp=document.createElement('input'); inp.className='rg-editor'; inp.value=td.querySelector('.rg-renderer').textContent; td.appendChild(inp); inp.focus();
@@ -70,7 +80,7 @@ document.addEventListener('click',e=>{
   S.focus={g,r,c};
   // 실제처럼 셀 오른쪽 아이콘(.rg-button-action)을 눌러야 코드도움이 열림
   if(e.target.closest('.rg-button-action')){
-    if(g==='bot'&&c==='부서') codeHelp('사업코드도움',DEPTS.map((d,i)=>[d,'MBU'+i]),it=>{ S.bot[r].부서=it[0]; render(); });
+    if(g==='bot'&&c==='부서') codeHelp('사업코드도움',DEPTS,it=>{ S.bot[r].부서=it[1]; render(); });
     if(g==='bot'&&c==='예산과목') codeHelp('예산과목코드도움',CODES,it=>{ S.bot[r].예산과목=it[1]; render(); });
   }
 });
@@ -115,7 +125,7 @@ function start(port = 0) {
       let b = ''; req.on('data', c => b += c); req.on('end', () => { saved.push(JSON.parse(b)); res.end('ok'); }); return;
     }
     const send = (body, type = 'text/html; charset=utf-8') => { res.writeHead(200, { 'Content-Type': type }); res.end(body); };
-    if (req.url === '/' || req.url.startsWith('/?')) return send(INDEX);
+    if (req.url === '/' || req.url.startsWith('/?')) return send(INDEX.replace('__SEARCH__', process.env.MOCK_SEARCH || 'button'));
     if (req.url.startsWith('/popup.html')) return send(POPUP);
     if (req.url.startsWith('/editor.html'))
       return send(`<!doctype html><html><head><meta charset="utf-8"></head><body contenteditable="true">${fs.readFileSync(path.join(FIX, process.env.MOCK_FORM || 'apply_form_body.html'), 'utf8')}</body></html>`);

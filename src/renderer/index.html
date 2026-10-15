@@ -25,6 +25,8 @@ header{background:var(--panel);border-bottom:1px solid var(--line);position:stic
 nav{display:flex;gap:4px}
 nav button{border:0;background:none;padding:8px 14px;border-radius:8px;font:inherit;color:var(--muted);cursor:pointer}
 nav button.on{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.aside{position:sticky;top:76px;align-self:start;max-height:calc(100vh - 90px);overflow:auto}
+@media (max-width:900px){.aside{position:static;max-height:none}}
 main{max-width:1080px;margin:0 auto;padding:24px 20px 80px}
 .grid{display:grid;grid-template-columns:1fr 360px;gap:20px;align-items:start}
 @media (max-width:900px){.grid{grid-template-columns:1fr}}
@@ -162,7 +164,7 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
   </div>
 </div>
 
-<div>
+<div class="aside">
   <details class="card ai more"><summary>다른 AI 채팅(ChatGPT 등)으로 작성하기</summary>
     <h2 style="margin-top:10px">AI 채팅으로 작성</h2>
     <ol class="steps"><li>위 "한 줄로 신청" 칸에 출장 메모 쓰기</li>
@@ -228,7 +230,7 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
       <p class="sub" id="r_attach" style="margin:10px 0 0"></p>
     </div>
   </div>
-  <div>
+  <div class="aside">
     <details class="card ai more"><summary>다른 AI 채팅(ChatGPT 등)으로 작성하기</summary>
       <h2 style="margin-top:10px">AI 채팅으로 작성</h2>
       <ol class="steps"><li>위 "한 줄 메모" 칸에 출장에서 한 일 쓰기</li><li>[프롬프트 복사] → AI에 붙여 넣고 보내기</li><li>답변 전체를 아래에 붙여 넣기</li></ol>

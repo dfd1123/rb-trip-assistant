@@ -26,20 +26,25 @@ class Amaranth {
   }
 
   // ---------- 로그인 ----------
+  /** 로그인 화면인지: URL 에 login 이 있거나, 보이는 비밀번호 칸이 있으면 */
+  isLoginPage() {
+    return this.page.eval(() => /login/i.test(location.href) || Array.from(document.querySelectorAll('input[type=password]')).some(vis)).catch(() => true);
+  }
+
   async ensureLogin(timeoutMs = 10 * 60 * 1000) {
     const p = this.page;
     if (!p.url().startsWith(this.baseUrl)) await p.goto(this.baseUrl);
     await sleep(2500);
-    if (!p.url().includes('#/login')) return;
+    if (!(await this.isLoginPage())) return;
     this.win.show(); this.win.focus();
-    this.log('그룹웨어 창에서 로그인해 주세요. (비밀번호는 앱이 저장하지 않습니다)');
+    this.log('그룹웨어에 로그인되어 있지 않아요. 열린 아마란스 창에서 로그인해 주세요. 로그인하면 자동으로 이어서 진행합니다. (비밀번호는 앱이 저장하지 않습니다)');
     const end = Date.now() + timeoutMs;
-    while (p.url().includes('#/login')) {
-      if (Date.now() > end) throw new Error('로그인 대기 시간이 지났습니다.');
+    while (await this.isLoginPage()) {
+      if (Date.now() > end) throw new Error('로그인 대기 시간(10분)이 지났습니다. 다시 [그룹웨어에 입력하기]를 눌러 주세요.');
       await sleep(1000);
     }
-    await sleep(2500);
-    this.log('로그인 확인됨');
+    await sleep(3000);
+    this.log('로그인 확인됨 — 이어서 진행합니다.');
   }
 
   // ---------- 그리드 헬퍼 ----------
@@ -81,14 +86,52 @@ class Amaranth {
   async pickInCodeHelp(titleRe, query, match) {
     const p = this.page;
     const findDlg = `(re) => { const r = new RegExp(re); const h = all('*').filter(e => ownText(e) && vis(e) && r.test(e.textContent.trim())).pop(); return h ? dialog(h.textContent.trim()) : null; }`;
+    const found = () => p.eval(`(re, m) => { const d = (${findDlg})(re); return d ? byText(m, d).length > 0 : false; }`, titleRe, match);
+    const waitFound = ms => p.waitFor(`(re, m) => { const d = (${findDlg})(re); return d && byText(m, d).length > 0; }`, [titleRe, match], { timeout: ms });
+
+    // 1) 검색어 입력 → Enter
     await p.clickWhere(`(re) => { const d = (${findDlg})(re); return d && all('input[type=text]', d).find(vis); }`, titleRe);
     await p.selectAll();
     await p.type(query);
+    await sleep(300);
     await p.key('Enter');
-    await sleep(1200);
-    await p.waitFor(`(re, m) => { const d = (${findDlg})(re); return d && byText(m, d).length > 0; }`, [titleRe, match],
-      { timeout: 6000, message: `검색 결과에서 '${match}'를 찾지 못했습니다.` });
+    let ok = await waitFound(2000);
+
+    // 2) 실제 화면은 Enter 로 검색이 안 될 때가 있음 → 검색어 줄 오른쪽 돋보기 버튼 클릭
+    if (!ok) {
+      const btn = await p.eval(`(re) => {
+        const d = (${findDlg})(re); if (!d) return null;
+        const inp = all('input[type=text]', d).find(vis); if (!inp) return null;
+        const ir = inp.getBoundingClientRect();
+        const cands = all('button, [role=button], [class*=search], [class*=Search], [class*=btn], [class*=Btn]', d).filter(b => {
+          if (!vis(b) || norm(b.textContent)) return false;               // 글자 없는 아이콘 버튼
+          const r = b.getBoundingClientRect();
+          return r.width <= 60 && r.height <= 60 && r.left > ir.left && Math.abs((r.top + r.bottom) / 2 - (ir.top + ir.bottom) / 2) < 30;
+        });
+        const b = cands.sort((a, c) => c.getBoundingClientRect().right - a.getBoundingClientRect().right)[0];
+        return b ? center(b) : null; }`, titleRe);
+      if (btn) { await p.click(btn); ok = await waitFound(3000); }
+    }
+
+    // 3) 그래도 안 보이면 목록을 스크롤하면서 찾기 (그리드가 보이는 행만 그림)
+    if (!ok) {
+      for (let i = 0; i < 40 && !ok; i++) {
+        const moved = await p.eval(`(re) => {
+          const d = (${findDlg})(re); if (!d) return false;
+          const sc = all('*', d).filter(e => vis(e) && e.scrollHeight > e.clientHeight + 4 && /(auto|scroll)/.test(getComputedStyle(e).overflowY))
+            .sort((a, b) => b.clientHeight - a.clientHeight)[0];
+          if (!sc) return false;
+          const before = sc.scrollTop; sc.scrollTop += Math.max(60, sc.clientHeight - 40); sc.dispatchEvent(new Event('scroll'));
+          return sc.scrollTop !== before; }`, titleRe);
+        await sleep(250);
+        ok = await found();
+        if (!moved) break;
+      }
+    }
+    if (!ok) throw new Error(`검색 결과에서 '${match}'를 찾지 못했습니다.`);
+
     await p.clickWhere(`(re, m) => { const d = (${findDlg})(re); return byText(m, d)[0]; }`, titleRe, match);
+    await sleep(200);
     await p.clickWhere(`(re) => { const d = (${findDlg})(re); return okButtons(d).pop(); }`, titleRe);
     await p.waitFor(`(re) => !(${findDlg})(re)`, [titleRe], { timeout: 6000 });
   }
@@ -99,6 +142,8 @@ class Amaranth {
     const p = this.page, ui = this.ui;
     this.log('품의서입력(복수) 화면을 엽니다.');
     await p.goto(this.baseUrl + BUDGET_PATH);
+    await sleep(1500);
+    if (await this.isLoginPage()) { await this.ensureLogin(); await p.goto(this.baseUrl + BUDGET_PATH); }   // 세션 만료
     await p.waitFor(() => !!grid('품의구분'), [], { timeout: 30000, message: '품의서입력 화면이 열리지 않았습니다.' });
     await sleep(1500);
 
