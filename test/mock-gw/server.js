@@ -57,20 +57,22 @@ function dialog(title, bodyHtml, onOk){
   const d=document.createElement('div'); d.className='dlg'; d.innerHTML='<h3>'+title+'</h3>'+bodyHtml+'<div><button class="cancel">취소</button><button class="ok">확인</button></div>';
   document.body.appendChild(d); d.querySelector('.cancel').onclick=()=>d.remove(); d.querySelector('.ok').onclick=()=>{ if(onOk(d)!==false) d.remove(); }; return d;
 }
+// 실제 코드도움 목록은 캔버스(RealGridJS). 글자가 DOM 에 없고, React fiber 의 props 에 GridView/DataProvider 가 있다.
 function codeHelp(title, items, onPick){
-  let sel=null, shown=items;
-  const d=dialog(title,'<label>검색어 <input type="text" class="q"></label> <button class="btnSearch" style="width:28px;height:24px"><i>&#128269;</i></button> <input type="text" value="2026-10-14"><div class="list" style="height:224px;overflow-y:auto;position:relative"><div class="sp"></div></div>',()=>{ if(!sel) return false; onPick(sel); });
-  const list=d.querySelector('.list'), H=28;
-  const paint=()=>{ const from=Math.floor(list.scrollTop/H), to=Math.min(shown.length,from+9);
-    list.querySelector('.sp').style.height=(shown.length*H)+'px';
-    list.querySelectorAll('.r').forEach(x=>x.remove());
-    for(let i=from;i<to;i++){ const it=shown[i]; const r=document.createElement('div'); r.className='r'; r.dataset.k=it[0];
-      r.style.cssText='position:absolute;left:0;right:0;height:'+(H-8)+'px;top:'+(i*H)+'px'+(sel===it?';background:#cde':'');
-      r.innerHTML='<span>'+it[0]+'</span> <span>'+it[1]+'</span>'; r.onclick=()=>{ sel=it; paint(); }; list.appendChild(r); } };
-  const draw=q=>{ shown=items.filter(it=>!q||it.join(' ').includes(q)); list.scrollTop=0; paint(); };
-  list.addEventListener('scroll',paint); draw('');
-  d.querySelector('.q').addEventListener('keydown',e=>{ if(e.key==='Enter'&&SEARCH==='enter') draw(e.target.value); });
-  d.querySelector('.btnSearch').onclick=()=>{ if(SEARCH!=='none') draw(d.querySelector('.q').value); };
+  let shown=items, cur=-1, top=0;
+  const d=dialog(title,'<label>검색어 <span id="name"><input type="text"></span></label> <button class="OBTConditionPanel_searchButton__x" style="width:28px;height:24px"><img src="/icon-btn-search.png" alt=""></button> <input class="OBTDatePickerRebuild_inputYMD__x" value="2026-10-15"><div data-orbit-component="OBTDataGrid" class="g" style="position:relative"><canvas width="560" height="243"></canvas></div>',()=>{ if(cur<0) return false; onPick(shown[cur]); });
+  const cv=d.querySelector('canvas'), ctx=cv.getContext('2d'), H=27;
+  const paint=()=>{ ctx.fillStyle='#fff'; ctx.fillRect(0,0,560,243); ctx.fillStyle='#000'; ctx.font='13px sans-serif'; ctx.fillText('코드',8,18); ctx.fillText('이름',200,18);
+    for(let i=top;i<Math.min(shown.length,top+8);i++){ const y=H*(i-top+1); if(i===cur){ ctx.fillStyle='#cde'; ctx.fillRect(0,y,560,H); ctx.fillStyle='#000'; } ctx.fillText(shown[i][0],8,y+18); ctx.fillText(shown[i][1],200,y+18); } };
+  const draw=q=>{ shown=items.filter(it=>!q||it.join(' ').includes(q)); cur=shown.length?0:-1; top=0; paint(); };
+  const dp={ getRowCount:()=>shown.length, getJsonRow:i=>({CODE:shown[i][0], NAME:shown[i][1]}) };
+  const gv={ setCurrent:c=>{ cur=c.dataRow!=null?c.dataRow:c.itemIndex; top=Math.max(0,cur-3); paint(); }, getItemIndex:i=>i, getDataSource:()=>dp, setFocus(){} };
+  d.querySelector('.g').__reactFiber$mock={ memoizedProps:{ id:'g' }, return:{ memoizedProps:{ gridView:gv, provider:dp }, return:null } };
+  cv.addEventListener('click',e=>{ const r=cv.getBoundingClientRect(); const i=top+Math.floor((e.clientY-r.top)/H)-1; if(i>=0&&i<shown.length){ cur=i; paint(); } });
+  draw('');
+  const q=d.querySelector('#name input');
+  q.addEventListener('keydown',e=>{ if(e.key==='Enter'&&SEARCH==='enter') draw(q.value); });
+  d.querySelector('.OBTConditionPanel_searchButton__x').onclick=()=>{ if(SEARCH!=='none') draw(q.value); };
 }
 function editCell(td, onCommit){
   const inp=document.createElement('input'); inp.className='rg-editor'; inp.value=td.querySelector('.rg-renderer').textContent; td.appendChild(inp); inp.focus();

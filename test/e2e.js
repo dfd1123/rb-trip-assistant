@@ -66,7 +66,7 @@ app.whenReady().then(async () => {
       ['매니퓰레이터 사업부', '여비교통비(판)_국내숙박비', '160,000'],
       ['매니퓰레이터 사업부', '여비교통비(판)_식대', '90,000'],
     ]);
-    assert.equal(s.bot[1].적요, '판교 AI 사무소 RBY1-Muscat 연동 검증 출장 국내숙박비');
+    assert.equal(s.bot[1].적요, '출장 국내숙박비');
     assert.equal(s.approval.form, '출장신청 및 출장경비 사전품의');
 
     // 보관된 문서

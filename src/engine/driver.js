@@ -23,6 +23,44 @@ const dialog = title => { const heads = byText(title).reverse();
   return null; };
 const loginId = () => all('input').find(e => vis(e) && !e.disabled && !e.readOnly && /^(text|email|tel|)$/i.test(e.getAttribute('type') || '') && !/date|search|검색|captcha/i.test((e.name || '') + (e.id || '') + (e.placeholder || '') + (e.className || '')));
 const loginPw = () => all('input[type=password]').find(e => vis(e) && !e.disabled);
+// 캔버스 그리드(RealGridJS 1.x, OBTDataGrid): 화면에 글자가 없으므로 React 내부에서 GridView·DataProvider 를 찾아 쓴다
+const rgFind = root => {
+  const el = (root || document).querySelector('[data-orbit-component=OBTDataGrid]') || (root || document).querySelector('canvas');
+  if (!el) return null;
+  const isDp = o => o && typeof o === 'object' && typeof o.getRowCount === 'function' && (typeof o.getJsonRow === 'function' || typeof o.getValue === 'function');
+  const isGv = o => o && typeof o === 'object' && typeof o.setCurrent === 'function';
+  const out = { gv: null, dp: null, iface: null };
+  const scan = (o, depth) => {
+    if (!o || typeof o !== 'object' || depth > 2) return;
+    if (!out.dp && isDp(o) && typeof o.setCurrent !== 'function') out.dp = o;
+    if (!out.gv && isGv(o)) out.gv = o;
+    if (!out.iface && typeof o.getRowCount === 'function' && typeof o.getValue === 'function' && typeof o.setSelection === 'function') out.iface = o;
+    if (out.gv && out.dp) return;
+    let keys = []; try { keys = Object.keys(o); } catch (e) {}
+    for (const k of keys) { if (/^(__|_owner|return|child|sibling|alternate)/.test(k)) continue; let v; try { v = o[k]; } catch (e) { continue; } if (v && typeof v === 'object' && !(v instanceof Node)) scan(v, depth + 1); }
+    if (!out.dp && out.gv && typeof out.gv.getDataSource === 'function') { try { const d = out.gv.getDataSource(); if (isDp(d)) out.dp = d; } catch (e) {} }
+  };
+  for (let n = el; n && !(out.gv && out.dp); n = n.parentElement) {
+    const k = Object.keys(n).find(k => k.startsWith('__reactFiber$') || k.startsWith('__reactInternalInstance$'));
+    let f = k && n[k];
+    for (let i = 0; f && i < 25 && !(out.gv && out.dp); i++, f = f.return) {
+      scan(f.memoizedProps, 0); scan(f.stateNode && f.stateNode.nodeType ? null : f.stateNode, 0);
+    }
+    if (n.matches && n.matches('[class*=Dialog], .dialog_data')) break;
+  }
+  return (out.gv || out.dp || out.iface) ? out : null;
+};
+const rgRows = r => {   // [{...값}] 최대 2000행
+  const res = [];
+  if (r.dp) { const n = Math.min(r.dp.getRowCount(), 2000); for (let i = 0; i < n; i++) { try { res.push(r.dp.getJsonRow ? r.dp.getJsonRow(i) : null); } catch (e) { res.push(null); } } }
+  else if (r.iface) { const n = Math.min(r.iface.getRowCount(), 2000); const cols = (r.iface.getColumns ? r.iface.getColumns() : []).map(c => c.name || c.fieldName || c); for (let i = 0; i < n; i++) res.push(Object.fromEntries(cols.map(c => [c, r.iface.getValue(i, c)]))); }
+  return res;
+};
+const rgSelect = (r, i) => {
+  if (r.gv) { let item = i; try { if (r.gv.getItemIndex) { const x = r.gv.getItemIndex(i); if (x >= 0) item = x; } } catch (e) {} r.gv.setCurrent({ itemIndex: item, dataRow: i }); try { r.gv.setFocus && r.gv.setFocus(); } catch (e) {} return true; }
+  if (r.iface) { r.iface.setSelection({ rowIndex: i }); return true; }
+  return false;
+};
 const grid = hdr => all('.rg-root').find(r => vis(r) && all('.rg-header-cell', r).some(h => norm(h.textContent) === norm(hdr)));
 const headers = g => all('.rg-header-cell', g).map(h => norm(h.textContent));
 const rows = g => all('tr.rg-data-row', g);

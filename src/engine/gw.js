@@ -9,6 +9,7 @@ const { FILL_JS, FIND_JS } = require('./editorFill');
 
 const BUDGET_PATH = '/#/HP/NPC1023/NCA0018';
 const popupsOf = new WeakMap();   // 그룹웨어 창 → 그 창에서 열린 작성 팝업들
+const norm = s => String(s || '').replace(/\s/g, '');
 const amountOf = s => Number(String(s || '').replace(/[^\d]/g, '')) || 0;
 
 class Amaranth {
@@ -39,10 +40,23 @@ class Amaranth {
         const h = all('*').filter(e => ownText(e) && vis(e) && r.test(e.textContent.trim())).pop();
         let box = h; if (h) { let p = h; while (p && p !== document.body) { const q = p.getBoundingClientRect(); if (q.width > 500 && q.height > 300) { box = p; break; } p = p.parentElement; } }
         const dlg = h ? (dialog(h.textContent.trim()) || box) : null;
-        return { dialog: dlg ? dlg.outerHTML : '(창 제목을 못 찾음)', page: document.documentElement.outerHTML, url: location.href };
+        let probe = null;
+        try {
+          const g = rgFind(dlg || document);
+          if (g) probe = { gv: !!g.gv, dp: !!g.dp, iface: !!g.iface, rows: rgRows(g).slice(0, 5) };
+          else {
+            const el = (dlg || document).querySelector('[data-orbit-component=OBTDataGrid]');
+            const k = el && Object.keys(el).find(k => k.startsWith('__react'));
+            const fibers = []; let f = k && el[k];
+            for (let i = 0; f && i < 15; i++, f = f.return) fibers.push({ type: typeof f.type === 'string' ? f.type : (f.type && (f.type.displayName || f.type.name)) || '', props: f.memoizedProps && typeof f.memoizedProps === 'object' ? Object.keys(f.memoizedProps).slice(0, 30) : [], state: f.stateNode && !f.stateNode.nodeType ? Object.keys(f.stateNode).slice(0, 40) : [] });
+            probe = { found: false, elKeys: el ? Object.keys(el) : [], fibers };
+          }
+        } catch (e) { probe = { error: e.message }; }
+        return { dialog: dlg ? dlg.outerHTML : '(창 제목을 못 찾음)', page: document.documentElement.outerHTML, url: location.href, probe };
       }, titleRe || '.^');
       fs.writeFileSync(base + '-dialog.html', `<!-- ${d.url} -->\n` + d.dialog);
       fs.writeFileSync(base + '-page.html', d.page);
+      fs.writeFileSync(base + '-probe.json', JSON.stringify(d.probe, null, 1));
       fs.writeFileSync(base + '.png', (await this.win.webContents.capturePage()).toPNG());
       this.log(`(진단 파일 저장: ${base}-dialog.html)`);
       return base;
@@ -140,55 +154,50 @@ class Amaranth {
     throw new Error('코드도움 창이 열리지 않았습니다.');
   }
 
+  /**
+   * 코드도움 창에서 고르기. 실제 아마란스 코드도움 목록은 캔버스(RealGridJS)라 화면 글자를 읽을 수 없어서
+   * ① 검색어 입력 → 조회 버튼 ② React 내부의 그리드 데이터에서 일치하는 행을 찾아 선택 ③ 확인.
+   * 데이터를 못 읽으면 검색 결과 첫 행을 클릭해서 고르고, 호출한 쪽이 결과 칸을 확인한다.
+   */
   async pickInCodeHelp(titleRe, query, match) {
     const p = this.page;
     const findDlg = `(re) => { const r = new RegExp(re); const h = all('*').filter(e => ownText(e) && vis(e) && r.test(e.textContent.trim())).pop(); return h ? dialog(h.textContent.trim()) : null; }`;
-    const found = () => p.eval(`(re, m) => { const d = (${findDlg})(re); return d ? byText(m, d).length > 0 : false; }`, titleRe, match);
-    const waitFound = ms => p.waitFor(`(re, m) => { const d = (${findDlg})(re); return d && byText(m, d).length > 0; }`, [titleRe, match], { timeout: ms });
 
-    // 1) 검색어 입력 → Enter
-    await p.clickWhere(`(re) => { const d = (${findDlg})(re); return d && all('input[type=text]', d).find(vis); }`, titleRe);
+    // 1) 검색어 → Enter → 조회(돋보기) 버튼
+    await p.clickWhere(`(re) => { const d = (${findDlg})(re); return d && (d.querySelector('#name input, input#name') || all('input', d).find(e => vis(e) && !e.readOnly && !/date|YMD/i.test(e.className) && (e.type || 'text') === 'text')); }`, titleRe);
     await p.selectAll();
     await p.type(query);
     await sleep(300);
     await p.key('Enter');
-    let ok = await waitFound(2000);
+    await sleep(500);
+    const btn = await p.eval(`(re) => { const d = (${findDlg})(re); if (!d) return null;
+      const b = d.querySelector('#tutorial-conditionPanel-search, [class*=searchButton]') || all('button', d).find(x => vis(x) && !norm(x.textContent) && x.querySelector('img[src*=search]'));
+      return b && vis(b) ? center(b) : null; }`, titleRe);
+    if (btn) await p.click(btn);
+    await sleep(1200);
 
-    // 2) 실제 화면은 Enter 로 검색이 안 될 때가 있음 → 검색어 줄 오른쪽 돋보기 버튼 클릭
-    if (!ok) {
-      const btn = await p.eval(`(re) => {
-        const d = (${findDlg})(re); if (!d) return null;
-        const inp = all('input[type=text]', d).find(vis); if (!inp) return null;
-        const ir = inp.getBoundingClientRect();
-        const cands = all('button, [role=button], [class*=search], [class*=Search], [class*=btn], [class*=Btn]', d).filter(b => {
-          if (!vis(b) || norm(b.textContent)) return false;               // 글자 없는 아이콘 버튼
-          const r = b.getBoundingClientRect();
-          return r.width <= 60 && r.height <= 60 && r.left > ir.left && Math.abs((r.top + r.bottom) / 2 - (ir.top + ir.bottom) / 2) < 30;
-        });
-        const b = cands.sort((a, c) => c.getBoundingClientRect().right - a.getBoundingClientRect().right)[0];
-        return b ? center(b) : null; }`, titleRe);
-      if (btn) { await p.click(btn); ok = await waitFound(3000); }
+    // 2) 그리드 데이터에서 일치 행 찾기
+    const pick = await p.waitFor(`(re, m) => { const d = (${findDlg})(re); if (!d) return null;
+      const g = rgFind(d);
+      if (g) { const rows = rgRows(g); const t = norm(m);
+        const i = rows.findIndex(r => r && Object.values(r).some(v => norm(String(v)) === t));
+        if (i >= 0) { rgSelect(g, i); return { how: 'data', i, n: rows.length }; }
+        if (rows.length) return { how: 'nomatch', n: rows.length, sample: rows.slice(0, 3) }; }
+      const hit = byText(m, d)[0];                                   // DOM 그리드(테스트·다른 화면)
+      if (hit) return { how: 'dom', pt: center(hit) };
+      return null; }`, [titleRe, match], { timeout: 4000 });
+
+    if (pick && pick.how === 'dom') await p.click(pick.pt);
+    else if (pick && pick.how === 'nomatch') throw new Error(`검색 결과 ${pick.n}건 중 '${match}'가 없습니다.`);
+    else if (!pick) {
+      // 데이터를 못 읽음 → 검색 결과 첫 행 클릭 (검색어가 정확하면 보통 1건)
+      const pt = await p.eval(`(re) => { const d = (${findDlg})(re); const c = d && d.querySelector('canvas'); if (!c) return null;
+        const r = c.getBoundingClientRect(); return { x: Math.round(r.left + Math.min(200, r.width / 3)), y: Math.round(r.top + 27 + 13) }; }`, titleRe);
+      if (!pt) throw new Error(`검색 결과에서 '${match}'를 찾지 못했습니다.`);
+      this.log(`(목록을 직접 읽지 못해 검색 결과 첫 줄을 골랐어요 — 결과를 확인합니다)`);
+      await p.click(pt);
     }
-
-    // 3) 그래도 안 보이면 목록을 스크롤하면서 찾기 (그리드가 보이는 행만 그림)
-    if (!ok) {
-      for (let i = 0; i < 40 && !ok; i++) {
-        const moved = await p.eval(`(re) => {
-          const d = (${findDlg})(re); if (!d) return false;
-          const sc = all('*', d).filter(e => vis(e) && e.scrollHeight > e.clientHeight + 4 && /(auto|scroll)/.test(getComputedStyle(e).overflowY))
-            .sort((a, b) => b.clientHeight - a.clientHeight)[0];
-          if (!sc) return false;
-          const before = sc.scrollTop; sc.scrollTop += Math.max(60, sc.clientHeight - 40); sc.dispatchEvent(new Event('scroll'));
-          return sc.scrollTop !== before; }`, titleRe);
-        await sleep(250);
-        ok = await found();
-        if (!moved) break;
-      }
-    }
-    if (!ok) throw new Error(`검색 결과에서 '${match}'를 찾지 못했습니다.`);
-
-    await p.clickWhere(`(re, m) => { const d = (${findDlg})(re); return byText(m, d)[0]; }`, titleRe, match);
-    await sleep(200);
+    await sleep(300);
     await p.clickWhere(`(re) => { const d = (${findDlg})(re); return okButtons(d).pop(); }`, titleRe);
     await p.waitFor(`(re) => !(${findDlg})(re)`, [titleRe], { timeout: 6000 });
   }
@@ -233,10 +242,16 @@ class Amaranth {
       try {
         await this.openCodeHelp('예산과목', i, '부서', '^사업코드도움$');
         await this.pickInCodeHelp('^사업코드도움$', dept, dept);
+        await sleep(400);
+        const got = String(((await this.rowVals('예산과목', i)) || {})['부서'] || '');
+        if (!norm(got).includes(norm(dept))) throw new Error(`부서 칸이 '${got || '빈칸'}'입니다`);
       } catch (e) { await this.debugDump('dept', '사업코드도움'); await ui.assist(`부서 선택 실패(${e.message}). ${i + 1}번째 줄 부서를 '${dept}'로 지정해 주세요.`); }
       try {
         await this.openCodeHelp('예산과목', i, '예산과목', '(예산과목|예산|과목).*(코드)?도움$');
         await this.pickInCodeHelp('(예산과목|예산|과목).*(코드)?도움$', ex.code, ex.code);
+        await sleep(400);
+        const got = String(((await this.rowVals('예산과목', i)) || {})['예산과목'] || '');
+        if (!norm(got).includes(norm(ex.code)) && !norm(got).includes(norm(ex.label.split('_').pop()))) throw new Error(`예산과목 칸이 '${got || '빈칸'}'입니다`);
       } catch (e) { await this.debugDump('budget-item', '(예산과목|예산|과목).*(코드)?도움$'); await ui.assist(`예산과목 선택 실패(${e.message}). ${i + 1}번째 줄 예산과목을 ${ex.code} ${ex.label}로 지정해 주세요.`); }
       try {
         await this.editCell('예산과목', i, '품의금액', String(ex.amount));
