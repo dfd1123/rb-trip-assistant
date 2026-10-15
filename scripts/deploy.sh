@@ -68,6 +68,7 @@ node -e "const f='package.json',j=JSON.parse(require('fs').readFileSync(f,'utf8'
 
 # ---------- 빌드 ----------
 rm -rf dist
+trap 'rm -f "$APP_DIR/src/engine/builtin-key.json"' EXIT   # 중간에 실패해도 키 파일은 남기지 않음
 node scripts/write-builtin-key.js
 [ -s src/engine/builtin-key.json ] || { echo "Error: 팀 공용 AI 키를 앱에 넣지 못했습니다."; exit 1; }
 if [ $IS_MAC = 1 ]; then
@@ -109,6 +110,10 @@ NOTES="$NOTES" node -e "
 " "${FILES[@]}"
 echo "▶ Release ${TAG} → ${RELEASE_REPO}"
 gh release create "$TAG" --repo "$RELEASE_REPO" --title "와니의 결재 도우미 v${VERSION}" --notes "$NOTES" --latest "${FILES[@]}" dist/version.json
+# 정리: 빌드 결과물(수백 MB~GB)은 Release 에 올라갔으니 지운다.
+# Docker 는 --rm 이라 컨테이너가 남지 않고, 이미지(electronuserland/builder:18)는 web-rainbow-ui 배포와 같이 쓰는 것이라 그대로 둔다.
+rm -rf dist
+
 echo ""
 echo "✅ v${VERSION} 배포 완료 — https://github.com/${RELEASE_REPO}/releases/tag/${TAG}"
 echo "   설치된 앱은 켜거나 창에 다시 들어올 때 업데이트를 물어봐요."
