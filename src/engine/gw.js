@@ -43,7 +43,7 @@ class Amaranth {
         let probe = null;
         try {
           const g = rgFind(dlg || document);
-          if (g) probe = { gv: !!g.gv, dp: !!g.dp, iface: !!g.iface, rows: rgRows(g).slice(0, 5) };
+          if (g) probe = { rows: rgRows(g).slice(0, 5), gv: g.gv && rgMethods(g.gv), dp: g.dp && rgMethods(g.dp), iface: g.iface && rgMethods(g.iface), dpCount: g.dp && g.dp.getRowCount() };
           else {
             const el = (dlg || document).querySelector('[data-orbit-component=OBTDataGrid]');
             const k = el && Object.keys(el).find(k => k.startsWith('__react'));
@@ -182,7 +182,7 @@ class Amaranth {
       if (g) { const rows = rgRows(g); const t = norm(m);
         const i = rows.findIndex(r => r && Object.values(r).some(v => norm(String(v)) === t));
         if (i >= 0) { rgSelect(g, i); return { how: 'data', i, n: rows.length }; }
-        if (rows.length) return { how: 'nomatch', n: rows.length, sample: rows.slice(0, 3) }; }
+        if (rows.some(r => r)) return { how: 'nomatch', n: rows.length }; }
       const hit = byText(m, d)[0];                                   // DOM 그리드(테스트·다른 화면)
       if (hit) return { how: 'dom', pt: center(hit) };
       return null; }`, [titleRe, match], { timeout: 4000 });

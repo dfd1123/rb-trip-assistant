@@ -50,12 +50,29 @@ const rgFind = root => {
   }
   return (out.gv || out.dp || out.iface) ? out : null;
 };
-const rgRows = r => {   // [{...값}] 최대 2000행
+const rgRows = r => {   // [{...값}] 최대 2000행. RealGridJS 버전마다 API 가 달라 여러 방법을 차례로 시도
+  const ok = o => o && typeof o === 'object' && Object.values(o).some(v => v != null && v !== '');
+  const fieldNames = () => { try {
+    if (r.dp && r.dp.getFieldNames) return r.dp.getFieldNames();
+    if (r.dp && r.dp.getOrgFieldNames) return r.dp.getOrgFieldNames();
+    if (r.dp && r.dp.getFields) return r.dp.getFields().map(f => f.fieldName || f.orgFieldName || f.name);
+    if (r.gv && r.gv.getColumns) return r.gv.getColumns().map(c => c.fieldName || c.name);
+  } catch (e) {} return []; };
+  const tries = [
+    i => r.dp && r.dp.getJsonRow && r.dp.getJsonRow(i),
+    i => r.dp && r.dp.getJsonRows && r.dp.getJsonRows(i, i)[0],
+    i => r.dp && r.dp.getRow && r.dp.getRow(i),
+    i => r.gv && r.gv.getValues && r.gv.getValues(i),
+    i => { const f = fieldNames(); return f.length && r.dp && r.dp.getValue ? Object.fromEntries(f.map(n => [n, r.dp.getValue(i, n)])) : null; },
+    i => { if (!r.iface) return null; const cols = (r.iface.getColumns ? r.iface.getColumns() : []).map(c => c.name || c.fieldName || c); return Object.fromEntries(cols.map(c => [c, r.iface.getValue(i, c)])); },
+  ];
+  const count = (() => { try { return (r.dp && r.dp.getRowCount()) || (r.iface && r.iface.getRowCount()) || (r.gv && r.gv.getItemCount && r.gv.getItemCount()) || 0; } catch (e) { return 0; } })();
+  const fn = tries.find(t => { try { return ok(t(0)); } catch (e) { return false; } });
   const res = [];
-  if (r.dp) { const n = Math.min(r.dp.getRowCount(), 2000); for (let i = 0; i < n; i++) { try { res.push(r.dp.getJsonRow ? r.dp.getJsonRow(i) : null); } catch (e) { res.push(null); } } }
-  else if (r.iface) { const n = Math.min(r.iface.getRowCount(), 2000); const cols = (r.iface.getColumns ? r.iface.getColumns() : []).map(c => c.name || c.fieldName || c); for (let i = 0; i < n; i++) res.push(Object.fromEntries(cols.map(c => [c, r.iface.getValue(i, c)]))); }
+  for (let i = 0; i < Math.min(count, 2000); i++) { let v = null; try { v = fn ? fn(i) : null; } catch (e) {} res.push(v); }
   return res;
 };
+const rgMethods = o => { const m = new Set(); for (let x = o; x && x !== Object.prototype; x = Object.getPrototypeOf(x)) Object.getOwnPropertyNames(x).forEach(k => { try { if (typeof o[k] === 'function') m.add(k); } catch (e) {} }); return [...m].filter(k => /row|value|field|column|current|select|item|count|json|focus/i.test(k)).slice(0, 80); };
 const rgSelect = (r, i) => {
   if (r.gv) { let item = i; try { if (r.gv.getItemIndex) { const x = r.gv.getItemIndex(i); if (x >= 0) item = x; } } catch (e) {} r.gv.setCurrent({ itemIndex: item, dataRow: i }); try { r.gv.setFocus && r.gv.setFocus(); } catch (e) {} return true; }
   if (r.iface) { r.iface.setSelection({ rowIndex: i }); return true; }
