@@ -22,8 +22,8 @@ cd "$APP_DIR"
 # (맥 사용자 앱은 Release 에 맥 파일이 없으면 업데이트를 띄우지 않고 이전 버전을 그대로 쓴다)
 IS_MAC=0; [ "$(uname)" = "Darwin" ] && IS_MAC=1
 [ $IS_MAC = 1 ] || echo "  ⓘ 맥이 아니라서 맥 빌드는 빼고 배포해요 (맥 사용자는 이전 버전 유지)."
-command -v gh >/dev/null || { echo "Error: GitHub CLI(gh)가 필요합니다. brew install gh"; exit 1; }
-GH_OUT=$(gh auth status 2>&1) || { echo "Error: GitHub CLI 로그인 확인 실패 — gh 가 알려 준 내용:"; echo "$GH_OUT" | sed -E 's/(gh[opsu]_)[A-Za-z0-9_]+/\1****/g'; echo "  로그인이 풀렸으면: gh auth login   /  키체인이 잠겼으면 잠금 해제 후 다시"; exit 1; }
+command -v gh >/dev/null || { echo "Error: GitHub CLI(gh)가 필요합니다. 설치: https://cli.github.com (맥 brew install gh / 윈도우 winget install GitHub.cli / 우분투 sudo apt install gh)"; exit 1; }
+GH_OUT=$(gh auth status 2>&1) || { echo "Error: GitHub CLI 로그인 확인 실패 — gh 가 알려 준 내용:"; echo "$GH_OUT" | sed -E 's/(gh[opsu]_)[A-Za-z0-9_]+/\1****/g'; echo "  로그인이 풀렸으면: gh auth login"; exit 1; }
 [ -f .env ] && set -a && . ./.env && set +a
 # 공증 계정: 환경변수 → 없으면 ~/.zshrc · ~/.zprofile 의 export 줄에서 (web-rainbow-ui 배포와 같은 값)
 for v in APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
@@ -33,7 +33,7 @@ for v in APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
   fi
 done
 [ -n "$GEMINI_API_KEY" ] || { echo "Error: .env 에 GEMINI_API_KEY 가 없습니다 (팀 공용 AI 키, 앱에 내장)."; exit 1; }
-docker info >/dev/null 2>&1 || { echo "Error: Docker 가 실행 중이 아닙니다 (리눅스 deb·rpm 빌드). Docker Desktop 을 켜고 다시 실행하세요."; exit 1; }
+docker info >/dev/null 2>&1 || { echo "Error: Docker 가 실행 중이 아닙니다 (리눅스 deb·rpm 빌드). Docker 를 켜고 다시 실행하세요."; exit 1; }
 if [ $IS_MAC = 1 ]; then
   if [ -z "$APPLE_ID" ] || [ -z "$APPLE_APP_SPECIFIC_PASSWORD" ]; then
     echo "Error: 맥 공증에 APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD 가 필요합니다 (환경변수나 ~/.zshrc 의 export 줄에서 못 찾음)."
