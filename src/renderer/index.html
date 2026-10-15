@@ -82,7 +82,13 @@ details.more{margin-top:4px}
 details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
 .h2row{display:flex;justify-content:space-between;align-items:center}
 .rates{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
-.rates label{font-size:12px;color:var(--muted)}
+.rates label,.mealtimes label{font-size:12px;color:var(--muted)}
+.rates input,.mealtimes input{min-width:0}
+.mealtimes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.trange{display:flex;align-items:center;gap:4px}
+.trange input{flex:1;padding:8px 6px}
+.trange span{color:var(--muted)}
+@media (max-width:700px){.mealtimes{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -244,7 +250,7 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
 
 <!-- ================= 설정 ================= -->
 <section id="tab-settings" class="hidden">
-  <div class="card" style="max-width:620px">
+  <div class="card" style="max-width:780px">
     <h2>내 설정</h2><p class="sub">이 PC에만 저장돼요. 비밀번호는 저장하지 않습니다.</p>
     <div class="row"><label>이름</label><input id="s_name"></div>
     <div class="row"><label>예산 부서</label><input id="s_dept" placeholder="사업코드도움에서 고르는 이름"></div>
@@ -255,7 +261,7 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
       <button class="btn primary" id="btnSave">저장</button>
     </div>
   </div>
-  <div class="card" style="max-width:620px">
+  <div class="card" style="max-width:780px">
     <h2>AI 문장 작성 (선택)</h2>
     <p class="sub">개인 API 키를 넣으면 한 줄 메모로 사유·출장목적·보고서를 더 자연스럽게 써요. 없으면 템플릿으로 작성합니다. 키는 이 PC의 보안 저장소에 암호화돼 저장돼요.</p>
     <div class="row"><label>AI</label><select id="s_ai"><option value="">사용 안 함 (템플릿)</option></select></div>
@@ -268,7 +274,7 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
       <button class="btn primary" id="btnAiSave">저장</button>
     </div>
   </div>
-  <div class="card" style="max-width:620px">
+  <div class="card" style="max-width:780px">
     <h2>출장비 규정 (국내)</h2>
     <p class="sub">숙박은 (일수 − 1)박. 식대는 끼니별로, 첫날은 출발 시각이 끼니 시작 전이면, 마지막 날은 복귀 시각이 끼니 끝난 뒤면 넣어요.</p>
     <div class="rates">
@@ -277,11 +283,11 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
       <div><label>점심</label><input id="s_lunch" inputmode="numeric"></div>
       <div><label>저녁</label><input id="s_dinner" inputmode="numeric"></div>
     </div>
-    <div class="rates" style="margin-top:10px">
-      <div><label>끼니 시간대</label><div class="fare" style="padding-top:8px">시작 ~ 끝</div></div>
-      <div><label>아침</label><div class="two"><input type="time" id="s_bf_from"><input type="time" id="s_bf_to"></div></div>
-      <div><label>점심</label><div class="two"><input type="time" id="s_lu_from"><input type="time" id="s_lu_to"></div></div>
-      <div><label>저녁</label><div class="two"><input type="time" id="s_di_from"><input type="time" id="s_di_to"></div></div>
+    <p class="sub" style="margin:16px 0 6px">끼니 시간대 (시작 ~ 끝)</p>
+    <div class="mealtimes">
+      <div><label>아침</label><div class="trange"><input type="time" id="s_bf_from"><span>~</span><input type="time" id="s_bf_to"></div></div>
+      <div><label>점심</label><div class="trange"><input type="time" id="s_lu_from"><span>~</span><input type="time" id="s_lu_to"></div></div>
+      <div><label>저녁</label><div class="trange"><input type="time" id="s_di_from"><span>~</span><input type="time" id="s_di_to"></div></div>
     </div>
     <div class="inline" style="justify-content:flex-end;gap:8px;margin-top:12px"><span class="fare" id="s_rate_msg"></span><button class="btn primary" id="btnRateSave">저장</button></div>
   </div>
