@@ -66,6 +66,23 @@ table.ed td{padding:3px 4px;vertical-align:top}
 #jobAsk{display:none;background:var(--warn-soft);border-top:1px solid #f3dcb3;padding:12px 16px;border-radius:0 0 12px 12px}
 #jobAsk p{margin:0 0 8px;color:var(--warn);font-weight:500}
 .hidden{display:none!important}
+/* 한 줄 입력 */
+.quick{background:linear-gradient(135deg,#ffffff 0%,#eef6fb 100%);border-color:#d5e6f2}
+.quick h2{font-size:17px}
+.qrow{display:flex;gap:10px;align-items:stretch}
+.qrow textarea{min-height:58px;font-size:15px;flex:1}
+.qrow .btn{font-size:15px;padding:0 22px}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+.chip{border:1px solid var(--line);background:#fff;border-radius:999px;padding:4px 12px;font-size:13px;cursor:pointer}
+.chip:hover{border-color:var(--accent);color:var(--accent)}
+.qstatus{margin-top:10px;font-size:13px;color:var(--muted);min-height:18px}
+.qstatus b{color:var(--ink)}
+.need{outline:2px solid #f59e0b !important;border-color:#f59e0b !important}
+details.more{margin-top:4px}
+details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
+.h2row{display:flex;justify-content:space-between;align-items:center}
+.rates{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.rates label{font-size:12px;color:var(--muted)}
 </style>
 </head>
 <body>
@@ -82,14 +99,23 @@ table.ed td{padding:3px 4px;vertical-align:top}
 <main>
 <!-- ================= 신청 ================= -->
 <section id="tab-apply">
+<div class="card quick">
+  <h2>한 줄로 신청</h2>
+  <p class="sub">언제 · 어디 · 무슨 일인지만 쓰면 사유, 출장목적, 숙박비(1박 7만), 식대(1일 3.8만), 교통비(네이버 지도 왕복)까지 채워요.</p>
+  <div class="qrow"><textarea id="q_memo" placeholder="예: 다음주 화~목 판교 RBY1 Muscat 연동 검증, 자차, 홍길동이랑 같이"></textarea>
+    <button class="btn primary" id="btnQuick">자동 작성</button></div>
+  <div class="chips" id="q_places"></div>
+  <div class="qstatus" id="q_status"></div>
+</div>
 <div class="grid">
 <div>
   <div class="card">
     <h2>출장 정보</h2>
-    <p class="sub">AI를 쓰면 오른쪽에 답변을 붙여 넣어 한 번에 채울 수 있어요.</p>
+    <p class="sub">자동으로 채운 내용을 확인하고 필요하면 고치세요.</p>
     <div class="row"><label>출장 사유</label><input id="a_reason" placeholder="예: 판교 AI 사무소 RBY1-Muscat 연동 검증"></div>
     <div class="row"><label>출장지</label><input id="a_destination" placeholder="예: 레인보우로보틱스 판교 AI 사무소"></div>
-    <div class="row"><label>기간</label><div class="two"><input type="date" id="a_start"><input type="date" id="a_end"></div></div>
+    <div class="row"><label>출발</label><div class="two"><input type="date" id="a_start"><input type="time" id="a_start_time" title="출발 시각"></div></div>
+    <div class="row"><label>복귀</label><div class="two"><input type="date" id="a_end"><input type="time" id="a_end_time" title="복귀 시각"></div></div>
     <div class="row"><label>구분</label>
       <div class="inline"><div class="seg">
         <label><input type="radio" name="a_category" value="일반" checked>일반</label>
@@ -101,7 +127,7 @@ table.ed td{padding:3px 4px;vertical-align:top}
   </div>
 
   <div class="card">
-    <h2>교통 · 경비</h2>
+    <div class="h2row"><h2>교통 · 경비</h2><button class="btn small" id="btnRecalc">규정대로 다시 계산</button></div>
     <p class="sub">교통비는 네이버 지도 금액 왕복 (자차: 연료비+통행료, 대중교통: 버스 포함 총 요금)</p>
     <div class="row"><label>교통편</label><div class="seg">
       <label><input type="radio" name="a_mode" value="car" checked>자차</label>
@@ -119,21 +145,22 @@ table.ed td{padding:3px 4px;vertical-align:top}
       <div class="row"><label></label><div class="fare" id="a_fare_desc"></div></div>
     </div>
     <table class="ed" id="a_exp"><thead><tr><th style="width:38%">예산과목</th><th style="width:22%">금액(원)</th><th>적요</th><th></th></tr></thead><tbody></tbody></table>
+    <div class="fare" id="a_meal_plan" style="margin:6px 4px 0"></div>
     <button class="btn small" id="btnAddExp" style="margin-top:6px">+ 경비 추가</button>
     <div class="total"><span>품의 합계</span><span id="a_total">0원</span></div>
   </div>
 </div>
 
 <div>
-  <div class="card ai">
-    <h2>AI로 빠르게 (선택)</h2>
+  <details class="card ai more"><summary>다른 AI 채팅(ChatGPT 등)으로 작성하기</summary>
+    <h2 style="margin-top:10px">AI 채팅으로 작성</h2>
     <ol class="steps"><li>[프롬프트 복사]를 누르고 쓰는 AI(ChatGPT, Gemini, Claude…)에 붙여 넣기</li>
       <li>프롬프트 끝에 출장 메모를 적어 보내기</li><li>AI 답변 전체를 아래에 붙여 넣기</li></ol>
     <div class="inline" style="margin:10px 0"><button class="btn" id="btnPrompt">프롬프트 복사</button><span class="fare" id="copied"></span></div>
     <textarea id="aiPaste" placeholder="AI 답변을 여기에 붙여 넣기"></textarea>
     <button class="btn" id="btnFill" style="margin-top:8px;width:100%">양식에 채우기</button>
     <div class="err" id="aiErr"></div>
-  </div>
+  </details>
   <div class="card">
     <h2>결재 문서 제목</h2>
     <div class="title-preview" id="a_title">사유를 입력하면 표시됩니다</div>
@@ -151,6 +178,13 @@ table.ed td{padding:3px 4px;vertical-align:top}
   <div class="card list" id="tripList"><h2>신청한 출장</h2><p class="sub">이 PC에서 신청한 기록이에요. [보고서 작성]을 누르면 신청 내용이 미리 채워집니다.</p><div id="trips"></div></div>
 
   <div id="reportView" class="hidden">
+  <div class="card quick">
+    <h2>한 줄 메모로 보고서</h2>
+    <p class="sub">출장에서 한 일을 대충 적으면 보고사항과 날짜별 일정을 채워요. 경비는 신청 금액이 들어가 있으니 실제와 다른 것만 고치세요.</p>
+    <div class="qrow"><textarea id="rq_memo" placeholder="예: SDK 래핑 완료, 실기에서 제어·상태조회 검증 통과. 그리퍼 토크 이슈는 다음주 재검증 예정"></textarea>
+      <button class="btn primary" id="btnRQuick">자동 작성</button></div>
+    <div class="qstatus" id="rq_status"></div>
+  </div>
   <div class="grid">
   <div>
     <div class="card">
@@ -184,14 +218,14 @@ table.ed td{padding:3px 4px;vertical-align:top}
     </div>
   </div>
   <div>
-    <div class="card ai">
-      <h2>AI로 채우기 (선택)</h2>
+    <details class="card ai more"><summary>다른 AI 채팅(ChatGPT 등)으로 작성하기</summary>
+      <h2 style="margin-top:10px">AI 채팅으로 작성</h2>
       <ol class="steps"><li>[프롬프트 복사] → AI에 붙여 넣기</li><li>끝에 출장 중 한 일을 메모로 적어 보내기</li><li>답변 전체를 아래에 붙여 넣기</li></ol>
       <div class="inline" style="margin:10px 0"><button class="btn" id="btnRPrompt">프롬프트 복사</button><span class="fare" id="rcopied"></span></div>
       <textarea id="rPaste" placeholder="AI 답변을 여기에 붙여 넣기"></textarea>
       <button class="btn" id="btnRFill" style="margin-top:8px;width:100%">양식에 채우기</button>
       <div class="err" id="rErr"></div>
-    </div>
+    </details>
     <div class="card">
       <h2>결재 문서 제목</h2>
       <div class="title-preview" id="r_title"></div>
@@ -217,6 +251,36 @@ table.ed td{padding:3px 4px;vertical-align:top}
       <button class="btn" id="btnLogin">그룹웨어 로그인 확인</button>
       <button class="btn primary" id="btnSave">저장</button>
     </div>
+  </div>
+  <div class="card" style="max-width:620px">
+    <h2>AI 문장 작성 (선택)</h2>
+    <p class="sub">개인 API 키를 넣으면 한 줄 메모로 사유·출장목적·보고서를 더 자연스럽게 써요. 없으면 템플릿으로 작성합니다. 키는 이 PC의 보안 저장소에 암호화돼 저장돼요.</p>
+    <div class="row"><label>AI</label><select id="s_ai"><option value="">사용 안 함 (템플릿)</option></select></div>
+    <div class="row"><label>API 키</label><input id="s_key" type="password" autocomplete="off"></div>
+    <div class="row"><label>모델</label><input id="s_model" placeholder="비우면 기본 모델"></div>
+    <div class="inline" style="justify-content:flex-end;gap:8px;margin-top:12px">
+      <span class="fare" id="s_ai_msg"></span>
+      <button class="btn" id="btnAiClear">키 삭제</button>
+      <button class="btn" id="btnAiTest">연결 테스트</button>
+      <button class="btn primary" id="btnAiSave">저장</button>
+    </div>
+  </div>
+  <div class="card" style="max-width:620px">
+    <h2>출장비 규정 (국내)</h2>
+    <p class="sub">숙박은 (일수 − 1)박. 식대는 끼니별로, 첫날은 출발 시각이 끼니 시작 전이면, 마지막 날은 복귀 시각이 끼니 끝난 뒤면 넣어요.</p>
+    <div class="rates">
+      <div><label>숙박 1박</label><input id="s_lodging" inputmode="numeric"></div>
+      <div><label>아침</label><input id="s_breakfast" inputmode="numeric"></div>
+      <div><label>점심</label><input id="s_lunch" inputmode="numeric"></div>
+      <div><label>저녁</label><input id="s_dinner" inputmode="numeric"></div>
+    </div>
+    <div class="rates" style="margin-top:10px">
+      <div><label>끼니 시간대</label><div class="fare" style="padding-top:8px">시작 ~ 끝</div></div>
+      <div><label>아침</label><div class="two"><input type="time" id="s_bf_from"><input type="time" id="s_bf_to"></div></div>
+      <div><label>점심</label><div class="two"><input type="time" id="s_lu_from"><input type="time" id="s_lu_to"></div></div>
+      <div><label>저녁</label><div class="two"><input type="time" id="s_di_from"><input type="time" id="s_di_to"></div></div>
+    </div>
+    <div class="inline" style="justify-content:flex-end;gap:8px;margin-top:12px"><span class="fare" id="s_rate_msg"></span><button class="btn primary" id="btnRateSave">저장</button></div>
   </div>
 </section>
 </main>

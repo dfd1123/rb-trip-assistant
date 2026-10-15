@@ -20,8 +20,12 @@ async function runFare(env, { mode, to, from }) {
   const { cfg, store, ui, log } = env;
   if (mode !== 'car' && mode !== 'transit') return { total: 0, describe: '법인차량은 교통비를 자동 계산하지 않습니다.' };
   if (!to) throw new R.InputError('도착지를 입력해 주세요.');
+  const origin = from || cfg.defaultOrigin;
+  const cached = store.getFare(mode, origin, to);
+  if (cached && !env.force) { log(`교통비(최근 조회값): ${cached.describe}`); return { ...cached, source: 'cache' }; }
   const shot = path.join(store.tripsDir, '_fare', `교통비_${mode}_${Date.now()}.png`);
-  const r = await lookupFare({ makeWindow: env.makeNaverWindow, mode, origin: from || cfg.defaultOrigin, dest: to, shotPath: shot, ui, log });
+  const r = await lookupFare({ makeWindow: env.makeNaverWindow, mode, origin, dest: to, shotPath: shot, ui, log });
+  store.putFare(mode, origin, to, r);
   log(`교통비: ${r.describe}`);
   return r;
 }
@@ -63,7 +67,8 @@ function reportDraft(store, cfg, id) {
     days.push(`${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`);
   return {
     trip_id: id, reason: a.reason, name: cfg.name, companions: a.companions, category: '로봇',
-    project: a.project || '', period: a.period, destination: a.destination, visit_org: a.destination,
+    project: a.project || '', destination: a.destination, visit_org: a.destination,
+    period: `${a.start.replace(/-/g, '.')}${a.start_time ? ' ' + a.start_time : ''} - ${a.end.replace(/-/g, '.')}${a.end_time ? ' ' + a.end_time : ''}`,
     purpose: a.purpose, report: '',
     schedule: days.map(date => ({ date, place: a.destination, detail: '' })),
     expenses: (r.expenses || a.expenses).map(({ item, amount, memo }) => ({ item, amount, memo })),

@@ -120,12 +120,15 @@ function parseApply(data) {
   const dates = req(data, 'dates', where);
   const start = date(req(dates, 'start', 'dates'), '시작일'), end = date(req(dates, 'end', 'dates'), '종료일');
   if (end < start) throw new InputError('종료일이 시작일보다 빠릅니다.');
+  const hm = (v, k) => { const t = String(v || '').trim(); if (t && !/^\d{1,2}:\d{2}$/.test(t)) throw new InputError(`${k}은 HH:MM 형식입니다: ${t}`); return t ? t.padStart(5, '0') : ''; };
+  const startTime = hm(dates.start_time, '출발 시각'), endTime = hm(dates.end_time, '복귀 시각');
+  if (start === end && startTime && endTime && endTime < startTime) throw new InputError('복귀 시각이 출발 시각보다 빠릅니다.');
   const reason = String(req(data, 'reason', where)).trim();
   const expenses = parseExpenses(data.expenses, 'expenses', reason);
   if (expenses.some(e => e.item === 'domestic_transport') && TRANSPORT_MODES[mode].autoFare)
     throw new InputError('국내교통비는 교통비 칸(네이버 지도 조회)으로 넣어 주세요. 경비 목록에서는 빼 주세요.');
   return {
-    reason, destination: String(req(data, 'destination', where)).trim(), start, end,
+    reason, destination: String(req(data, 'destination', where)).trim(), start, end, start_time: startTime, end_time: endTime,
     period: `${start.replace(/-/g, '.')} - ${end.replace(/-/g, '.')}`,
     category, project: String(data.project || ''), transport,
     companions: asList(data.companions), companion_purpose: String(data.companion_purpose || ''),
@@ -168,6 +171,7 @@ function applyPrompt(today = new Date().toISOString().slice(0, 10)) {
 - destination: 국내 출장지 이름 (예: 레인보우로보틱스 판교 AI 사무소)
 - category: 일반 | 연구과제   (연구과제면 project 에 과제명)
 - transport.mode: car(자차) | transit(대중교통) | corporate(법인차량)
+- dates.start_time / end_time: 출발·복귀 시각 HH:MM ('저녁에 출발'→19:00, '3시 복귀'→15:00). 모르면 "" (식대 계산에 쓰임)
 - transport.to: 네이버 지도에서 검색할 도착지 (주소나 장소명)
 - 교통비는 앱이 네이버 지도로 계산하니 expenses 에 국내교통비를 넣지 마.
 - expenses.item: domestic_lodging(국내숙박비) | meal(식대)
@@ -178,7 +182,7 @@ function applyPrompt(today = new Date().toISOString().slice(0, 10)) {
 \`\`\`yaml
 reason: 판교 AI 사무소 RBY1-Muscat 연동 검증
 destination: 레인보우로보틱스 판교 AI 사무소
-dates: {start: 2026-09-28, end: 2026-10-02}
+dates: {start: 2026-09-28, start_time: "09:00", end: 2026-10-02, end_time: "18:00"}
 category: 일반
 project: ""
 transport: {mode: car, to: 레인보우로보틱스 판교 AI 사무소}

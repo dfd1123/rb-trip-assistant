@@ -32,7 +32,7 @@ function expRow(tbody, e={}, onchange){
   sel.value = e.item || (tbody.id==='a_exp' ? 'domestic_lodging' : 'domestic_transport');
   amt.value = e.amount ? Number(e.amount).toLocaleString('ko-KR') : '';
   memo.value = e.memo || '';
-  amt.oninput = () => { amt.value = amt.value ? num(amt.value).toLocaleString('ko-KR') : ''; onchange(); };
+  amt.oninput = () => { amt.value = amt.value ? num(amt.value).toLocaleString('ko-KR') : ''; if(tbody.id==='a_exp') autoExp = false; onchange(); };
   sel.onchange = memo.oninput = onchange;
   tr.querySelector('button').onclick = () => { tr.remove(); onchange(); };
   tbody.appendChild(tr); onchange();
@@ -52,7 +52,7 @@ function applyData(){
   if(fareShot) t.screenshot = fareShot;
   return {
     reason: $('#a_reason').value.trim(), destination: $('#a_destination').value.trim(),
-    dates: {start: $('#a_start').value, end: $('#a_end').value},
+    dates: {start: $('#a_start').value, end: $('#a_end').value || $('#a_start').value, start_time: $('#a_start_time').value, end_time: $('#a_end_time').value},
     category: radio('a_category'), project: $('#a_project').value.trim(),
     transport: t, companions: list($('#a_companions').value),
     companion_purpose: $('#a_companion_purpose').value.trim(),
@@ -61,11 +61,12 @@ function applyData(){
 }
 function fillApply(d){
   $('#a_reason').value = d.reason||''; $('#a_destination').value = d.destination||'';
-  $('#a_start').value = (d.dates||{}).start||''; $('#a_end').value = (d.dates||{}).end||'';
+  const dt = d.dates || {start: d.start, end: d.end, start_time: d.start_time, end_time: d.end_time};
+  $('#a_start').value = dt.start||''; $('#a_end').value = dt.end||''; $('#a_start_time').value = dt.start_time||''; $('#a_end_time').value = dt.end_time||'';
   setRadio('a_category', d.category||'일반'); $('#a_project').value = d.project||'';
   const t = d.transport||{}; setRadio('a_mode', t.mode||'car');
   $('#a_to').value = t.to||''; if(t.from) $('#a_from').value = t.from;
-  $('#a_fare').value = t.total ? Number(t.total).toLocaleString('ko-KR') : ''; fareShot = '';
+  $('#a_fare').value = t.total ? Number(t.total).toLocaleString('ko-KR') : ''; fareShot = t.screenshot || ''; $('#a_fare_desc').textContent = '';
   if(t.corporate_car) $('#a_corporate_car').value = t.corporate_car;
   $('#a_companions').value = (d.companions||[]).join(', ');
   $('#a_companion_purpose').value = d.companion_purpose||''; $('#a_purpose').value = d.purpose||'';
@@ -103,12 +104,68 @@ $('#btnFill').onclick = async () => {
   try { fillApply((await rpc('/api/parse', {text: $('#aiPaste').value})).data); }
   catch(e){ $('#aiErr').textContent = e.message; }
 };
-$('#btnFare').onclick = () => {
+function setFare(r, label = ''){
+  if(!r || !r.total) return;
+  $('#a_fare').value = r.total.toLocaleString('ko-KR'); fareShot = r.screenshot||'';
+  $('#a_fare_desc').innerHTML = '<b></b> <span></span> <a href="#">캡처 보기</a>';
+  $('#a_fare_desc b').textContent = r.describe; $('#a_fare_desc span').textContent = label;
+  $('#a_fare_desc a').onclick = e => { e.preventDefault(); rpc('/api/open', {path: fareShot}); };
+  refreshApply();
+}
+function lookupFare(force){
   const d = applyData();
-  runJob('교통비 조회', '/api/job/fare', {mode: d.transport.mode, to: d.transport.to, from: d.transport.from}, r => {
-    if(r && r.total){ $('#a_fare').value = r.total.toLocaleString('ko-KR'); fareShot = r.screenshot||''; $('#a_fare_desc').innerHTML = '<b></b> <a href="#">캡처 보기</a>'; $('#a_fare_desc b').textContent = r.describe; $('#a_fare_desc a').onclick = e => { e.preventDefault(); rpc('/api/open', {path: fareShot}); }; refreshApply(); }
-  });
+  if(d.transport.mode==='corporate' || !d.transport.to) return;
+  runJob('교통비 조회 (네이버 지도)', '/api/job/fare', {mode: d.transport.mode, to: d.transport.to, from: d.transport.from, force}, r => setFare(r, r && r.source==='cache' ? '(최근 30일 내 조회값)' : ''));
+}
+$('#btnFare').onclick = () => lookupFare(true);
+
+/* ---------- 한 줄 자동 작성 ---------- */
+let autoExp = true;
+async function recalcExpenses(){
+  const start = $('#a_start').value, end = $('#a_end').value || start;
+  if(!start) return;
+  const r = await rpc('/api/expenses', {start, end, start_time: $('#a_start_time').value, end_time: $('#a_end_time').value, reason: $('#a_reason').value.trim()});
+  $('#a_exp tbody').innerHTML = '';
+  r.expenses.forEach(e => expRow($('#a_exp tbody'), e, refreshApply));
+  showMealPlan(r); autoExp = true; refreshApply();
+}
+function showMealPlan(m){
+  $('#a_meal_plan').textContent = m && m.summary ? `식대 내역: ${m.summary}${m.timed ? '' : '  (출발·복귀 시각을 넣으면 첫날·마지막 날 끼니를 정확히 계산해요)'}` : '';
+}
+['#a_start','#a_end','#a_start_time','#a_end_time'].forEach(id => $(id).addEventListener('change', () => { if(autoExp) recalcExpenses(); }));
+$('#btnRecalc').onclick = recalcExpenses;
+function markNeed(missing){
+  const map = {'날짜': ['#a_start','#a_end'], '출장지': ['#a_destination'], '사유': ['#a_reason']};
+  $$('.need').forEach(el => el.classList.remove('need'));
+  missing.forEach(m => (map[m]||[]).forEach(id => $(id).classList.add('need')));
+}
+$$('#a_start,#a_end,#a_destination,#a_reason').forEach(el => el.addEventListener('input', () => el.classList.remove('need')));
+$('#btnQuick').onclick = async () => {
+  const memo = $('#q_memo').value.trim();
+  if(!memo){ $('#q_memo').focus(); return; }
+  $('#btnQuick').disabled = true; $('#q_status').textContent = '작성 중…';
+  try {
+    const r = await rpc('/api/quick', {memo});
+    fillApply(r.data); autoExp = true; markNeed(r.missing); showMealPlan(r.meals);
+    const by = r.source === 'template' ? '템플릿으로 작성' : `${r.source}로 작성`;
+    $('#q_status').innerHTML = '';
+    const b = document.createElement('b'); b.textContent = by; $('#q_status').append(b,
+      r.missing.length ? ` · 확인 필요: ${r.missing.join(', ')} (주황색 칸)` : ' · 내용 확인 후 [그룹웨어에 입력하기]를 누르세요',
+      r.note ? ` · ${r.note}` : '', r.source === 'template' && !META.config.aiKeySet ? ' · 설정에서 AI 키를 넣으면 문장이 더 자연스러워져요' : '');
+    if(r.fare) setFare(r.fare, '(최근 30일 내 조회값)');
+    else if(r.data.transport.mode !== 'corporate' && r.data.transport.to && !r.missing.includes('출장지')) lookupFare(false);
+  } catch(e){ $('#q_status').textContent = e.message; }
+  finally { $('#btnQuick').disabled = false; }
 };
+$('#q_memo').addEventListener('keydown', e => { if(e.key==='Enter' && (e.metaKey||e.ctrlKey)) $('#btnQuick').click(); });
+function renderPlaces(){
+  $('#q_places').innerHTML = '';
+  (META.places||[]).forEach(p => {
+    const c = document.createElement('button'); c.className = 'chip'; c.textContent = (p.aliases && p.aliases[0]) || p.name; c.title = p.name;
+    c.onclick = () => { const m = $('#q_memo'); m.value = (m.value.trim() + ' ' + c.textContent).trim() + ' '; m.focus(); };
+    $('#q_places').appendChild(c);
+  });
+}
 $('#btnApply').onclick = async () => {
   $('#a_err').textContent = '';
   const data = applyData();
@@ -123,11 +180,19 @@ async function loadTrips(){
   trips.forEach(t => {
     const el = document.createElement('div'); el.className = 'item';
     el.innerHTML = `<div><b></b><span class="pill ${t.status==='보관됨'?'ok':''}">신청 ${t.status||'-'}</span><span class="pill ${t.report==='보관됨'?'ok':''}">보고 ${t.report||'-'}</span>
-      <div class="sub" style="margin:2px 0 0">${t.start} ~ ${t.end}</div></div><button class="btn">보고서 작성</button>`;
+      <div class="sub" style="margin:2px 0 0">${t.start} ~ ${t.end}</div></div><div class="inline"><button class="btn again">다시 신청</button><button class="btn primary rep">보고서 작성</button></div>`;
     el.querySelector('b').textContent = t.reason;
-    el.querySelector('button').onclick = () => openReport(t.id);
+    el.querySelector('.rep').onclick = () => openReport(t.id);
+    el.querySelector('.again').onclick = () => repeatTrip(t.id);
     $('#trips').appendChild(el);
   });
+}
+async function repeatTrip(id){
+  const {data} = await rpc('/api/repeat', {id});
+  $$('nav button')[0].click();
+  fillApply(data); autoExp = true; markNeed(['날짜']); showMealPlan(null);
+  $('#q_status').textContent = '지난 출장 내용을 불러왔어요. 날짜만 고르면 경비는 규정대로 다시 계산돼요.';
+  $('#a_start').focus();
 }
 function schedRow(r={}){
   const tr = document.createElement('tr');
@@ -164,6 +229,16 @@ function reportData(){
     schedule: [...$('#r_sched tbody').querySelectorAll('tr')].map(tr => { const [d,p,x]=tr.querySelectorAll('input,textarea'); return {date:d.value, place:p.value, detail:x.value}; }),
     expenses: readExp($('#r_exp tbody')), attachments: reportAttachments};
 }
+$('#btnRQuick').onclick = async () => {
+  if(!currentTrip) return;
+  $('#btnRQuick').disabled = true; $('#rq_status').textContent = '작성 중…';
+  try {
+    const r = await rpc('/api/report-quick', {id: currentTrip.trip_id, memo: $('#rq_memo').value});
+    fillReport({...reportData(), ...r.data});
+    $('#rq_status').textContent = (r.source === 'template' ? '템플릿으로 작성' : `${r.source}로 작성`) + (r.note ? ` · ${r.note}` : '') + ' · 확인 후 [그룹웨어에 입력하기]';
+  } catch(e){ $('#rq_status').textContent = e.message; }
+  finally { $('#btnRQuick').disabled = false; }
+};
 $('#btnAddDay').onclick = () => schedRow();
 $('#btnAddRExp').onclick = () => expRow($('#r_exp tbody'), {}, refreshReport);
 $('#btnBack').onclick = () => { $('#reportView').classList.add('hidden'); $('#tripList').classList.remove('hidden'); };
@@ -186,6 +261,31 @@ $('#btnSave').onclick = async () => {
   $('#s_msg').textContent = '저장됨'; META = await rpc('/api/meta'); $('#a_from').value ||= META.config.defaultOrigin;
 };
 $('#btnLogin').onclick = () => runJob('로그인 확인', '/api/job/login', {});
+function loadAiSettings(){
+  const c = META.config, sel = $('#s_ai');
+  sel.innerHTML = '<option value="">사용 안 함 (템플릿)</option>' + Object.entries(META.providers).map(([k,v]) => `<option value="${k}">${v.label}</option>`).join('');
+  sel.value = c.aiProvider || ''; $('#s_model').value = c.aiModel || '';
+  $('#s_model').placeholder = c.aiProvider ? `기본: ${META.providers[c.aiProvider].model}` : '비우면 기본 모델';
+  $('#s_key').value = ''; $('#s_key').placeholder = c.aiKeySet ? '저장됨 (바꾸려면 새 키 입력)' : 'API 키 붙여넣기';
+  const r = c.rates; $('#s_lodging').value = r.lodgingPerNight; $('#s_breakfast').value = r.breakfast; $('#s_lunch').value = r.lunch; $('#s_dinner').value = r.dinner;
+  const mt = c.mealTimes; [['bf','breakfast'],['lu','lunch'],['di','dinner']].forEach(([a,k]) => { $(`#s_${a}_from`).value = mt[k][0]; $(`#s_${a}_to`).value = mt[k][1]; });
+}
+$('#s_ai').onchange = () => { const k = $('#s_ai').value; $('#s_model').placeholder = k ? `기본: ${META.providers[k].model}` : '비우면 기본 모델'; };
+$('#btnAiSave').onclick = async () => {
+  const body = {aiProvider: $('#s_ai').value, aiModel: $('#s_model').value.trim()};
+  if($('#s_key').value.trim()) body.aiKey = $('#s_key').value.trim();
+  await rpc('/api/config', body); META = await rpc('/api/meta'); loadAiSettings(); $('#s_ai_msg').textContent = '저장됨';
+};
+$('#btnAiClear').onclick = async () => { await rpc('/api/config', {clearAiKey: true}); META = await rpc('/api/meta'); loadAiSettings(); $('#s_ai_msg').textContent = '키 삭제됨'; };
+$('#btnAiTest').onclick = async () => {
+  $('#s_ai_msg').textContent = '확인 중…';
+  try { const r = await rpc('/api/ai/test'); $('#s_ai_msg').textContent = `연결됨: "${r.reply}"`; } catch(e){ $('#s_ai_msg').textContent = e.message; }
+};
+$('#btnRateSave').onclick = async () => {
+  const rates = {lodgingPerNight: num($('#s_lodging').value), breakfast: num($('#s_breakfast').value), lunch: num($('#s_lunch').value), dinner: num($('#s_dinner').value)};
+  const mealTimes = Object.fromEntries([['bf','breakfast'],['lu','lunch'],['di','dinner']].map(([a,k]) => [k, [$(`#s_${a}_from`).value, $(`#s_${a}_to`).value]]));
+  await rpc('/api/config', {rates, mealTimes}); META = await rpc('/api/meta'); $('#s_rate_msg').textContent = '저장됨';
+};
 
 /* ---------- 작업 패널 ---------- */
 let jobTimer = null, jobSince = 0;
@@ -227,7 +327,7 @@ function alertErr(m){ $('#jobPanel').style.display='block'; $('#jobTitle').textC
   const c = META.config; $('#ver').textContent = 'v' + META.version;
   $('#s_name').value = c.name; $('#s_dept').value = c.budgetDept; $('#s_origin').value = c.defaultOrigin;
   $('#a_from').value = c.defaultOrigin;
-  expRow($('#a_exp tbody'), {item:'domestic_lodging'}, refreshApply);
-  expRow($('#a_exp tbody'), {item:'meal'}, refreshApply);
+  renderPlaces(); loadAiSettings();
+  $('#q_memo').focus();
   if(!META.configured || !c.name){ $$('nav button')[2].click(); $('#s_msg').textContent = '처음이면 이름부터 저장해 주세요'; }
 })();

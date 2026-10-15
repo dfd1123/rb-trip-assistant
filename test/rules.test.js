@@ -56,3 +56,105 @@ test('보고서: 정부과제는 과제명 필수', () => {
   assert.throws(() => R.parseReport({ ...base, category: '정부과제' }), /과제명/);
   assert.equal(R.parseReport({ ...base, category: '로봇' }).category, '로봇');
 });
+
+const Q = require('../src/engine/quick');
+const AI = require('../src/engine/ai');
+const TODAY = new Date(2026, 9, 15); // 2026-10-15 목
+const PLACES = [{ name: '레인보우로보틱스 판교 AI 사무소', to: '레인보우로보틱스 판교 AI 사무소', aliases: ['판교', '판교 AI 사무소'] }];
+
+test('날짜 말 해석', () => {
+  const d = s => { const r = Q.parseDates(s, TODAY); return [r.start, r.end]; };
+  assert.deepEqual(d('다음주 화~목'), ['2026-10-20', '2026-10-22']);
+  assert.deepEqual(d('이번주 금'), ['2026-10-16', '2026-10-16']);
+  assert.deepEqual(d('10/28~30'), ['2026-10-28', '2026-10-30']);
+  assert.deepEqual(d('10/30~11/2'), ['2026-10-30', '2026-11-02']);
+  assert.deepEqual(d('11월 3일부터 2박3일'), ['2026-11-03', '2026-11-05']);
+  assert.deepEqual(d('내일 당일'), ['2026-10-16', '2026-10-16']);
+  assert.deepEqual(d('1/5~7'), ['2027-01-05', '2027-01-07']);
+});
+
+test('규정 경비: 숙박 7만/박, 식대 3.8만/일 (판교 4박5일 = 28만 + 19만)', () => {
+  const e = Q.computeExpenses({ start: '2026-09-28', end: '2026-10-02', reason: '판교', rates: Q.DEFAULT_RATES }).expenses;
+  assert.deepEqual(e.map(x => [x.item, x.amount]), [['domestic_lodging', 280000], ['meal', 190000]]);
+  const day = Q.computeExpenses({ start: '2026-10-16', end: '2026-10-16', reason: 'x', rates: Q.DEFAULT_RATES }).expenses;
+  assert.deepEqual(day.map(x => [x.item, x.amount]), [['meal', 38000]]);
+});
+
+test('한 줄 메모 → 신청서', () => {
+  const { data, missing } = Q.quickApply('다음주 화~목 판교 RBY1 Muscat 연동 검증, 자차, 홍길동이랑 같이', { today: TODAY, places: PLACES, rates: Q.DEFAULT_RATES, origin: '세종' });
+  assert.equal(data.reason, 'RBY1 Muscat 연동 검증');
+  assert.equal(data.destination, '레인보우로보틱스 판교 AI 사무소');
+  assert.deepEqual(data.companions, ['홍길동']);
+  assert.equal(data.transport.mode, 'car');
+  assert.deepEqual(missing, []);
+  assert.equal(data.purpose, '레인보우로보틱스 판교 AI 사무소에서 RBY1 Muscat 연동 검증을 수행하기 위해 홍길동과 함께 출장을 신청합니다.');
+  const r2 = Q.quickApply('11월 3일부터 2박3일 KINTEX 로봇 전시회 참관 법인차 스타렉스', { today: TODAY, places: PLACES });
+  assert.equal(r2.data.destination, '킨텍스');
+  assert.equal(r2.data.reason, '로봇 전시회 참관');
+  assert.equal(r2.data.transport.corporate_car, '스타렉스');
+  assert.ok(Q.quickApply('판교 미팅', { today: TODAY, places: PLACES }).missing.includes('날짜'));
+  // 신청서 검증까지 통과해야 함
+  assert.equal(R.parseApply({ ...data, transport: { ...data.transport, total: 74814 } }).expenses.length, 2);
+});
+
+test('AI 결과 병합: 출장지 이름은 기존 목록으로, 금액은 규칙으로', () => {
+  const base = Q.quickApply('다음주 화~목 판교 검증', { today: TODAY, places: PLACES }).data;
+  const m = Q.mergeAi(base, { reason: 'RBY1-Muscat 연동 검증', destination: '판교 AI 사무소', dates: { start: '2026-10-20', end: '2026-10-22' }, purpose: 'AI 문장', transport: { mode: 'transit' } }, PLACES, { defaultOrigin: '세종' });
+  assert.equal(m.destination, '레인보우로보틱스 판교 AI 사무소');
+  assert.equal(m.transport.to, '레인보우로보틱스 판교 AI 사무소');
+  assert.equal(m.transport.mode, 'transit');
+  assert.equal(m.transport.from, '세종');
+  assert.equal(m.purpose, 'AI 문장');
+});
+
+test('AI 호출 형식 (Claude / OpenAI / Gemini)', async () => {
+  const calls = [];
+  const orig = global.fetch;
+  global.fetch = async (url, opt) => {
+    calls.push({ url, headers: opt.headers, body: JSON.parse(opt.body) });
+    const yamlText = '```yaml\nreason: 테스트\n```';
+    const body = url.includes('anthropic') ? { content: [{ type: 'text', text: yamlText }] }
+      : url.includes('openai') ? { choices: [{ message: { content: yamlText } }] }
+      : { candidates: [{ content: { parts: [{ text: yamlText }] } }] };
+    return { ok: true, status: 200, json: async () => body };
+  };
+  try {
+    for (const provider of ['anthropic', 'openai', 'gemini']) {
+      const d = await AI.draftApply({ provider, key: 'k', model: '' }, '다음주 판교', { places: PLACES, today: TODAY });
+      assert.equal(d.reason, '테스트');
+    }
+    assert.equal(calls[0].headers['x-api-key'], 'k');
+    assert.equal(calls[0].body.model, 'claude-haiku-5-5');
+    assert.ok(calls[0].body.messages[0].content.includes('2026-10-15 (목요일)'));
+    assert.ok(calls[0].body.messages[0].content.includes('expenses 는 쓰지 마'));
+    assert.equal(calls[1].headers.authorization, 'Bearer k');
+    assert.equal(calls[2].headers['x-goog-api-key'], 'k');
+  } finally { global.fetch = orig; }
+});
+
+test('시각 기준 식대: 저녁 출발이면 첫날 아침·점심 없음', () => {
+  const c = Q.computeExpenses({ start: '2026-10-20', end: '2026-10-22', startTime: '19:00', endTime: '15:00', reason: 'r' });
+  assert.equal(c.summary, '10/20 없음 · 10/21 아침·점심·저녁 · 10/22 아침·점심');
+  assert.deepEqual(c.expenses.map(e => e.amount), [140000, 8000 * 2 + 15000 * 2 + 15000]);
+  const e17 = Q.computeExpenses({ start: '2026-10-20', end: '2026-10-21', startTime: '17:30', endTime: '12:30', reason: 'r' });
+  assert.equal(e17.summary, '10/20 저녁 · 10/21 아침');
+  const one = Q.computeExpenses({ start: '2026-10-20', end: '2026-10-20', startTime: '09:00', endTime: '18:30', reason: 'r' });
+  assert.equal(one.summary, '10/20 점심');
+  const early = Q.computeExpenses({ start: '2026-10-20', end: '2026-10-20', startTime: '06:30', endTime: '20:00', reason: 'r' });
+  assert.equal(early.summary, '10/20 아침·점심·저녁');
+});
+
+test('시각 말 해석', () => {
+  assert.deepEqual(Q.parseTimes('화 19시 출발 ~ 목 15시 복귀'), { startTime: '19:00', endTime: '15:00' });
+  assert.deepEqual(Q.parseTimes('저녁에 출발 목 오후 3시 복귀'), { startTime: '19:00', endTime: '15:00' });
+  assert.deepEqual(Q.parseTimes('점심 먹고 출발'), { startTime: '13:00', endTime: '' });
+  assert.deepEqual(Q.parseTimes('화 19:30~목 3시'), { startTime: '19:30', endTime: '15:00' });
+  const q = Q.quickApply('다음주 화 저녁에 출발 목 3시 복귀 판교 RBY1 연동 검증 자차', { today: TODAY, places: PLACES });
+  assert.deepEqual(q.data.dates, { start: '2026-10-20', end: '2026-10-22', start_time: '19:00', end_time: '15:00' });
+  assert.equal(q.data.reason, 'RBY1 연동 검증');
+  assert.deepEqual(q.data.expenses.map(e => e.amount), [140000, 61000]);
+  assert.equal(Q.parseDates('다음주 월 목적지 판교', TODAY).end, '2026-10-19');   // '목적지'는 목요일 아님
+  const a = R.parseApply({ ...q.data, transport: { ...q.data.transport, total: 1 }, purpose: 'p' });
+  assert.equal(a.start_time, '19:00');
+  assert.throws(() => R.parseApply({ ...q.data, dates: { start: '2026-10-20', end: '2026-10-20', start_time: '19:00', end_time: '09:00' }, transport: { mode: 'car', total: 1 }, purpose: 'p' }), /복귀 시각/);
+});

@@ -2,11 +2,13 @@
 // 출장 결재 도우미 - Electron 메인 프로세스
 // 화면(렌더러) ↔ 작업(엔진) 중계. 그룹웨어와 네이버 지도는 앱 안의 별도 창(내장 Chromium)에서 조작한다.
 
-const { app, BrowserWindow, ipcMain, clipboard, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, clipboard, shell, safeStorage } = require('electron');
 const path = require('path');
 const R = require('./engine/rules');
 const runner = require('./engine/runner');
 const { Store } = require('./engine/store');
+const Q = require('./engine/quick');
+const AI = require('./engine/ai');
 
 const ICON = path.join(__dirname, '..', 'assets', 'icon-512.png');
 let mainWin = null, gwWin = null, store = null;
@@ -82,13 +84,83 @@ function startJob(kind, fn) {
   return { ok: true };
 }
 
+// ---------- AI 키 (OS 보안 저장소로 암호화) ----------
+function aiSettings(cfg) {
+  if (!cfg.aiProvider || !cfg.aiKeyEnc) return null;
+  try {
+    const buf = Buffer.from(cfg.aiKeyEnc, 'base64');
+    const key = safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(buf) : buf.toString('utf8');
+    return { provider: cfg.aiProvider, model: cfg.aiModel, key };
+  } catch (e) { return null; }
+}
+function encryptKey(key) {
+  return (safeStorage.isEncryptionAvailable() ? safeStorage.encryptString(key) : Buffer.from(key, 'utf8')).toString('base64');
+}
+const publicConfig = c => { const { aiKeyEnc, ...rest } = c; return { ...rest, aiKeySet: Boolean(aiKeyEnc) }; };
+
+/** 한 줄 메모 → 신청서. AI 가 있으면 문장/추론은 AI, 금액·출장지 이름은 항상 규칙. */
+async function quick(memo) {
+  const cfg = store.config();
+  const places = store.places();
+  const ctx = { today: new Date(), places, rates: cfg.rates, mealTimes: cfg.mealTimes, origin: cfg.defaultOrigin, defaults: { mode: store.lastMode() } };
+  const base = Q.quickApply(memo, ctx);
+  const ai = aiSettings(cfg);
+  let data = base.data, source = 'template', note = '';
+  if (ai) {
+    try {
+      const d = await AI.draftApply(ai, memo, { places });
+      data = Q.mergeAi(base.data, d, places, cfg);
+      source = AI.PROVIDERS[ai.provider].label;
+    } catch (e) { note = `AI 작성 실패로 템플릿을 썼어요: ${e.message}`; }
+  }
+  let meals = null;
+  if (data.dates.start && data.reason) {
+    meals = Q.computeExpenses({ start: data.dates.start, end: data.dates.end || data.dates.start, startTime: data.dates.start_time, endTime: data.dates.end_time, reason: data.reason, rates: cfg.rates, mealTimes: cfg.mealTimes });
+    data.expenses = meals.expenses;
+  }
+  const missing = [];
+  if (!data.dates.start) missing.push('날짜');
+  if (!data.destination) missing.push('출장지');
+  if (source === 'template' && base.missing.includes('사유')) missing.push('사유');
+  const t = data.transport;
+  const fare = (t.mode === 'car' || t.mode === 'transit') && t.to ? store.getFare(t.mode, t.from || cfg.defaultOrigin, t.to) : null;
+  return { data, missing, source, note, fare, meals: meals && { summary: meals.summary, timed: meals.timed } };
+}
+
+async function quickReport(id, memo) {
+  const cfg = store.config();
+  const draft = runner.reportDraft(store, cfg, id);
+  const ai = aiSettings(cfg);
+  if (ai && memo.trim()) {
+    try {
+      const d = await AI.draftReport(ai, draft, memo);
+      return { data: { ...draft, ...d, expenses: d.expenses || draft.expenses, attachments: draft.attachments, trip_id: id }, source: AI.PROVIDERS[ai.provider].label };
+    } catch (e) { return { data: Q.quickReport(draft, memo), source: 'template', note: `AI 작성 실패로 템플릿을 썼어요: ${e.message}` }; }
+  }
+  return { data: Q.quickReport(draft, memo), source: 'template' };
+}
+
 // ---------- 화면 API ----------
 async function route(p, body = {}) {
   const cfg = store.config();
   switch (p) {
     case '/api/meta':
-      return { config: cfg, configured: store.hasConfig(), items: Object.fromEntries(Object.entries(R.BUDGET_ITEMS).map(([k, v]) => [k, v[1]])), version: app.getVersion() };
-    case '/api/config': return store.saveConfig(body);
+      return { config: publicConfig(cfg), configured: store.hasConfig(), items: Object.fromEntries(Object.entries(R.BUDGET_ITEMS).map(([k, v]) => [k, v[1]])),
+        version: app.getVersion(), providers: Object.fromEntries(Object.entries(AI.PROVIDERS).map(([k, v]) => [k, v])), places: store.places().slice(0, 8) };
+    case '/api/config': {
+      const patch = { ...body };
+      if ('aiKey' in patch) { const k = String(patch.aiKey || '').trim(); delete patch.aiKey; if (k) patch.aiKeyEnc = encryptKey(k); }
+      if (patch.clearAiKey) { patch.aiKeyEnc = ''; delete patch.clearAiKey; }
+      return publicConfig(store.saveConfig(patch));
+    }
+    case '/api/ai/test': {
+      const ai = aiSettings(cfg); if (!ai) throw new Error('AI 제공사와 키를 먼저 저장해 주세요.');
+      const t = await AI.complete(ai, '한 단어로만 답해: 준비됐어?'); return { reply: String(t).trim().slice(0, 60) };
+    }
+    case '/api/quick': return quick(String(body.memo || ''));
+    case '/api/report-quick': return quickReport(body.id, String(body.memo || ''));
+    case '/api/expenses': { const r = Q.computeExpenses({ start: body.start, end: body.end || body.start, startTime: body.start_time, endTime: body.end_time, reason: body.reason || '', rates: cfg.rates, mealTimes: cfg.mealTimes }); return { expenses: r.expenses, summary: r.summary, timed: r.timed }; }
+    case '/api/repeat': { const a = store.load(body.id).apply; return { data: { ...a, dates: { start: '', end: '' }, transport: { ...a.transport, total: null, screenshot: '' } } }; }
     case '/api/prompt': return { text: R.applyPrompt() };
     case '/api/parse': return { data: R.extractYaml(body.text || '') };
     case '/api/title': { const r = String(body.reason || '').trim(); return { apply: r ? R.applyTitle(r) : '', report: r ? R.reportTitle(r) : '' }; }
@@ -98,7 +170,7 @@ async function route(p, body = {}) {
     case '/api/copy': clipboard.writeText(String(body.text || '')); return { ok: true };
     case '/api/open': if (body.path) shell.openPath(body.path); return { ok: true };
     case '/api/job/login': return startJob('login', env => runner.runLogin(env));
-    case '/api/job/fare': return startJob('fare', env => runner.runFare(env, body));
+    case '/api/job/fare': return startJob('fare', env => runner.runFare({ ...env, force: Boolean(body.force) }, body));
     case '/api/job/apply': runner.planApply(body.data, cfg); return startJob('apply', env => runner.runApply(env, body.data, { save: body.save !== false }));
     case '/api/job/report': R.parseReport(body.data); return startJob('report', env => runner.runReport(env, body.data, { save: body.save !== false }));
     case '/api/job': return job ? job.snapshot(Number(body.since || 0)) : { state: 'none' };

@@ -30,7 +30,12 @@ async function lookupFare({ makeWindow, mode, origin, dest, shotPath, ui, log })
   const win = makeWindow();
   const p = new Page(win);
   try {
-    await p.goto(URL(mode));
+    try { await p.goto(URL(mode)); }
+    catch (e) {
+      log(`네이버 지도를 열 수 없어요 (${e.message.split(' loading')[0]}).`);
+      const t = await ui.askInt(`네이버 지도에 접속할 수 없어요. ${mode === 'car' ? '(연료비+통행료)' : '버스 포함 총 요금'} 편도 금액을 입력해 주세요 (원)`);
+      return { mode, oneWay: t, total: roundTrip(t), source: 'manual', screenshot: '', describe: `${t.toLocaleString('ko-KR')} × 2 = ${roundTrip(t).toLocaleString('ko-KR')}원 (직접 입력)` };
+    }
     await sleep(2500);
     log(`네이버 지도 ${mode === 'car' ? '자동차' : '대중교통'} 길찾기: ${origin} → ${dest}`);
     if (!(await trySearch(p, origin, dest)))
