@@ -23,7 +23,7 @@ cd "$APP_DIR"
 IS_MAC=0; [ "$(uname)" = "Darwin" ] && IS_MAC=1
 [ $IS_MAC = 1 ] || echo "  ⓘ 맥이 아니라서 맥 빌드는 빼고 배포해요 (맥 사용자는 이전 버전 유지)."
 command -v gh >/dev/null || { echo "Error: GitHub CLI(gh)가 필요합니다. brew install gh"; exit 1; }
-gh auth status >/dev/null 2>&1 || { echo "Error: gh auth login 이 필요합니다."; exit 1; }
+GH_OUT=$(gh auth status 2>&1) || { echo "Error: GitHub CLI 로그인 확인 실패 — gh 가 알려 준 내용:"; echo "$GH_OUT" | sed -E 's/(gh[opsu]_)[A-Za-z0-9_]+/\1****/g'; echo "  로그인이 풀렸으면: gh auth login   /  키체인이 잠겼으면 잠금 해제 후 다시"; exit 1; }
 [ -f .env ] && set -a && . ./.env && set +a
 # 공증 계정: 환경변수 → 없으면 ~/.zshrc · ~/.zprofile 의 export 줄에서 (web-rainbow-ui 배포와 같은 값)
 for v in APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
