@@ -135,6 +135,43 @@ class Amaranth {
   }
 
   // ---------- 코드도움 모달 ----------
+  /** 내 정보: 품의서입력 화면 위 칸에서 {coCd, deptCd, deptName, empCd, empName} ("MBU1000. 매니퓰레이터 사업부" 형식) */
+  async readProfile() {
+    await this.openBudgetList();
+    return this.page.eval(() => {
+      const val = label => { const el = all('*').find(e => ownText(e) && vis(e) && norm(e.textContent) === label); if (!el) return '';
+        for (let box = el.parentElement, i = 0; box && i < 4; box = box.parentElement, i++) {
+          const inp = all('input', box).find(x => vis(x) && /^[A-Za-z0-9]+\.\s*\S/.test(x.value) && (el.compareDocumentPosition(x) & Node.DOCUMENT_POSITION_FOLLOWING));
+          if (inp) return inp.value; }
+        return ''; };
+      const split = v => { const m = /^([A-Za-z0-9]+)\.\s*(.+)$/.exec(v || ''); return m ? [m[1], m[2].trim()] : ['', '']; };
+      const [coCd] = split(val('회계단위')), [deptCd, deptName] = split(val('품의부서')), [empCd, empName] = split(val('작성자'));
+      return { coCd, deptCd, deptName, empCd, empName };
+    });
+  }
+
+  /** 예산 줄 '부서' 사업코드도움의 전체 목록 이름들 (아무것도 고르지 않고 닫는다). 못 읽으면 [] */
+  async budgetDeptList() {
+    const p = this.page, title = '^사업코드도움$';
+    const findDlg = `(re) => { const r = new RegExp(re); const h = all('*').filter(e => ownText(e) && vis(e) && r.test(e.textContent.trim())).pop(); return h ? dialog(h.textContent.trim()) : null; }`;
+    let stop = null;
+    try { if (this.debugDir) stop = await p.netLogStart(); } catch (e) { stop = null; }
+    try {
+      await this.openCodeHelp('예산과목', 0, '부서', title);
+      const btn = await p.eval(`(re) => { const d = (${findDlg})(re); const b = d && (d.querySelector('#tutorial-conditionPanel-search, [class*=searchButton]') || all('button', d).find(x => vis(x) && !norm(x.textContent) && x.querySelector('img[src*=search]'))); return b && vis(b) ? center(b) : null; }`, title);
+      if (btn) await p.click(btn);
+      const rows = await p.waitFor(`(re) => { const d = (${findDlg})(re); const g = d && rgFind(d); const rs = g ? rgRows(g).filter(Boolean) : []; return rs.length ? rs : null; }`, [title], { timeout: 6000 });
+      // 행마다 이름 칸: 키가 nm/name 이고 한글인 값 → 없으면 한글 값 아무거나
+      const names = (rows || []).map(r => { const es = Object.entries(r).filter(([, v]) => typeof v === 'string' && /[가-힣]/.test(v));
+        const hit = es.find(([k]) => /(nm|name)$/i.test(k)) || es[0]; return hit ? hit[1].trim() : ''; }).filter(Boolean);
+      return [...new Set(names)];
+    } finally {
+      try { await p.clickWhere(`(re) => { const d = (${findDlg})(re); return d && all('button', d).filter(b => vis(b) && /^(취소|닫기)$/.test(norm(b.textContent))).pop(); }`, title); }
+      catch (e) { await p.key('Escape'); }
+      if (stop) { try { const net = await stop(); require('fs').writeFileSync(require('path').join(this.debugDir, 'net-dept-codehelp.json'), JSON.stringify(net.filter(r => !/static|langPack|event0/.test(r.url)), null, 1)); } catch (e) { /* 진단 */ } }
+    }
+  }
+
   async openCodeHelp(gridHdr, row, col, titleRe) {
     const p = this.page;
     const opened = () => p.waitFor(re => { const r = new RegExp(re); return all('*').some(e => ownText(e) && vis(e) && r.test(e.textContent.trim()) && !!dialog(e.textContent.trim())); },
@@ -262,8 +299,11 @@ class Amaranth {
       this.log(`예산 라인 ${i + 1}/${expenses.length}: ${ex.label} ${ex.amount.toLocaleString('ko-KR')}원`);
       if ((await this.rowCount('예산과목')) <= i) await ui.assist(`예산 목록에 ${i + 1}번째 행이 없습니다. 빈 행을 만들어 주세요.`);
       try {
+        const diagFile = this.debugDir && require('path').join(this.debugDir, 'net-dept-codehelp.json');
+        const stopNet = diagFile && i === 0 && !require('fs').existsSync(diagFile) ? await p.netLogStart().catch(() => null) : null;
         await this.openCodeHelp('예산과목', i, '부서', '^사업코드도움$');
         await this.pickInCodeHelp('^사업코드도움$', dept, dept);
+        if (stopNet) { try { const net = await stopNet(); require('fs').mkdirSync(this.debugDir, { recursive: true }); require('fs').writeFileSync(diagFile, JSON.stringify(net.filter(r => !/static|langPack|event0/.test(r.url)), null, 1)); } catch (e) { /* 진단 */ } }
         await sleep(400);
         const got = String(((await this.rowVals('예산과목', i)) || {})['부서'] || '');
         if (!norm(got).includes(norm(dept))) throw new Error(`부서 칸이 '${got || '빈칸'}'입니다`);

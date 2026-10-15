@@ -26,7 +26,7 @@ app.whenReady().then(async () => {
   try {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ta-e2e-'));
     const store = new Store(dir);
-    store.saveConfig({ baseUrl: url, name: '김종완' });
+    store.saveConfig({ baseUrl: url, name: '김종완', budgetDept: '매니퓰레이터 사업부', defaultOrigin: '세종특별자치시 집현동 1095' });
     let gw;
     const gwWindow = () => {
       if (gw && !gw.isDestroyed()) return gw;

@@ -435,8 +435,23 @@ $('#btnReport').onclick = () => {
 };
 
 /* ---------- 설정 ---------- */
+/** 예산 부서 선택: 그룹웨어 사업코드 목록 (없으면 지금 값만) */
+function fillDepts(c){   // 고를 게 두 개 이상이면 선택 상자, 아니면 글자 칸
+  const list = [...new Set([c.budgetDept, ...(c.budgetDepts || [])].filter(Boolean))];
+  const many = list.length > 1;
+  $('#s_dept').classList.toggle('hidden', !many); $('#s_dept_text').classList.toggle('hidden', many);
+  $('#s_dept').innerHTML = '';
+  list.forEach(n => { const o = document.createElement('option'); o.value = o.textContent = n; $('#s_dept').appendChild(o); });
+  $('#s_dept').value = c.budgetDept || list[0] || '';
+  $('#s_dept_text').value = c.budgetDept || '';
+}
+const deptValue = () => ($('#s_dept').classList.contains('hidden') ? $('#s_dept_text') : $('#s_dept')).value.trim();
+async function loadProfile(force){   // 그룹웨어에서 이름·품의부서·사업코드 목록
+  runJob('내 정보 불러오기', '/api/job/gw-profile', {force}, async () => { META = await rpc('/api/meta'); const c = META.config; $('#s_name').value = c.name; fillDepts(c); $('#s_msg').textContent = '그룹웨어에서 불러왔어요'; }, {quiet: true});
+}
+$('#btnProfile').onclick = () => loadProfile(true);
 $('#btnSave').onclick = async () => {
-  await rpc('/api/config', {name: $('#s_name').value.trim(), budgetDept: $('#s_dept').value.trim(), defaultOrigin: $('#s_origin').value.trim()});
+  await rpc('/api/config', {name: $('#s_name').value.trim(), budgetDept: deptValue(), defaultOrigin: $('#s_origin').value.trim()});
   $('#s_msg').textContent = '저장됨'; META = await rpc('/api/meta'); $('#a_from').value ||= META.config.defaultOrigin;
 };
 $('#btnLogin').onclick = () => runJob('로그인 확인', '/api/job/login', {}, () => checkGw(false));
@@ -445,7 +460,8 @@ function loadAiSettings(){
   sel.innerHTML = '<option value="none">사용 안 함 (템플릿)</option>' + Object.entries(META.providers).map(([k,v]) => `<option value="${k}">${v.label}</option>`).join('');
   sel.value = c.aiProvider || (c.aiBuiltin ? 'gemini' : 'none'); $('#s_model').value = c.aiModel || '';
   $('#s_model').placeholder = META.providers[sel.value] ? `기본: ${META.providers[sel.value].model}` : '비우면 기본 모델';
-  $('#s_key').value = ''; $('#s_key').placeholder = c.aiBuiltin ? '팀 공용 Gemini 키 사용 중 (개인 키를 넣으면 그게 우선)' : c.aiKeySet ? '저장됨 (바꾸려면 새 키 입력)' : 'API 키 붙여넣기';
+  const keyHint = () => { const k = $('#s_ai').value; $('#s_key').placeholder = c.aiKeySet && !c.aiBuiltin ? '저장됨 (바꾸려면 새 키 입력)' : k === 'gemini' && c.aiBuiltin ? '팀 공용 Gemini 키 사용 중 (개인 키를 넣으면 그게 우선)' : k === 'none' ? '' : 'API 키 붙여넣기 (필수)'; };
+  $('#s_key').value = ''; keyHint(); $('#s_ai').addEventListener('change', keyHint);
 
   const r = c.rates; $('#s_lodging').value = r.lodgingPerNight; $('#s_breakfast').value = r.breakfast; $('#s_lunch').value = r.lunch; $('#s_dinner').value = r.dinner;
   const mt = c.mealTimes; [['bf','breakfast'],['lu','lunch'],['di','dinner']].forEach(([a,k]) => { $(`#s_${a}_from`).value = mt[k][0]; $(`#s_${a}_to`).value = mt[k][1]; });
@@ -487,7 +503,7 @@ function watchJob(title, onDone, {quiet = false} = {}){
     if(s.logs && s.logs.length){ $('#jobLog').textContent += s.logs.join('\n') + '\n'; $('#jobLog').scrollTop = 1e9; jobSince = s.next; if(!quiet) $('#dimStep').textContent = s.logs[s.logs.length - 1].replace(/^[⚠✔—]\s*/, ''); }
     const q = s.question;
     $('#jobShow').textContent = s.kind === 'fare' ? '네이버 지도 열기' : '그룹웨어 창 열기';
-    const what = {apply: '와니가 작성 중', report: '와니가 작성 중', fare: '와니가 교통비 조회 중', 'trip-delete': '와니가 삭제 중', 'gw-delete': '와니가 삭제 중', 'gw-list': '그룹웨어 로그인·품의 상태를 확인 중이에요', 'report-load': '그룹웨어에서 보고서를 불러오는 중이에요', login: '그룹웨어 로그인 상태를 확인 중이에요'}[s.kind] || '와니가 처리 중';
+    const what = {apply: '와니가 작성 중', report: '와니가 작성 중', fare: '와니가 교통비 조회 중', 'trip-delete': '와니가 삭제 중', 'gw-delete': '와니가 삭제 중', 'gw-list': '그룹웨어 로그인·품의 상태를 확인 중이에요', 'gw-profile': '그룹웨어에서 내 정보를 불러오는 중이에요', 'report-load': '그룹웨어에서 보고서를 불러오는 중이에요', login: '그룹웨어 로그인 상태를 확인 중이에요'}[s.kind] || '와니가 처리 중';
     $('#dimWhat').textContent = what; $('.wani .pen').textContent = /삭제/.test(what) ? '🧹' : /조회|확인/.test(what) ? '🔍' : '✍️';
     $('#jobAsk').style.display = q ? 'block' : 'none';
     $('#jobSpin').classList.toggle('on', !q && s.state === 'running');   // 사람 입력 기다릴 땐 멈춤
@@ -538,6 +554,7 @@ async function checkGw(openIfNeeded = true){
   if(dimMine) $('#dim').classList.remove('on');
   gwChecked = Date.now();
   setGwPill(st.loggedIn ? 'ok' : 'bad');
+  if(st.loggedIn && (!META.config.name || !META.config.budgetDept || !(META.config.budgetDepts || []).length)) setTimeout(() => loadProfile(false), 300);   // 처음 깐 PC: 그룹웨어에서 채우기
   if(!st.loggedIn && openIfNeeded) openLogin(st.failed ? '저장된 계정으로 로그인하지 못했어요. 비밀번호가 바뀌었다면 다시 입력해 주세요.' : '');
   return st;
 }
@@ -562,7 +579,7 @@ window.addEventListener('focus', () => { if(Date.now() - gwChecked > 20 * 60 * 1
 (async () => {
   META = await rpc('/api/meta');
   const c = META.config; $('#ver').textContent = 'v' + META.version;
-  $('#s_name').value = c.name; $('#s_dept').value = c.budgetDept; $('#s_origin').value = c.defaultOrigin;
+  $('#s_name').value = c.name; fillDepts(c); $('#s_origin').value = c.defaultOrigin;
   $('#a_from').value = c.defaultOrigin;
   loadAiSettings();
   // 업데이트: 켤 때·창에 다시 들어올 때 최신 버전 확인 → 있으면 물어보고 → [업데이트]면 받아서 설치·재시작
@@ -596,5 +613,5 @@ window.addEventListener('focus', () => { if(Date.now() - gwChecked > 20 * 60 * 1
   if(cur && (cur.state === 'running' || cur.state === 'waiting')) watchJob(cur.title || '진행 중인 작업', cur.kind === 'fare' ? r => setFare(r) : (cur.kind === 'apply' || cur.kind === 'report') ? () => loadTrips() : null);
   $('#q_memo').focus();
   showGwSaved(); checkGw();
-  if(!META.configured || !c.name){ $$('nav button')[2].click(); $('#s_msg').textContent = '처음이면 이름부터 저장해 주세요'; }
+  if(!META.configured || !c.name){ $$('nav button')[2].click(); $('#s_msg').textContent = '처음이면 그룹웨어에 로그인해 주세요. 이름·예산 부서는 자동으로 채워져요. 기본 출발지가 다르면 고쳐서 저장하세요.'; }
 })();

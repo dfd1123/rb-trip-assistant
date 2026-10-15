@@ -51,6 +51,7 @@ main{max-width:1080px;margin:0 auto;padding:24px 20px 80px}
 .two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 input,select,textarea{width:100%;font:inherit;color:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:#fff}
 input:focus,select:focus,textarea:focus{outline:2px solid var(--accent-soft);border-color:var(--accent)}
+input[readonly]{background:var(--bg);color:var(--muted);cursor:default} input[readonly]:focus{outline:none;border-color:var(--line)}
 textarea{resize:vertical;min-height:84px}
 .seg{display:flex;gap:6px;flex-wrap:wrap}
 .seg label{border:1px solid var(--line);border-radius:999px;padding:6px 14px;cursor:pointer;user-select:none}
@@ -313,10 +314,11 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
 <!-- ================= 설정 ================= -->
 <section id="tab-settings" class="hidden">
   <div class="card">
-    <h2>내 설정</h2><p class="sub">이 PC에만 저장돼요.</p>
-    <div class="row"><label>이름</label><input id="s_name"></div>
-    <div class="row"><label>예산 부서</label><input id="s_dept" placeholder="사업코드도움에서 고르는 이름"></div>
-    <div class="row"><label>기본 출발지</label><input id="s_origin"></div>
+    <div class="h2row"><h2>내 설정</h2><button class="btn small" id="btnProfile" title="그룹웨어에서 이름·품의부서·사업코드 목록을 다시 받아와요">↻ 그룹웨어에서 불러오기</button></div>
+    <p class="sub">이 PC에만 저장돼요. 이름과 예산 부서는 그룹웨어에서 받아와요 (바뀌었으면 ↻ 그룹웨어에서 불러오기). 예산 부서는 고를 수 있는 게 여러 개일 때만 바꿀 수 있어요.</p>
+    <div class="row"><label>이름</label><input id="s_name" readonly placeholder="그룹웨어에 로그인하면 채워져요"></div>
+    <div class="row"><label>예산 부서</label><select id="s_dept" class="hidden"></select><input id="s_dept_text" readonly placeholder="그룹웨어에 로그인하면 품의부서로 채워져요"></div>
+    <div class="row"><label>기본 출발지</label><input id="s_origin" placeholder="교통비 조회 출발지 (예: 집 주소나 회사 주소)"></div>
     <div class="inline" style="justify-content:flex-end;gap:8px;margin-top:12px">
       <span class="fare" id="s_msg"></span>
       <button class="btn primary" id="btnSave">저장</button>
@@ -332,7 +334,12 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
   </div>
   <div class="card">
     <h2>AI 문장 작성 (선택)</h2>
-    <p class="sub">개인 API 키를 넣으면 한 줄 메모로 사유·출장목적·보고서를 더 자연스럽게 써요. 없으면 템플릿으로 작성합니다. 키는 이 PC의 보안 저장소에 암호화돼 저장돼요.</p>
+    <p class="sub">한 줄 메모로 사유·목적·보고사항을 써요. Gemini는 키를 비워 두면 팀 공용 키를 쓰고, Claude·OpenAI는 개인 키가 있어야 해요.</p>
+    <ul class="sub" style="margin:4px 0 12px;padding-left:18px;line-height:1.7">
+      <li><b>사용 안 함 (템플릿)</b>: 메모에서 날짜·장소·사유를 골라 정해진 문장에 끼워 넣어요. 바로 되지만 문장이 딱딱하고, 메모가 길면 사유가 어색하게 잘릴 수 있어요.</li>
+      <li><b>AI (Gemini 등)</b>: 메모 전체를 읽고 자연스럽게 써요. 몇 초 걸리고, 메모 내용이 AI 회사로 보내져요.</li>
+      <li>날짜·경비·교통비 계산은 어느 쪽이든 똑같아요.</li>
+    </ul>
     <div class="row"><label>AI</label><select id="s_ai"><option value="">사용 안 함 (템플릿)</option></select></div>
     <div class="row"><label>API 키</label><input id="s_key" type="password" autocomplete="off"></div>
     <div class="row"><label>모델</label><input id="s_model" placeholder="비우면 기본 모델"></div>
@@ -345,14 +352,20 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
   </div>
   <div class="card">
     <h2>출장비 규정 (국내)</h2>
-    <p class="sub">숙박은 (일수 − 1)박. 식대는 끼니별로, 첫날은 출발 시각이 끼니 시작 전이면, 마지막 날은 복귀 시각이 끼니 끝난 뒤면 넣어요.</p>
+    <p class="sub">신청서 경비를 자동으로 계산할 때 쓰는 금액이에요.</p>
+    <ul class="sub" style="margin:4px 0 12px;padding-left:18px;line-height:1.7">
+      <li><b>숙박비</b> = 1박 금액 × 잔 날 수. 예) 10/20~10/22 출장이면 2박</li>
+      <li><b>식대</b> = 먹은 끼니만 더해요. 중간 날은 아침·점심·저녁 다 넣어요.</li>
+      <li><b>첫날</b>은 그 끼니 시간이 시작되기 전에 출발했을 때만 넣어요. 예) 9시 출발이면 아침(7~8시)은 빼고 점심·저녁</li>
+      <li><b>마지막 날</b>은 그 끼니 시간이 끝난 뒤에 돌아왔을 때만 넣어요. 예) 18시 복귀면 아침·점심만, 저녁(18~19시)은 빼고</li>
+    </ul>
     <div class="rates">
       <div><label>숙박 1박</label><input id="s_lodging" inputmode="numeric"></div>
       <div><label>아침</label><input id="s_breakfast" inputmode="numeric"></div>
       <div><label>점심</label><input id="s_lunch" inputmode="numeric"></div>
       <div><label>저녁</label><input id="s_dinner" inputmode="numeric"></div>
     </div>
-    <p class="sub" style="margin:16px 0 6px">끼니 시간대 (시작 ~ 끝)</p>
+    <p class="sub" style="margin:16px 0 6px">끼니 시간대 (시작 ~ 끝) — 첫날·마지막 날 끼니를 넣을지 정하는 기준이에요</p>
     <div class="mealtimes">
       <div class="mrow"><label>아침</label><input type="time" id="s_bf_from"><span>~</span><input type="time" id="s_bf_to"></div>
       <div class="mrow"><label>점심</label><input type="time" id="s_lu_from"><span>~</span><input type="time" id="s_lu_to"></div>

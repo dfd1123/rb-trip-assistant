@@ -193,10 +193,10 @@ test('품의 삭제 가능 여부 (결재상태)', () => {
 test('신청 직전 교통비 필수 (자차·대중교통)', () => {
   const { planApply } = require('../src/engine/runner');
   const base = { reason: 'x', destination: 'y', dates: { start: '2026-10-20', end: '2026-10-20', start_time: '09:00', end_time: '18:00' }, purpose: 'p' };
-  assert.throws(() => planApply({ ...base, transport: { mode: 'car', to: '판교' } }, {}), /교통비는 필수/);
-  assert.throws(() => planApply({ ...base, transport: { mode: 'transit', to: '판교', total: 0 } }, {}), /교통비는 필수/);
-  assert.ok(planApply({ ...base, transport: { mode: 'car', to: '판교', total: 74814 } }, {}).transport.total === 74814);
-  assert.ok(planApply({ ...base, transport: { mode: 'corporate' } }, {}));
+  assert.throws(() => planApply({ ...base, transport: { mode: 'car', to: '판교' } }, { budgetDept: 'x' }), /교통비는 필수/);
+  assert.throws(() => planApply({ ...base, transport: { mode: 'transit', to: '판교', total: 0 } }, { budgetDept: 'x' }), /교통비는 필수/);
+  assert.ok(planApply({ ...base, transport: { mode: 'car', to: '판교', total: 74814 } }, { budgetDept: 'x' }).transport.total === 74814);
+  assert.ok(planApply({ ...base, transport: { mode: 'corporate' } }, { budgetDept: 'x' }));
 });
 
 test('품의 적요', () => {
@@ -222,4 +222,10 @@ test('연구과제는 과제명 필수', () => {
   const base = { reason: 'x', destination: 'y', dates: { start: '2026-10-20', end: '2026-10-20', start_time: '09:00', end_time: '18:00' }, purpose: 'p', transport: { mode: 'car', to: 'z', total: 1000 } };
   assert.throws(() => R.parseApply({ ...base, category: '연구과제' }), /과제명/);
   assert.equal(R.parseApply({ ...base, category: '연구과제', project: 'RBY1 과제' }).project, 'RBY1 과제');
+});
+
+test('예산 부서 없으면 신청 막기', () => {
+  const { planApply } = require('../src/engine/runner');
+  const base = { reason: 'x', destination: 'y', dates: { start: '2026-10-20', end: '2026-10-20', start_time: '09:00', end_time: '18:00' }, purpose: 'p', transport: { mode: 'corporate' } };
+  assert.throws(() => planApply(base, {}), /예산 부서/);
 });

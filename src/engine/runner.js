@@ -8,6 +8,7 @@ const { lookupFare } = require('./naver');
 const { applyPayload, reportPayload } = require('./editorFill');
 
 function planApply(data, cfg) {
+  if (!cfg.budgetDept) throw new R.InputError('설정에서 예산 부서를 골라 주세요. (그룹웨어에 로그인하면 목록을 받아와요)');
   const a = R.parseApply(data);
   if (R.TRANSPORT_MODES[a.transport.mode].autoFare && !a.transport.total) throw new R.InputError('교통비는 필수예요. [네이버 지도 조회]를 누르거나 직접 입력해 주세요.');
   return {
@@ -22,6 +23,7 @@ async function runFare(env, { mode, to, from }) {
   if (mode !== 'car' && mode !== 'transit') return { total: 0, describe: '법인차량은 교통비를 자동 계산하지 않습니다.' };
   if (!to) throw new R.InputError('도착지를 입력해 주세요.');
   const origin = from || cfg.defaultOrigin;
+  if (!origin) throw new R.InputError('출발지가 없어요. 설정의 기본 출발지나 교통·경비의 출발지를 넣어 주세요.');
   const cached = store.getFare(mode, origin, to);
   if (cached && !env.force) { log(`교통비(최근 조회값): ${cached.describe}`); return { ...cached, source: 'cache' }; }
   const shot = path.join(store.tripsDir, '_fare', `교통비_${mode}_${Date.now()}.png`);
@@ -153,6 +155,25 @@ async function runLoadReport(env, id) {
   return { draft: { ...draft, expenses: expenses.length ? expenses : draft.expenses }, resumed: false, fromGw: expenses.length };
 }
 
+/** 그룹웨어에서 내 정보 받아오기: 이름·품의부서(기본 예산 부서)·사업코드 목록. 비어 있는 설정만 채운다 (force 면 이름·부서도 다시) */
+async function runProfile(env, { force = false } = {}) {
+  const { store, cfg, log } = env;
+  const gw = new Amaranth({ win: env.gwWindow(), baseUrl: cfg.baseUrl, ui: env.ui, log, debugDir: env.debugDir, creds: env.creds });
+  await gw.ensureLogin();
+  log('그룹웨어에서 내 정보를 읽어요.');
+  const me = await gw.readProfile();
+  let depts = [];
+  try { depts = await gw.budgetDeptList(); } catch (e) { log(`(사업코드 목록을 못 읽었어요: ${e.message})`); }
+  if (me.deptName && !depts.includes(me.deptName)) depts.unshift(me.deptName);
+  const patch = { budgetDepts: depts };
+  if (me.empName && (force || !cfg.name)) patch.name = me.empName;
+  if (me.deptName && (force || !cfg.budgetDept)) patch.budgetDept = me.deptName;
+  if (me.coCd && me.deptCd && me.empCd) patch.gwUser = { coCd: me.coCd, deptCd: me.deptCd, empCd: me.empCd };
+  store.saveConfig(patch);
+  log(`이름 ${patch.name || cfg.name || '-'} · 예산 부서 ${patch.budgetDept || cfg.budgetDept || '-'} · 고를 수 있는 부서 ${depts.length}개`);
+  return { name: patch.name || cfg.name, budgetDept: patch.budgetDept || cfg.budgetDept, budgetDepts: depts };
+}
+
 async function runListBudget(env) {
   const gw = new Amaranth({ win: env.gwWindow(), baseUrl: env.cfg.baseUrl, ui: env.ui, log: env.log, debugDir: env.debugDir, creds: env.creds });
   // 1) API 로 바로 (화면 없이 수백 ms). 최근 3개월은 월 단위로, 앱 기록에 있는 날들 + 오늘은 날짜별로(월 단위가 안 될 때 대비)
@@ -212,4 +233,4 @@ async function runDeleteTrip(env, id) {
   return { rows };
 }
 
-module.exports = { runLoadReport, planApply, runFare, runApply, reportDraft, runReport, runLogin, runListBudget, runDeleteBudget, runDeleteTrip };
+module.exports = { runProfile, runLoadReport, planApply, runFare, runApply, reportDraft, runReport, runLogin, runListBudget, runDeleteBudget, runDeleteTrip };

@@ -184,7 +184,8 @@ function builtinAi() {
 }
 function aiSettings(cfg) {
   if (cfg.aiProvider === 'none') return null;                       // 설정에서 '사용 안 함'을 고른 경우
-  if (!cfg.aiProvider || !cfg.aiKeyEnc) return cfg.aiKeyEnc ? null : builtinAi();   // 개인 키 없으면 팀 공용 키
+  if (!cfg.aiKeyEnc) return !cfg.aiProvider || cfg.aiProvider === 'gemini' ? builtinAi() : null;   // 팀 공용 키는 Gemini 만. Claude·OpenAI 는 개인 키 필요
+  if (!cfg.aiProvider) return null;
   try {
     const buf = Buffer.from(cfg.aiKeyEnc, 'base64');
     const key = safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(buf) : buf.toString('utf8');
@@ -243,18 +244,28 @@ async function quickReport(id, memo) {
 // ---------- dev: 파일이 바뀌면 자동 반영 ----------
 // 화면(renderer) 파일 → 창 새로고침, 엔진/메인 파일 → 앱 재시작
 function watchForDev() {
+  // 개발 모드(yarn dev)에서 코드를 고치면 반영: renderer → 새로고침, engine/main → 앱 재시작.
+  // macOS 파일 감시는 켜자마자 '방금 전 변경'을 다시 알려 줘서 재시작이 무한 반복될 수 있다 →
+  // 실제로 이 앱이 켜진 뒤에 수정된 소스 파일(.js/.html/.css)일 때만 반응한다. 작업 중이면 끝날 때까지 미룬다.
   const fs = require('fs');
-  let timer = null;
-  const on = (dir, action) => {
+  const started = Date.now();
+  let timer = null, pending = false;
+  const changedSinceStart = file => { try { return fs.statSync(file).mtimeMs > started; } catch (e) { return false; } };
+  const restart = () => { if (jobBusy()) { if (!pending) { pending = true; console.log('[dev] 작업 중이라 끝나면 재시작'); } return setTimeout(restart, 2000); } app.relaunch(); app.exit(0); };
+  const watch = (target, recursive, action) => {
     try {
-      fs.watch(dir, { recursive: true }, () => { clearTimeout(timer); timer = setTimeout(action, 200); });
-    } catch (e) { console.warn('watch 실패:', dir, e.message); }
+      fs.watch(target, { recursive }, (_ev, f) => {
+        const file = recursive ? path.join(target, f || '') : target;
+        if (!/\.(js|html|css)$/.test(file) || /builtin-key/.test(file) || !changedSinceStart(file)) return;
+        console.log('[dev] 바뀜:', path.relative(__dirname, file));
+        clearTimeout(timer); timer = setTimeout(action, 300);
+      });
+    } catch (e) { console.warn('watch 실패:', target, e.message); }
   };
-  on(path.join(__dirname, 'renderer'), () => { if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.reloadIgnoringCache(); });
-  on(path.join(__dirname, 'engine'), () => { app.relaunch(); app.exit(0); });
-  for (const f of ['main.js', 'preload.js', 'updater.js'])
-    fs.watch(path.join(__dirname, f), () => { clearTimeout(timer); timer = setTimeout(() => { app.relaunch(); app.exit(0); }, 200); });
-  console.log('[dev] 파일 변경 감시 중 (renderer → 새로고침, engine/main → 재시작)');
+  watch(path.join(__dirname, 'renderer'), true, () => { if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.reloadIgnoringCache(); });
+  watch(path.join(__dirname, 'engine'), true, restart);
+  for (const f of ['main.js', 'preload.js', 'updater.js']) watch(path.join(__dirname, f), false, restart);
+  console.log('[dev] 파일 변경 감시 중 (renderer → 새로고침, engine/main → 재시작, 작업 중엔 미룸)');
 }
 
 // ---------- 화면 API ----------
@@ -307,6 +318,7 @@ async function route(p, body = {}) {
     case '/api/gw/show': if (job && job.kind === 'fare' && showNaver()) return { ok: true }; showGw(); return { ok: true };
     case '/api/gw/hide': hideGw(); return { ok: true };
     case '/api/job/gw-list': return startJob('gw-list', env => runner.runListBudget(env), body.title);
+    case '/api/job/gw-profile': return startJob('gw-profile', env => runner.runProfile(env, { force: !!body.force }), body.title);
     case '/api/job/report-load': return startJob('report-load', env => runner.runLoadReport(env, String(body.id)), body.title);
     case '/api/job/trip-delete': return startJob('trip-delete', env => runner.runDeleteTrip(env, body.id), body.title);
     case '/api/trip/forget': store.remove(String(body.id)); return { ok: true };
