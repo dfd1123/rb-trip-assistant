@@ -2,7 +2,7 @@
 // 와니의 결재 도우미 - Electron 메인 프로세스
 // 화면(렌더러) ↔ 작업(엔진) 중계. 그룹웨어와 네이버 지도는 앱 안의 별도 창(내장 Chromium)에서 조작한다.
 
-const { app, BrowserWindow, ipcMain, clipboard, shell, safeStorage, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, clipboard, shell, safeStorage, dialog, session } = require('electron');
 try { process.loadEnvFile(require('path').join(__dirname, '..', '.env')); } catch (e) { /* 개발용 .env 없음 (배포본엔 없음) */ }
 const path = require('path');
 const R = require('./engine/rules');
@@ -315,6 +315,17 @@ async function route(p, body = {}) {
     case '/api/gw/status': return gwStatus();
     case '/api/gw/login': return gwLogin(body);
     case '/api/gw/forget': sessionCreds = null; store.saveConfig({ gwId: '', gwPwEnc: '' }); return { ok: true };
+    case '/api/gw/logout': {   // 그룹웨어 로그아웃: 로그인 세션·저장된 비밀번호·이 사람 정보(이름·부서)를 지운다. 아이디는 다음 로그인 편하게 남김
+      if (jobBusy()) throw new Error('작업이 진행 중이에요. 끝난 뒤 로그아웃해 주세요.');
+      for (const w of gwPopups) if (!w.isDestroyed()) w.destroy();
+      if (gwWin && !gwWin.isDestroyed()) gwWin.destroy();
+      gwWin = null;
+      const ses = session.fromPartition('persist:gw');
+      await ses.clearStorageData(); await ses.clearCache();
+      sessionCreds = null;
+      store.saveConfig({ gwPwEnc: '', gwUser: null, name: '', budgetDept: '', budgetDepts: [] });
+      return { ok: true };
+    }
     case '/api/gw/show': if (job && job.kind === 'fare' && showNaver()) return { ok: true }; showGw(); return { ok: true };
     case '/api/gw/hide': hideGw(); return { ok: true };
     case '/api/job/gw-list': return startJob('gw-list', env => runner.runListBudget(env), body.title);

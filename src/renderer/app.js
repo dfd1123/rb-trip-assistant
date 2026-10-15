@@ -20,6 +20,9 @@ $$('nav button').forEach(b => b.onclick = () => {
   $$('nav button').forEach(x => x.classList.toggle('on', x===b));
   ['apply','trips','settings'].forEach(t => $('#tab-'+t).classList.toggle('hidden', t!==b.dataset.tab));
   if(b.dataset.tab==='trips'){ $('#tripList').classList.remove('hidden'); $('#reportView').classList.add('hidden'); loadTrips(); autoGwCheck(true); }   // 탭에 들어올 때마다 그룹웨어에서 다시 읽기 (저장된 목록은 먼저 보여줌)
+  if(b.dataset.tab==='settings'){ ['#s_msg', '#s_ai_msg', '#s_rate_msg'].forEach(id => $(id).textContent = ''); rpc('/api/meta').then(m => { META = m; renderSettings(); }); }   // 저장된 값으로 다시 그림, '저장됨' 같은 알림은 지움
+  if(b.dataset.tab==='apply') rpc('/api/meta').then(m => { META = m; syncApplyDefaults(); });          // 쓰던 신청서는 그대로, 설정에서 온 값만 맞춤
+  window.scrollTo(0, 0);   // 메뉴를 바꾸면 맨 위부터
 });
 
 /* ---------- 경비 표 ---------- */
@@ -452,9 +455,22 @@ async function loadProfile(force){   // 그룹웨어에서 이름·품의부서�
 $('#btnProfile').onclick = () => loadProfile(true);
 $('#btnSave').onclick = async () => {
   await rpc('/api/config', {name: $('#s_name').value.trim(), budgetDept: deptValue(), defaultOrigin: $('#s_origin').value.trim()});
-  $('#s_msg').textContent = '저장됨'; META = await rpc('/api/meta'); $('#a_from').value ||= META.config.defaultOrigin;
+  $('#s_msg').textContent = '저장됨'; META = await rpc('/api/meta'); syncApplyDefaults();
 };
 $('#btnLogin').onclick = () => runJob('로그인 확인', '/api/job/login', {}, () => checkGw(false));
+/** 설정 화면을 저장된 값으로 다시 그린다 (탭 들어올 때마다) */
+function renderSettings(){
+  const c = META.config;
+  $('#s_name').value = c.name; fillDepts(c); $('#s_origin').value = c.defaultOrigin;
+  loadAiSettings(); showGwSaved();
+}
+/** 설정에서 온 값만 신청서에 맞춘다: 출발지가 비어 있거나 예전 기본 출발지 그대로면 새 기본 출발지로 (직접 고친 값은 그대로) */
+let lastOrigin = '';
+function syncApplyDefaults(){
+  const now = META.config.defaultOrigin || '', cur = $('#a_from').value.trim();
+  if(!cur || cur === lastOrigin) $('#a_from').value = now;
+  lastOrigin = now;
+}
 function loadAiSettings(){
   const c = META.config, sel = $('#s_ai');
   sel.innerHTML = '<option value="none">사용 안 함 (템플릿)</option>' + Object.entries(META.providers).map(([k,v]) => `<option value="${k}">${v.label}</option>`).join('');
@@ -538,9 +554,12 @@ function alertErr(m){ $('#jobPanel').style.display='block'; $('#jobTitle').textC
 let gwChecked = 0;
 function setGwPill(st){
   const p = $('#gwPill'); p.classList.toggle('ok', st === 'ok'); p.classList.toggle('bad', st === 'bad');
+  // 설정 › 그룹웨어 계정 버튼: 로그인돼 있으면 [로그아웃]만, 아니면 로그인 버튼들 (확인 중엔 그대로)
+  if(st === 'ok' || st === 'bad'){ const on = st === 'ok';
+    ['#btnGwLogin', '#btnLogin'].forEach(id => $(id).classList.toggle('hidden', on)); $('#btnGwLogout').classList.toggle('hidden', !on); }
   p.querySelector('span').textContent = st === 'ok' ? '그룹웨어 로그인됨' : st === 'bad' ? '그룹웨어 로그인 필요' : '그룹웨어 확인 중';
 }
-function showGwSaved(){ $('#s_gw').textContent = META.config.gwSaved ? `저장된 계정: ${META.config.gwId}` : '저장된 계정 없음'; }
+function showGwSaved(){ $('#s_gw').textContent = META.config.gwSaved ? `저장된 계정: ${META.config.gwId} (자동 로그인)` : '저장된 계정 없음'; $('#btnGwForget').classList.toggle('hidden', !META.config.gwSaved); }
 function openLogin(msg){
   $('#lg_err').textContent = msg || ''; $('#lg_id').value = $('#lg_id').value || META.config.gwId || '';
   $('#loginModal').classList.add('on'); ($('#lg_id').value ? $('#lg_pw') : $('#lg_id')).focus();
@@ -572,6 +591,14 @@ $('#loginForm').onsubmit = async e => {
 $('#lg_close').onclick = closeLogin;
 $('#lg_manual').onclick = () => { closeLogin(); runJob('로그인 확인', '/api/job/login', {}, () => checkGw(false)); };
 $('#btnGwLogin').onclick = () => openLogin();
+$('#btnGwLogout').onclick = async () => {
+  if(!confirm('그룹웨어에서 로그아웃할까요?\n\n로그인 정보와 저장된 비밀번호, 내 정보(이름·예산 부서)가 지워져요. 다시 로그인하면 그룹웨어에서 새로 받아와요.')) return;
+  try { await rpc('/api/gw/logout'); } catch(e){ alertErr(e.message); return; }
+  try { localStorage.removeItem('gw_rows'); } catch(e){ /* */ }
+  gwMap = null; gwAll = []; META = await rpc('/api/meta'); renderSettings(); setGwPill('bad'); showGwSaved();
+  $('#s_msg').textContent = '로그아웃했어요';
+  openLogin('로그아웃했어요. 다시 로그인해 주세요.');
+};
 $('#btnGwForget').onclick = async () => { await rpc('/api/gw/forget'); META = await rpc('/api/meta'); showGwSaved(); };
 window.addEventListener('focus', () => { if(Date.now() - gwChecked > 20 * 60 * 1000 && !$('#loginModal').classList.contains('on')) checkGw(); });
 
@@ -579,9 +606,8 @@ window.addEventListener('focus', () => { if(Date.now() - gwChecked > 20 * 60 * 1
 (async () => {
   META = await rpc('/api/meta');
   const c = META.config; $('#ver').textContent = 'v' + META.version;
-  $('#s_name').value = c.name; fillDepts(c); $('#s_origin').value = c.defaultOrigin;
-  $('#a_from').value = c.defaultOrigin;
-  loadAiSettings();
+  renderSettings();
+  lastOrigin = ''; syncApplyDefaults();
   // 업데이트: 켤 때·창에 다시 들어올 때 최신 버전 확인 → 있으면 물어보고 → [업데이트]면 받아서 설치·재시작
   let updLater = '', updTimer = null;
   const askUpdate = async (force) => {

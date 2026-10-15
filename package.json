@@ -30,7 +30,7 @@
   },
   "build": {
     "appId": "com.rainbowrobotics.tripassistant",
-    "productName": "와니의 결재 도우미",
+    "productName": "Wani Approval Assistant",
     "artifactName": "trip-assistant-${version}-${os}-${arch}.${ext}",
     "directories": {
       "output": "dist",
@@ -57,7 +57,8 @@
     "nsis": {
       "oneClick": true,
       "perMachine": false,
-      "shortcutName": "와니의 결재 도우미"
+      "shortcutName": "와니의 결재 도우미",
+      "uninstallDisplayName": "와니의 결재 도우미"
     },
     "mac": {
       "target": [
@@ -84,6 +85,9 @@
       "entitlementsInherit": "build/entitlements.mac.plist",
       "notarize": {
         "teamId": "UZZ8BPHPA2"
+      },
+      "extendInfo": {
+        "CFBundleDisplayName": "와니의 결재 도우미"
       }
     },
     "linux": {
