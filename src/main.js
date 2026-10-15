@@ -342,7 +342,8 @@ ipcMain.handle('api', async (_e, p, body) => {
 });
 
 app.whenReady().then(() => {
-  if (process.platform === 'darwin' && app.dock) app.dock.setIcon(ICON);   // 개발 모드 Dock 아이콘
+  // macOS Dock 아이콘은 번들 아이콘(build/icon.png, 애플 규격대로 둘레 여백 있음)을 그대로 쓴다.
+  // 여기서 setIcon(꽉 찬 icon-512)으로 덮으면 다른 앱보다 크게 보인다. 개발 모드는 brand-dev-electron.js 가 같은 아이콘을 넣어 둔다.
   store = new Store(process.env.TRIP_ASSISTANT_DATA || app.getPath('userData'));
   createMain();
   updater.start();
