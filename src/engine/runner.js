@@ -24,7 +24,7 @@ async function runFare(env, { mode, to, from }) {
   const cached = store.getFare(mode, origin, to);
   if (cached && !env.force) { log(`교통비(최근 조회값): ${cached.describe}`); return { ...cached, source: 'cache' }; }
   const shot = path.join(store.tripsDir, '_fare', `교통비_${mode}_${Date.now()}.png`);
-  const r = await lookupFare({ makeWindow: env.makeNaverWindow, mode, origin, dest: to, shotPath: shot, ui, log });
+  const r = await lookupFare({ makeWindow: env.makeNaverWindow, mode, origin, dest: to, shotPath: shot, ui, log, debugDir: env.debugDir });
   store.putFare(mode, origin, to, r);
   log(`교통비: ${r.describe}`);
   return r;
@@ -48,7 +48,7 @@ async function runApply(env, data, { save = true } = {}) {
   rec.expenses = expenses;
   store.save(id, rec);
 
-  const gw = new Amaranth({ win: env.gwWindow(), baseUrl: cfg.baseUrl, ui, log });
+  const gw = new Amaranth({ win: env.gwWindow(), baseUrl: cfg.baseUrl, ui, log, debugDir: env.debugDir });
   await gw.ensureLogin();
   await gw.enterBudget(cfg.budgetDept, expenses);
   const popup = await gw.openApproval(R.APPLY_FORM, title);
@@ -81,7 +81,7 @@ async function runReport(env, data, { save = true } = {}) {
   const rep = R.parseReport(data);
   const title = R.reportTitle(rep.reason);
   log(`[보고서] ${title}`);
-  const gw = new Amaranth({ win: env.gwWindow(), baseUrl: cfg.baseUrl, ui, log });
+  const gw = new Amaranth({ win: env.gwWindow(), baseUrl: cfg.baseUrl, ui, log, debugDir: env.debugDir });
   await gw.ensureLogin();
   await gw.enterBudget(cfg.budgetDept, rep.expenses);
   const popup = await gw.openApproval(R.REPORT_FORM, title);
@@ -94,7 +94,7 @@ async function runReport(env, data, { save = true } = {}) {
 }
 
 async function runLogin(env) {
-  const gw = new Amaranth({ win: env.gwWindow(), baseUrl: env.cfg.baseUrl, ui: env.ui, log: env.log });
+  const gw = new Amaranth({ win: env.gwWindow(), baseUrl: env.cfg.baseUrl, ui: env.ui, log: env.log, debugDir: env.debugDir });
   await gw.ensureLogin();
   env.log('로그인 상태 확인됨');
   return {};

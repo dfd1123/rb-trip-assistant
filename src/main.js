@@ -99,7 +99,7 @@ function startJob(kind, fn, title) {
   if (job && job.state === 'waiting') job.cancel();          // 사람 입력만 기다리던 이전 작업은 취소
   else if (job && job.state === 'running') throw new Error('이전 작업이 아직 진행 중이에요. 작업창의 [취소]를 누른 뒤 다시 시도해 주세요.');
   const j = job = new Job(kind, title);
-  const env = { cfg: store.config(), store, ui: j, log: m => j.info(m), gwWindow, makeNaverWindow };
+  const env = { debugDir: app.isPackaged ? path.join(app.getPath('userData'), 'debug') : path.join(__dirname, '..', 'debug'), cfg: store.config(), store, ui: j, log: m => j.info(m), gwWindow, makeNaverWindow };
   (async () => {
     try { j.result = await fn(env); j.state = 'done'; j.info('✔ 완료'); }
     catch (e) { j.error = e instanceof R.InputError ? `입력 오류: ${e.message}` : e.message; j.state = j.cancelled ? 'cancelled' : 'error'; }

@@ -12,17 +12,40 @@ const popupsOf = new WeakMap();   // 그룹웨어 창 → 그 창에서 열린 �
 const amountOf = s => Number(String(s || '').replace(/[^\d]/g, '')) || 0;
 
 class Amaranth {
-  constructor({ win, baseUrl, ui, log }) {
+  constructor({ win, baseUrl, ui, log, debugDir }) {
     this.page = new Page(win);
     this.win = win;
     this.baseUrl = baseUrl.replace(/\/$/, '');
     this.ui = ui;
     this.log = log;
+    this.debugDir = debugDir;
     if (!popupsOf.has(win.webContents)) {
       const set = new Set();
       popupsOf.set(win.webContents, set);
       win.webContents.on('did-create-window', w => { set.add(w); w.on('closed', () => set.delete(w)); });
     }
+  }
+
+  /** 자동 선택 실패 시 화면 구조를 파일로 남긴다 (코드도움 창 HTML + 전체 화면 HTML + 캡처). 개선용. */
+  async debugDump(name, titleRe) {
+    if (!this.debugDir) return '';
+    try {
+      const fs = require('fs'), path = require('path');
+      fs.mkdirSync(this.debugDir, { recursive: true });
+      const base = path.join(this.debugDir, `${new Date().toISOString().replace(/[:.]/g, '-')}-${name}`);
+      const d = await this.page.eval(re => {
+        const r = new RegExp(re);
+        const h = all('*').filter(e => ownText(e) && vis(e) && r.test(e.textContent.trim())).pop();
+        let box = h; if (h) { let p = h; while (p && p !== document.body) { const q = p.getBoundingClientRect(); if (q.width > 500 && q.height > 300) { box = p; break; } p = p.parentElement; } }
+        const dlg = h ? (dialog(h.textContent.trim()) || box) : null;
+        return { dialog: dlg ? dlg.outerHTML : '(창 제목을 못 찾음)', page: document.documentElement.outerHTML, url: location.href };
+      }, titleRe || '.^');
+      fs.writeFileSync(base + '-dialog.html', `<!-- ${d.url} -->\n` + d.dialog);
+      fs.writeFileSync(base + '-page.html', d.page);
+      fs.writeFileSync(base + '.png', (await this.win.webContents.capturePage()).toPNG());
+      this.log(`(진단 파일 저장: ${base}-dialog.html)`);
+      return base;
+    } catch (e) { return ''; }
   }
 
   // ---------- 로그인 ----------
@@ -176,11 +199,11 @@ class Amaranth {
       try {
         await this.openCodeHelp('예산과목', i, '부서', '^사업코드도움$');
         await this.pickInCodeHelp('^사업코드도움$', dept, dept);
-      } catch (e) { await ui.assist(`부서 선택 실패(${e.message}). ${i + 1}번째 줄 부서를 '${dept}'로 지정해 주세요.`); }
+      } catch (e) { await this.debugDump('dept', '사업코드도움'); await ui.assist(`부서 선택 실패(${e.message}). ${i + 1}번째 줄 부서를 '${dept}'로 지정해 주세요.`); }
       try {
         await this.openCodeHelp('예산과목', i, '예산과목', '(예산과목|예산|과목).*(코드)?도움$');
         await this.pickInCodeHelp('(예산과목|예산|과목).*(코드)?도움$', ex.code, ex.code);
-      } catch (e) { await ui.assist(`예산과목 선택 실패(${e.message}). ${i + 1}번째 줄 예산과목을 ${ex.code} ${ex.label}로 지정해 주세요.`); }
+      } catch (e) { await this.debugDump('budget-item', '(예산과목|예산|과목).*(코드)?도움$'); await ui.assist(`예산과목 선택 실패(${e.message}). ${i + 1}번째 줄 예산과목을 ${ex.code} ${ex.label}로 지정해 주세요.`); }
       try {
         await this.editCell('예산과목', i, '품의금액', String(ex.amount));
         await p.dblclick(await this.cellPoint('예산과목', i, '적요'));
