@@ -4,8 +4,12 @@
 #
 #   yarn deploy
 #
-# 필요: gh(로그인), Docker(리눅스 deb·rpm), 키체인에 회사 Developer ID 인증서,
-#       APPLE_ID · APPLE_APP_SPECIFIC_PASSWORD 환경변수 (공증), .env 에 GEMINI_API_KEY (팀 공용 키 내장, 선택)
+# 필요 (하나라도 없으면 멈춤):
+#   - gh 로그인
+#   - Docker 실행 중 (리눅스 deb·rpm)
+#   - 키체인에 회사 Developer ID Application 인증서 (맥 서명)
+#   - APPLE_ID · APPLE_APP_SPECIFIC_PASSWORD (맥 공증) — 환경변수 또는 ~/.zshrc 의 export 줄 (web-rainbow-ui 배포와 같은 값)
+#   - .env 의 GEMINI_API_KEY (팀 공용 AI 키, 앱에 내장)
 set -e
 
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -14,20 +18,32 @@ VERSION_JSON_URL="https://github.com/${RELEASE_REPO}/releases/latest/download/ve
 cd "$APP_DIR"
 
 # ---------- 사전 확인 ----------
+# 맥 앱은 맥에서만 빌드·서명·공증할 수 있다. 맥이 아니면 맥 빌드만 빼고 배포한다
+# (맥 사용자 앱은 Release 에 맥 파일이 없으면 업데이트를 띄우지 않고 이전 버전을 그대로 쓴다)
+IS_MAC=0; [ "$(uname)" = "Darwin" ] && IS_MAC=1
+[ $IS_MAC = 1 ] || echo "  ⓘ 맥이 아니라서 맥 빌드는 빼고 배포해요 (맥 사용자는 이전 버전 유지)."
 command -v gh >/dev/null || { echo "Error: GitHub CLI(gh)가 필요합니다. brew install gh"; exit 1; }
 gh auth status >/dev/null 2>&1 || { echo "Error: gh auth login 이 필요합니다."; exit 1; }
-docker info >/dev/null 2>&1 || { echo "Error: Docker 가 실행 중이 아닙니다 (리눅스 deb·rpm 빌드에 필요)."; exit 1; }
 [ -f .env ] && set -a && . ./.env && set +a
-# 공증 자격 증명이 없으면 electron-builder 가 공증을 조용히 건너뛰어 경고 뜨는 dmg 가 나간다 → 미리 막는다
-if [ -z "$APPLE_ID" ] || [ -z "$APPLE_APP_SPECIFIC_PASSWORD" ]; then
-  echo "Error: macOS 공증에 APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD 가 필요합니다."
-  echo "       export APPLE_ID=developer@rainbow-robotics.com"
-  echo "       export APPLE_APP_SPECIFIC_PASSWORD=<앱 암호>   # appleid.apple.com 에서 생성"
-  exit 1
+# 공증 계정: 환경변수 → 없으면 ~/.zshrc · ~/.zprofile 의 export 줄에서 (web-rainbow-ui 배포와 같은 값)
+for v in APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+  if [ -z "${!v}" ]; then
+    line=$(grep -hE "^[[:space:]]*export[[:space:]]+${v}=" ~/.zshrc ~/.zprofile ~/.bash_profile 2>/dev/null | tail -1)
+    [ -n "$line" ] && eval "$line"
+  fi
+done
+[ -n "$GEMINI_API_KEY" ] || { echo "Error: .env 에 GEMINI_API_KEY 가 없습니다 (팀 공용 AI 키, 앱에 내장)."; exit 1; }
+docker info >/dev/null 2>&1 || { echo "Error: Docker 가 실행 중이 아닙니다 (리눅스 deb·rpm 빌드). Docker Desktop 을 켜고 다시 실행하세요."; exit 1; }
+if [ $IS_MAC = 1 ]; then
+  if [ -z "$APPLE_ID" ] || [ -z "$APPLE_APP_SPECIFIC_PASSWORD" ]; then
+    echo "Error: 맥 공증에 APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD 가 필요합니다 (환경변수나 ~/.zshrc 의 export 줄에서 못 찾음)."
+    exit 1
+  fi
+  security find-identity -v -p codesigning 2>/dev/null | grep -q "Developer ID Application" || { echo "Error: 키체인에 Developer ID Application 인증서가 없습니다 (맥 서명)."; exit 1; }
 fi
 export APPLE_TEAM_ID="${APPLE_TEAM_ID:-UZZ8BPHPA2}"
 [ "$(git rev-parse --abbrev-ref HEAD)" = "main" ] || { echo "Error: main 브랜치에서만 배포할 수 있습니다."; exit 1; }
-[ -z "$(git status --porcelain)" ] || { echo "Error: 커밋 안 된 변경이 있습니다. 먼저 커밋해 주세요."; exit 1; }
+[ -z "$(git status --porcelain)" ] || { echo "Error: 커밋 안 된 변경이 있어요. 배포본과 태그가 어긋나지 않게 먼저 커밋해 주세요:"; git status --short; exit 1; }
 
 echo "▶ main 최신화"; git pull --rebase origin main
 
@@ -53,8 +69,11 @@ node -e "const f='package.json',j=JSON.parse(require('fs').readFileSync(f,'utf8'
 # ---------- 빌드 ----------
 rm -rf dist
 node scripts/write-builtin-key.js
-echo "▶ macOS (arm64·x64, 서명+공증)"
-npx electron-builder --mac --arm64 --x64 --publish never
+[ -s src/engine/builtin-key.json ] || { echo "Error: 팀 공용 AI 키를 앱에 넣지 못했습니다."; exit 1; }
+if [ $IS_MAC = 1 ]; then
+  echo "▶ macOS (arm64·x64, 서명+공증)"
+  npx electron-builder --mac --arm64 --x64 --publish never
+fi
 echo "▶ Windows (x64·arm64)"
 npx electron-builder --win --x64 --arm64 --publish never
 echo "▶ Linux (x64·arm64 · AppImage·deb·rpm) — Docker"
@@ -65,12 +84,15 @@ rm -f src/engine/builtin-key.json
 # ---------- 확인 ----------
 shopt -s nullglob
 FILES=(dist/*.dmg dist/*-mac-*.zip dist/*.exe dist/*.AppImage dist/*.deb dist/*.rpm)
-for want in '*-mac-arm64.dmg' '*-mac-x64.dmg' '*-mac-arm64.zip' '*-mac-x64.zip' '*.exe' '*.AppImage' '*.deb' '*.rpm'; do
+WANT=('*.exe' '*.AppImage' '*.deb' '*.rpm'); [ $IS_MAC = 1 ] && WANT+=('*-mac-arm64.dmg' '*-mac-x64.dmg' '*-mac-arm64.zip' '*-mac-x64.zip')
+for want in "${WANT[@]}"; do
   ls dist/$want >/dev/null 2>&1 || { echo "Error: dist/${want} 가 없습니다."; exit 1; }
 done
-for APP in dist/mac*/*.app; do
-  spctl -a -t exec "$APP" >/dev/null 2>&1 || { echo "Error: ${APP} 가 공증되지 않았습니다."; exit 1; }
-done
+if [ $IS_MAC = 1 ]; then
+  for APP in dist/mac*/*.app; do   # 공증 안 됐으면 멈춤
+    spctl -a -t exec "$APP" >/dev/null 2>&1 || { echo "Error: ${APP} 가 공증되지 않았습니다."; exit 1; }
+  done
+fi
 printf '  %s\n' "${FILES[@]}"
 
 # ---------- 버전 커밋·태그 → Release(설치 파일 + version.json) ----------

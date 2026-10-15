@@ -37,6 +37,7 @@ async function check(force = false) {
     if (!res.ok) return state;
     const v = await res.json();   // { version, notes, assets: [{ name, url }], updated_at }
     release = { tag_name: v.version, assets: (v.assets || []).map(a => ({ name: a.name, browser_download_url: a.url })) };
+    if (newer(v.version, state.current) && !hasAssetForThisPC()) { Object.assign(state, { status: 'latest', version: '' }); return state; }   // 이 OS 파일이 빠진 배포(예: 맥 빼고 배포) → 이전 버전 유지
     if (newer(v.version, state.current)) Object.assign(state, { status: 'available', version: String(v.version).replace(/^v/, ''), notes: String(v.notes || '').slice(0, 1500),
       url: `https://github.com/${RELEASE_REPO}/releases/tag/v${String(v.version).replace(/^v/, '')}`, error: '' });
     else Object.assign(state, { status: 'latest', version: '' });
@@ -84,6 +85,13 @@ open "${appPath}"
 `, { mode: 0o755 });
   spawn('/bin/bash', [script], { detached: true, stdio: 'ignore' }).unref();
   setTimeout(() => app.quit(), 300);
+}
+
+function hasAssetForThisPC() {
+  if (process.platform === 'darwin') { const arch = process.arch === 'arm64' ? 'arm64' : 'x64'; return (release.assets || []).some(a => a.name.endsWith(`-mac-${arch}.zip`)); }
+  if (process.platform === 'win32') return !!pickAsset('exe');
+  if (process.platform === 'linux') return !!pickAsset(process.env.APPIMAGE ? 'appimage' : fs.existsSync('/usr/bin/dpkg') ? 'deb' : 'rpm');
+  return false;
 }
 
 /** 이 PC에 맞는 설치 파일 (Release asset) — 운영체제·아키텍처·설치 형식별 */
