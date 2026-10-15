@@ -87,8 +87,19 @@
         "teamId": "UZZ8BPHPA2"
       },
       "extendInfo": {
-        "CFBundleDisplayName": "와니의 결재 도우미"
-      }
+        "CFBundleDisplayName": "Wani Approval Assistant",
+        "LSHasLocalizedDisplayName": true
+      },
+      "extraResources": [
+        {
+          "from": "build/lproj/InfoPlist.strings",
+          "to": "ko.lproj/InfoPlist.strings"
+        },
+        {
+          "from": "build/lproj/InfoPlist.strings",
+          "to": "en.lproj/InfoPlist.strings"
+        }
+      ]
     },
     "linux": {
       "target": [
