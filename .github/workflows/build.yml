@@ -20,11 +20,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: 22, cache: npm }
-      - run: npm ci
-      - run: npm test
+        with: { node-version: 22, cache: yarn }
+      - run: yarn install --frozen-lockfile
+      - run: yarn test
       - name: E2E (가짜 아마란스에 신청서·보고서 입력)
-        run: xvfb-run -a -s "-screen 0 1600x1100x24" npx electron test/e2e.js --no-sandbox
+        run: xvfb-run -a -s "-screen 0 1600x1100x24" yarn electron test/e2e.js --no-sandbox
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -54,11 +54,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: 22, cache: npm }
-      - run: npm ci
+        with: { node-version: 22, cache: yarn }
+      - run: yarn install --frozen-lockfile --network-timeout 600000
       - name: 빌드 (태그면 Release 에 업로드)
         shell: bash
-        run: npx electron-builder ${{ matrix.args }} --publish ${{ startsWith(github.ref, 'refs/tags/v') && 'always' || 'never' }}
+        run: yarn electron-builder ${{ matrix.args }} --publish ${{ startsWith(github.ref, 'refs/tags/v') && 'always' || 'never' }}
         env:
           GH_TOKEN: ${{ github.token }}
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'   # 코드서명 인증서 없음

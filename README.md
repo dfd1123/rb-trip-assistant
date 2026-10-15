@@ -57,11 +57,11 @@
 ## 개발자용
 
 ```bash
-npm ci
-npm start                 # 앱 실행
-npm test                  # 규칙 단위 테스트 (조사, 제목, 금액, 검증, AI 답변 파싱)
-npx electron test/e2e.js  # 가짜 아마란스로 신청서·보고서 전체 흐름 (Linux CI: xvfb-run -a ... --no-sandbox)
-npx electron-builder --mac|--win|--linux --publish never
+yarn install
+yarn start                 # 앱 실행 (또는 dev.command 더블클릭)
+yarn test                  # 규칙 단위 테스트 (조사, 제목, 금액, 검증, AI 답변 파싱)
+yarn e2e                   # 가짜 아마란스로 신청서·보고서 전체 흐름 (Linux CI: xvfb-run -a ... --no-sandbox)
+yarn electron-builder --mac|--win|--linux --publish never
 ```
 
 ### 배포와 자동 업데이트
