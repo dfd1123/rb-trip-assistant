@@ -63,9 +63,14 @@ function parseCarText(text) {
 function parseTransitText(text) {
   const pats = [/(?:총\s*요금|요금\s*합계|카드\s*요금|총\s*금액)\s*:?\s*([\d,]+)\s*원/, /([\d,]+)\s*원\s*\(?\s*(?:카드|총)/];
   for (const p of pats) { const m = p.exec(text); if (m) return toNum(m[1]); }
-  return null;
+  // 2026 네이버 지도: 총 요금 줄이 없고 첫 경로 블록에 구간별 "30분10,700원" 만 있다 → 첫 경로(첫 '상세보기' 전)의 구간 요금 합
+  const first = text.split(/상세보기/)[0];
+  const legs = [...first.matchAll(/(?:분|시간)\s*([\d,]+)\s*원/g)].map(m => toNum(m[1]));
+  return legs.length ? legs.reduce((a, b) => a + b, 0) : null;
 }
 /** 자차 (연료비+통행료)×2, 대중교통 총요금×2, 원 단위 */
+/** 품의 행 적요: 결재 제목에서 양식 이름과 '의 건'을 뺀 것 (예: "RBY1 정비로 인한 출장") */
+const budgetMemo = title => String(title).replace(/^\[[^\]]*\]\s*/, '').replace(/의 건$/, '').trim();
 const roundTrip = oneWay => oneWay * 2;
 
 // ---------- 입력 검증 ----------
@@ -89,6 +94,7 @@ function date(v, key) {
 const asList = v => (v == null || v === '') ? [] : (typeof v === 'string' ? v.split(',') : v).map(s => String(s).trim()).filter(Boolean);
 const shortLabel = item => BUDGET_ITEMS[item][1].split('_').pop();
 
+const PROOF_EXT = /\.(png|jpe?g|gif|webp|heic|heif|bmp|tiff?|pdf)$/i;
 function parseExpenses(rows, where = 'expenses', reason = '') {
   return (rows || []).map((r, i) => {
     const w = `${where}[${i + 1}]`;
@@ -117,6 +123,7 @@ function parseApply(data) {
 
   const category = String(data.category || '일반');
   if (!APPLY_CATEGORIES.includes(category)) throw new InputError(`category 는 ${APPLY_CATEGORIES.join(', ')} 중 하나입니다.`);
+  if (category === '연구과제' && !String(data.project || '').trim()) throw new InputError('연구과제는 과제명이 필수예요.');
   const dates = req(data, 'dates', where);
   const start = date(req(dates, 'start', 'dates'), '시작일'), end = date(req(dates, 'end', 'dates'), '종료일');
   if (end < start) throw new InputError('종료일이 시작일보다 빠릅니다.');
@@ -143,7 +150,7 @@ function parseReport(data) {
   if (!REPORT_CATEGORIES.includes(category)) throw new InputError(`출장구분은 ${REPORT_CATEGORIES.join(', ')} 중 하나입니다.`);
   if (category === '정부과제' && !data.project) throw new InputError('정부과제는 과제명이 필수입니다.');
   const reason = String(req(data, 'reason', where)).trim();
-  return {
+  const out = {
     trip_id: String(data.trip_id || ''), reason, name: String(req(data, 'name', where)).trim(),
     companions: asList(data.companions), category, project: String(data.project || ''),
     period: String(req(data, 'period', where)), destination: String(req(data, 'destination', where)),
@@ -153,6 +160,19 @@ function parseReport(data) {
     expenses: parseExpenses(data.expenses, 'expenses', reason),
     attachments: (data.attachments || []).map(String),
   };
+  if (!out.schedule.length || out.schedule.some(r => !r.detail)) throw new InputError('출장일정의 세부 활동 내용은 날짜마다 필수예요.');
+  if (!out.expenses.length) throw new InputError('경비를 한 줄 이상 넣어 주세요.');
+  // 정산 경비는 줄마다 증빙(이미지·PDF) 1개 이상. 증빙은 전부 보고서 첨부로 올린다
+  (data.expenses || []).forEach((e, i) => {
+    const proofs = (e.proofs || []).map(String).filter(Boolean);
+    if (!proofs.length) throw new InputError(`정산 경비 ${i + 1}번째 줄(${shortLabel(out.expenses[i].item)})에 증빙 파일을 첨부해 주세요.`);
+    if (proofs.length > 1) throw new InputError(`정산 경비 ${i + 1}번째 줄에는 증빙을 1개만 붙여 주세요.`);
+    const bad = proofs.find(p => !PROOF_EXT.test(p));
+    if (bad) throw new InputError(`증빙은 이미지나 PDF만 돼요: ${bad.split(/[\\/]/).pop()}`);
+    out.expenses[i].proofs = proofs;
+  });
+  out.attachments = [...new Set([...out.attachments, ...out.expenses.flatMap(e => e.proofs)])];
+  return out;
 }
 
 function transportExpense(a, total) {
@@ -225,6 +245,6 @@ function extractYaml(text) {
 
 module.exports = {
   APPLY_FORM, REPORT_FORM, BUDGET_ITEMS, TRANSPORT_MODES, CORPORATE_CARS, APPLY_CATEGORIES, REPORT_CATEGORIES,
-  InputError, ro, applyTitle, reportTitle, parseCarText, parseTransitText, roundTrip,
+  InputError, ro, applyTitle, reportTitle, budgetMemo, parseCarText, parseTransitText, roundTrip,
   parseApply, parseReport, parseExpenses, transportExpense, applyPrompt, reportPrompt, extractYaml,
 };

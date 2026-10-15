@@ -33,6 +33,7 @@ app.whenReady().then(async () => {
       // 앱처럼 숨긴 창(백그라운드)에서 진행
       gw = new BrowserWindow({ width: 1400, height: 950, show: !!process.env.E2E_SHOW, webPreferences: { partition: 'e2e-' + Date.now(), backgroundThrottling: false } });
       gw.webContents.setWindowOpenHandler(() => ({ action: 'allow', overrideBrowserWindowOptions: { show: false, webPreferences: { backgroundThrottling: false } } }));
+      if (!process.env.E2E_SHOW) gw.webContents.on('did-create-window', w => w.on('show', () => w.hide()));   // 성공 시 띄우는 작성 팝업도 테스트에선 숨김
       return gw;
     };
     const env = { cfg: store.config(), store, ui, log: m => { ui.info(m); console.log('  ·', m); }, gwWindow, makeNaverWindow: () => { throw new Error('no naver'); }, creds: () => ({ id: 'tester', pw: 'pw1234' }) };
@@ -63,6 +64,7 @@ app.whenReady().then(async () => {
     const mineTop = s.top.find(r => r.순번 === '45');
     assert.equal(mineTop.품의구분, '지출');
     assert.equal(mineTop.총금액, '324,814');
+    assert.equal(mineTop.적요, '판교 AI 사무소 RBY1-Muscat 연동 검증으로 인한 출장');
     assert.deepEqual(s.bot.slice(0, 3).map(r => [r.부서, r.예산과목, r.품의금액]), [
       ['매니퓰레이터 사업부', '여비교통비(판)_국내교통비', '74,814'],
       ['매니퓰레이터 사업부', '여비교통비(판)_국내숙박비', '160,000'],
@@ -88,14 +90,18 @@ app.whenReady().then(async () => {
     assert.equal(draft.schedule.length, 3);
     assert.equal(draft.expenses[0].item, 'domestic_transport');
     draft.report = 'SDK 래핑 완료\n실기 검증 3건 통과';
-    draft.schedule[0].detail = '로봇 셋업'; draft.schedule[2].detail = '결과 공유';
+    draft.schedule[0].detail = '로봇 셋업'; draft.schedule[1].detail = '실기 검증'; draft.schedule[2].detail = '결과 공유';
     draft.expenses[1].amount = 150000;            // 실제 숙박비
     draft.attachments = [];
+    // 정산 경비는 줄마다 증빙(이미지·PDF) 필수 → 테스트용 파일을 만들어 붙인다
+    const proofDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ta-proof-'));
+    draft.expenses.forEach((e, i) => { const f = path.join(proofDir, `proof${i}.${i % 2 ? 'pdf' : 'png'}`); fs.writeFileSync(f, 'x'); e.proofs = [f]; });
     await runner.runReport(env, draft);
     const st2 = JSON.parse(await gw.webContents.executeJavaScript('JSON.stringify({top:S.top, approval:window.__approval})'));
     assert.equal(st2.approval.form, '출장보고서 및 정산 품의서');
     assert.equal(st2.top[st2.top.length - 2].총금액, '314,814');
     const rep = saved[1];
+    assert.equal(rep.files, draft.expenses.length, '증빙이 전부 첨부돼야 함');
     assert.equal(rep.title, '[출장보고서 및 정산 품의서] 판교 AI 사무소 RBY1-Muscat 연동 검증으로 인한 출장 보고의 건');
     for (const needle of ['김종완', 'SDK 래핑 완료<br>실기 검증 3건 통과', '로봇 셋업', '결과 공유', '10/22'])
       assert.ok(rep.body.includes(needle), `보고서 본문에 '${needle}' 없음`);

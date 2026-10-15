@@ -1,12 +1,9 @@
 name: build
 
-# 릴리즈:  package.json version 을 올리고  git tag v0.3.0 && git push --tags
-#   → 테스트 → GitHub Release 생성 → Windows/macOS/Linux 빌드가 Release 에 업로드
-#   → 설치된 앱이 latest*.yml 을 보고 자동 업데이트 (Windows·AppImage 자동 설치, macOS·deb 는 다운로드 알림)
-# 수동 실행(Actions 탭 → Run workflow)은 Release 없이 Artifacts 로만 빌드.
+# CI: main·PR 은 테스트(단위+E2E). Actions 탭에서 수동 실행하면 전 플랫폼 빌드를 Artifacts 로 받는다.
+# 배포(Release·자동 업데이트)는 로컬에서 `yarn deploy` (scripts/deploy.sh) — 맥 서명·공증에 회사 인증서가 필요해서.
 on:
   push:
-    tags: ['v*']
     branches: [main]
   pull_request:
   workflow_dispatch:
@@ -26,23 +23,10 @@ jobs:
       - name: E2E (가짜 아마란스에 신청서·보고서 입력)
         run: xvfb-run -a -s "-screen 0 1600x1100x24" yarn electron test/e2e.js --no-sandbox
 
-  release:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: 태그와 package.json 버전 일치 확인
-        run: |
-          v=$(node -p "require('./package.json').version")
-          [ "v$v" = "${GITHUB_REF_NAME}" ] || { echo "package.json 버전(v$v)과 태그(${GITHUB_REF_NAME})가 다릅니다"; exit 1; }
-      - name: Release 만들기
-        env: { GH_TOKEN: '${{ github.token }}' }
-        run: gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
 
   build:
-    needs: [test, release]
-    if: always() && needs.test.result == 'success' && (needs.release.result == 'success' || needs.release.result == 'skipped') && github.event_name != 'pull_request'
+    needs: test
+    if: github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
@@ -56,12 +40,24 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: yarn }
       - run: yarn install --frozen-lockfile --network-timeout 600000
+      - name: rpm 도구 (리눅스 rpm 패키지용)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y rpm
       - name: 빌드 (태그면 Release 에 업로드)
         shell: bash
-        run: yarn electron-builder ${{ matrix.args }} --publish ${{ startsWith(github.ref, 'refs/tags/v') && 'always' || 'never' }}
+        run: node scripts/write-builtin-key.js && yarn electron-builder ${{ matrix.args }} --publish never
         env:
           GH_TOKEN: ${{ github.token }}
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'   # 코드서명 인증서 없음
+          # macOS 서명·공증: repo Secrets 에 아래가 있으면 서명+공증, 없으면 서명 없이 빌드
+          #   MAC_CERT_P12_BASE64(Developer ID Application 인증서 .p12 를 base64) / MAC_CERT_PASSWORD
+          #   APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID (공증용)
+          CSC_LINK: ${{ runner.os == 'macOS' && secrets.MAC_CERT_P12_BASE64 || '' }}
+          CSC_KEY_PASSWORD: ${{ runner.os == 'macOS' && secrets.MAC_CERT_PASSWORD || '' }}
+          CSC_IDENTITY_AUTO_DISCOVERY: ${{ (runner.os == 'macOS' && secrets.MAC_CERT_P12_BASE64 != '') && 'true' || 'false' }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}   # 있으면 팀 공용 Gemini 키 내장 (repo Settings → Secrets)
       - uses: actions/upload-artifact@v4
         with:
           name: trip-assistant-${{ matrix.os }}
@@ -71,5 +67,6 @@ jobs:
             dist/*.zip
             dist/*.AppImage
             dist/*.deb
+            dist/*.rpm
             dist/latest*.yml
           if-no-files-found: error

@@ -12,11 +12,13 @@
     "postinstall": "node scripts/brand-dev-electron.js",
     "test": "node --test test/rules.test.js",
     "e2e": "electron test/e2e.js",
+    "predist": "node scripts/write-builtin-key.js",
     "dist": "electron-builder",
-    "dist:win": "electron-builder --win",
-    "dist:mac": "electron-builder --mac",
-    "dist:linux": "electron-builder --linux",
-    "dev": "node scripts/brand-dev-electron.js && electron ."
+    "dist:win": "node scripts/write-builtin-key.js && electron-builder --win",
+    "dist:mac": "node scripts/write-builtin-key.js && electron-builder --mac",
+    "dist:linux": "node scripts/write-builtin-key.js && electron-builder --linux",
+    "dev": "node scripts/brand-dev-electron.js && electron .",
+    "deploy": "bash scripts/deploy.sh"
   },
   "dependencies": {
     "electron-updater": "^6.8.9",
@@ -44,11 +46,13 @@
         {
           "target": "nsis",
           "arch": [
-            "x64"
+            "x64",
+            "arm64"
           ]
         }
       ],
-      "icon": "build/icon.png"
+      "icon": "build/icon.png",
+      "verifyUpdateCodeSignature": false
     },
     "nsis": {
       "oneClick": true,
@@ -73,12 +77,38 @@
         }
       ],
       "category": "public.app-category.productivity",
-      "icon": "build/icon.png"
+      "icon": "build/icon.png",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "notarize": {
+        "teamId": "UZZ8BPHPA2"
+      }
     },
     "linux": {
       "target": [
-        "AppImage",
-        "deb"
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "rpm",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
       ],
       "category": "Office",
       "icon": "build/icon.png",
@@ -86,14 +116,7 @@
       "executableName": "trip-assistant",
       "synopsis": "아마란스10 출장신청서·보고서 자동 작성"
     },
-    "publish": [
-      {
-        "provider": "github",
-        "owner": "dfd1123",
-        "repo": "rb-trip-assistant",
-        "releaseType": "release"
-      }
-    ]
+    "forceCodeSigning": false
   },
   "homepage": "https://www.rainbow-robotics.com",
   "repository": {

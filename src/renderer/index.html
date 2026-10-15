@@ -21,6 +21,12 @@ header{background:var(--panel);border-bottom:1px solid var(--line);position:stic
 .gwpill i{width:8px;height:8px;border-radius:50%;background:#c4c9d2}
 .gwpill.ok i{background:#22a06b} .gwpill.bad{border-color:#f0b37e;color:#b45309} .gwpill.bad i{background:#f59e0b}
 #loginModal{position:fixed;inset:0;background:rgba(15,23,42,.35);display:none;align-items:center;justify-content:center;z-index:50}
+#updModal{position:fixed;inset:0;background:rgba(15,23,42,.35);display:none;align-items:center;justify-content:center;z-index:60}
+#updModal.on{display:flex}
+#updModal .box{background:#fff;border-radius:14px;padding:24px;width:420px;max-width:calc(100vw - 32px);box-shadow:0 20px 50px rgba(0,0,0,.2)}
+#updModal pre{white-space:pre-wrap;font:12px/1.5 inherit;color:var(--muted);max-height:160px;overflow:auto;background:var(--bg);border-radius:8px;padding:10px;margin:10px 0 0}
+#updProg{height:6px;background:var(--bg);border-radius:3px;overflow:hidden;margin-top:14px;display:none}
+#updProg i{display:block;height:100%;width:0;background:var(--accent);transition:width .3s}
 #loginModal.on{display:flex}
 #loginModal .box{background:#fff;border-radius:14px;padding:24px;width:380px;max-width:calc(100vw - 32px);box-shadow:0 20px 50px rgba(0,0,0,.2)}
 #loginModal h2{margin:0 0 4px} #loginModal input{margin-top:10px}
@@ -53,7 +59,6 @@ textarea{resize:vertical;min-height:84px}
 .btn{border:1px solid var(--line);background:#fff;border-radius:8px;padding:8px 14px;font:inherit;cursor:pointer;white-space:nowrap}
 .btn:hover{border-color:#c9ced6}
 .btn.primary{background:linear-gradient(135deg,var(--accent),#1f6aa8);border-color:var(--accent);color:var(--accent-ink);font-weight:600}
-.gwtag{display:inline-block;font-size:12px;color:var(--muted);margin-right:10px} .gwtag b{color:var(--ink);font-weight:600}
 .btn.danger{border-color:#f3c2c2;color:#b42318} .btn.danger:disabled{opacity:.45;cursor:not-allowed}
 table.gw{width:100%;border-collapse:collapse;font-size:13px} table.gw td,table.gw th{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left} table.gw th{color:var(--muted);font-weight:600}
 table.gw tr.locked{color:var(--muted)} table.gw td.num{text-align:right;white-space:nowrap}
@@ -74,8 +79,31 @@ table.ed td{padding:3px 4px;vertical-align:top}
 .list .item:last-child{border-bottom:0}
 .pill{font-size:12px;border-radius:999px;padding:2px 8px;background:var(--bg);color:var(--muted);margin-left:6px}
 .pill.ok{background:#e7f6ec;color:var(--ok)}
+.pill.bad{background:#fdecec;color:var(--err);font-weight:600}
+.item.rejected{background:linear-gradient(90deg,#fdecec 0,transparent 40%)}
+/* 작업 중 딤 + 와니 작성 애니메이션 (작업 패널보다 아래) */
+#dim{position:fixed;inset:0;background:rgba(17,24,39,.45);backdrop-filter:blur(2px);display:none;z-index:9;align-items:center;justify-content:center}
+#dim.on{display:flex}
+.wani{display:flex;flex-direction:column;align-items:center;gap:14px;color:#fff;text-align:center}
+.wani .desk{position:relative;width:300px;height:200px}
+.wani .face{position:absolute;left:0;bottom:0;width:140px;height:140px;background:url(favicon.png) center/contain no-repeat;animation:waniBob 1.6s ease-in-out infinite;filter:drop-shadow(0 6px 10px rgba(0,0,0,.35))}
+.wani .paper{position:absolute;right:0;bottom:10px;width:150px;height:180px;background:#fff;border-radius:8px;box-shadow:0 10px 24px rgba(0,0,0,.35);padding:16px 14px;box-sizing:border-box;transform:rotate(-3deg)}
+.wani .paper i{display:block;height:9px;border-radius:5px;background:var(--accent-soft);margin:0 0 12px;width:0;animation:waniLine 3.6s linear infinite}
+.wani .paper i:nth-child(1){animation-delay:0s}.wani .paper i:nth-child(2){animation-delay:.6s;max-width:70%}.wani .paper i:nth-child(3){animation-delay:1.2s}.wani .paper i:nth-child(4){animation-delay:1.8s;max-width:55%}.wani .paper i:nth-child(5){animation-delay:2.4s;max-width:85%}.wani .paper i:nth-child(6){animation-delay:3s;max-width:40%}
+.wani .pen{position:absolute;right:16px;bottom:34px;font-size:32px;animation:waniPen 3.6s linear infinite;transform-origin:bottom left}
+.wani b{font-size:22px}
+.wani .step{font-size:14px;opacity:.85;max-width:420px;min-height:18px}
+.wani .dots::after{content:'…';animation:waniDots 1.2s steps(4,end) infinite;display:inline-block;width:1.2em;text-align:left}
+@keyframes waniBob{0%,100%{transform:translateY(0) rotate(-4deg)}50%{transform:translateY(-6px) rotate(3deg)}}
+@keyframes waniLine{0%{width:0}18%{width:100%}85%{width:100%}100%{width:0}}
+@keyframes waniPen{0%{transform:translate(-70px,-90px) rotate(10deg)}18%{transform:translate(0,-90px) rotate(10deg)}20%{transform:translate(-70px,-72px) rotate(10deg)}36%{transform:translate(-20px,-72px) rotate(10deg)}38%{transform:translate(-70px,-54px) rotate(10deg)}54%{transform:translate(0,-54px) rotate(10deg)}56%{transform:translate(-70px,-36px) rotate(10deg)}72%{transform:translate(-30px,-36px) rotate(10deg)}74%{transform:translate(-70px,-18px) rotate(10deg)}90%{transform:translate(-10px,-18px) rotate(10deg)}100%{transform:translate(-70px,-90px) rotate(10deg)}}
+@keyframes waniDots{0%{content:''}25%{content:'.'}50%{content:'..'}75%{content:'...'}}
 /* 작업 패널 */
 #jobPanel{position:fixed;right:20px;bottom:20px;width:440px;max-width:calc(100vw - 40px);background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:0 12px 32px rgba(0,0,0,.12);display:none;z-index:10}
+#jobSpin{display:none;width:14px;height:14px;border:2px solid var(--line);border-top-color:var(--accent,#2563eb);border-radius:50%;animation:spin .8s linear infinite;margin-left:8px;flex:none}
+#jobSpin.on{display:inline-block}
+@keyframes spin{to{transform:rotate(360deg)}}
+#gwRefreshIcon.on{animation:spin .9s linear infinite}
 #jobPanel header{position:static;display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-radius:12px 12px 0 0}
 #jobLog{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-space:pre-wrap;max-height:260px;overflow:auto;padding:10px 16px;margin:0;color:#374151}
 #jobAsk{display:none;background:var(--warn-soft);border-top:1px solid #f3dcb3;padding:12px 16px;border-radius:0 0 12px 12px}
@@ -88,11 +116,21 @@ table.ed td{padding:3px 4px;vertical-align:top}
 .qrow textarea{min-height:58px;font-size:15px;flex:1}
 .qrow .btn{font-size:15px;padding:0 22px}
 .chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
-.chip{border:1px solid var(--line);background:#fff;border-radius:999px;padding:4px 12px;font-size:13px;cursor:pointer}
-.chip:hover{border-color:var(--accent);color:var(--accent)}
 .qstatus{margin-top:10px;font-size:13px;color:var(--muted);min-height:18px}
 .qstatus b{color:var(--ink)}
 .need{outline:2px solid #f59e0b !important;border-color:#f59e0b !important}
+button:focus{outline:none} button:focus-visible{outline:2px solid var(--accent-soft);outline-offset:1px}   /* macOS 강조색(주황 등) 포커스 링이 '필수' 표시와 헷갈리지 않게 */
+/* 정산 증빙 */
+td.proof{vertical-align:top}
+td.proof .files{display:flex;flex-direction:column;gap:4px;margin-top:6px}
+td.proof .add.hidden + .files{margin-top:0}
+td.proof .chip{min-height:36px;box-sizing:border-box}
+td.proof .chip{display:flex;align-items:center;gap:6px;max-width:100%;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:4px 6px 4px 8px;font-size:12px}
+td.proof .chip .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink);cursor:pointer}
+td.proof .chip .nm:hover{color:var(--accent);text-decoration:underline}
+td.proof .chip .x{border:0;background:none;color:var(--muted);cursor:pointer;padding:0 2px;font-size:12px}
+td.proof .chip .x:hover{color:var(--err)}
+td.proof .empty{font-size:12px;color:var(--warn)}
 details.more{margin-top:4px}
 details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
 .h2row{display:flex;justify-content:space-between;align-items:center}
@@ -125,11 +163,11 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
 <!-- ================= 신청 ================= -->
 <section id="tab-apply">
 <div class="card quick">
-  <h2>한 줄로 신청</h2>
+  <div class="h2row"><h2>한 줄로 신청</h2><button class="btn small" id="btnNewApply" title="입력 중인 신청서 내용을 모두 비움">새로 작성</button></div>
   <p class="sub">언제 · 어디 · 무슨 일인지만 쓰면 사유, 출장목적, 숙박비(1박 7만), 식대(1일 3.8만), 교통비(네이버 지도 왕복)까지 채워요.</p>
   <div class="qrow"><textarea id="q_memo" placeholder="예: 다음주 화~목 판교 RBY1 Muscat 연동 검증, 자차, 홍길동이랑 같이"></textarea>
     <button class="btn primary" id="btnQuick">자동 작성</button></div>
-  <div class="chips" id="q_places"></div>
+  <div class="chips"><select id="q_hist" class="btn small" title="이전에 입력한 문장 (최근 30개)"><option value="">이전 문장…</option></select></div>
   <div class="qstatus" id="q_status"></div>
 </div>
 <div class="grid">
@@ -164,7 +202,7 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
       <option>스포티지(5718)</option><option>그랜져</option><option>캐스퍼</option><option>QM6</option><option>K5</option></select></div>
     <div id="a_route">
       <div class="row"><label>출발지</label><input id="a_from"></div>
-      <div class="row"><label>도착지</label><input id="a_to" placeholder="비우면 출장지로 검색"></div>
+      <div class="row"><label>지도 검색어</label><input id="a_to" placeholder="비우면 출장지 이름으로 네이버 지도 검색 (안 잡히면 주소 입력)"></div>
       <div class="row"><label>교통비 (왕복)</label>
         <div class="inline"><input id="a_fare" inputmode="numeric" placeholder="조회하거나 직접 입력"><button class="btn" id="btnFare">네이버 지도 조회</button></div></div>
       <div class="row"><label></label><div class="fare" id="a_fare_desc"></div></div>
@@ -190,9 +228,8 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
     <h2>결재 문서 제목</h2>
     <div class="title-preview" id="a_title">사유를 입력하면 표시됩니다</div>
     <div class="err" id="a_err"></div>
-    <label class="inline" style="margin:8px 0 12px;color:var(--muted);font-size:13px"><input type="checkbox" id="a_save" checked style="width:auto"> 마지막에 [보관]까지 누르기</label>
     <button class="btn primary" id="btnApply" style="width:100%">그룹웨어에 입력하기</button>
-    <p class="sub" style="margin:10px 0 0">그룹웨어 창이 열리고 품의서입력 → 결재상신 → 본문 작성 → 보관까지 진행해요. 처음엔 그 창에서 로그인해 주세요. <b>상신은 직접</b> 확인하고 누르세요.</p>
+    <p class="sub" style="margin:10px 0 0">뒤에서 품의서입력 → 결재상신 → 본문 작성까지 채우고 작성 창을 띄워요. <b>보관·상신은 직접</b> 확인하고 누르세요.</p>
   </div>
 </div>
 </div>
@@ -202,11 +239,11 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
 <section id="tab-trips" class="hidden">
   <div class="card list" id="tripList">
     <div class="inline" style="justify-content:space-between;align-items:flex-start"><div><h2 style="margin:0">신청한 출장</h2>
-      <p class="sub" style="margin:2px 0 0">이 PC에서 신청한 기록과 그룹웨어 품의 상태예요. 결재 전(상신대기 등)이면 [삭제]로 그룹웨어 품의까지 지울 수 있어요.</p></div>
-      <button class="btn" id="btnGwList">그룹웨어 상태 확인</button></div>
+      <p class="sub" style="margin:2px 0 0">그룹웨어에 올라간 출장 품의와 결재 상태예요. 상신 전이거나 반려된 건은 [삭제]로 그룹웨어 품의까지 지울 수 있어요. 신청·보고 결재가 모두 끝난 출장은 아래로 숨겨요.</p></div>
+      <span class="inline"><button class="btn small" id="btnGwList" title="그룹웨어에서 다시 읽기"><span id="gwRefreshIcon" style="display:inline-block">↻</span> 새로고침</button></span></div>
     <div id="trips" style="margin-top:8px"></div>
     <div id="gwOrphans" class="hidden" style="margin-top:18px">
-      <div class="inline" style="justify-content:space-between"><div><b>앱 기록에 없는 품의</b><p class="sub" style="margin:2px 0 0">그룹웨어에만 있는 품의예요 (예: 중간에 멈춘 입력).</p></div>
+      <div class="inline" style="justify-content:space-between"><div><b>앱 기록에 없는 품의</b><p class="sub" style="margin:2px 0 0">출장 품의인데 위 목록의 출장과 연결되지 않은 건이에요 (예: 신청 기록이 없는 보고서 품의).</p></div>
         <button class="btn danger" id="btnGwDel" disabled>선택 삭제</button></div>
       <div id="gwRows" style="margin-top:8px"></div>
     </div>
@@ -246,7 +283,7 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
     </div>
     <div class="card">
       <h2>정산 경비</h2><p class="sub">실제 쓴 금액으로 고쳐 주세요.</p>
-      <table class="ed" id="r_exp"><thead><tr><th style="width:38%">예산과목</th><th style="width:22%">금액(원)</th><th>적요</th><th></th></tr></thead><tbody></tbody></table>
+      <table class="ed" id="r_exp"><thead><tr><th style="width:26%">예산과목</th><th style="width:16%">금액(원)</th><th>적요</th><th style="width:28%">증빙 <span style="color:var(--err)">*</span> <span style="font-weight:400">(이미지·PDF)</span></th><th></th></tr></thead><tbody></tbody></table>
       <button class="btn small" id="btnAddRExp" style="margin-top:6px">+ 경비 추가</button>
       <div class="total"><span>정산 합계</span><span id="r_total">0원</span></div>
       <p class="sub" id="r_attach" style="margin:10px 0 0"></p>
@@ -265,7 +302,6 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
       <h2>결재 문서 제목</h2>
       <div class="title-preview" id="r_title"></div>
       <div class="err" id="r_err"></div>
-      <label class="inline" style="margin:8px 0 12px;color:var(--muted);font-size:13px"><input type="checkbox" id="r_save" checked style="width:auto"> 마지막에 [보관]까지 누르기</label>
       <button class="btn primary" id="btnReport" style="width:100%">그룹웨어에 입력하기</button>
       <button class="btn" id="btnBack" style="width:100%;margin-top:8px">목록으로</button>
     </div>
@@ -276,7 +312,7 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
 
 <!-- ================= 설정 ================= -->
 <section id="tab-settings" class="hidden">
-  <div class="card" style="max-width:780px">
+  <div class="card">
     <h2>내 설정</h2><p class="sub">이 PC에만 저장돼요.</p>
     <div class="row"><label>이름</label><input id="s_name"></div>
     <div class="row"><label>예산 부서</label><input id="s_dept" placeholder="사업코드도움에서 고르는 이름"></div>
@@ -286,7 +322,7 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
       <button class="btn primary" id="btnSave">저장</button>
     </div>
   </div>
-  <div class="card" style="max-width:780px">
+  <div class="card">
     <h2>그룹웨어 계정</h2>
     <p class="sub">저장해 두면 앱을 켤 때·입력할 때 로그인이 풀려 있으면 알아서 로그인해요. 비밀번호는 이 PC의 OS 보안 저장소(macOS 키체인 등)로 암호화돼 저장되고 밖으로 나가지 않아요.</p>
     <div class="inline" style="gap:8px"><span id="s_gw" style="flex:1;color:var(--muted)"></span>
@@ -294,7 +330,7 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
       <button class="btn" id="btnGwForget">저장된 계정 삭제</button>
       <button class="btn" id="btnLogin">그룹웨어 창에서 직접 로그인</button></div>
   </div>
-  <div class="card" style="max-width:780px">
+  <div class="card">
     <h2>AI 문장 작성 (선택)</h2>
     <p class="sub">개인 API 키를 넣으면 한 줄 메모로 사유·출장목적·보고서를 더 자연스럽게 써요. 없으면 템플릿으로 작성합니다. 키는 이 PC의 보안 저장소에 암호화돼 저장돼요.</p>
     <div class="row"><label>AI</label><select id="s_ai"><option value="">사용 안 함 (템플릿)</option></select></div>
@@ -307,7 +343,7 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
       <button class="btn primary" id="btnAiSave">저장</button>
     </div>
   </div>
-  <div class="card" style="max-width:780px">
+  <div class="card">
     <h2>출장비 규정 (국내)</h2>
     <p class="sub">숙박은 (일수 − 1)박. 식대는 끼니별로, 첫날은 출발 시각이 끼니 시작 전이면, 마지막 날은 복귀 시각이 끼니 끝난 뒤면 넣어요.</p>
     <div class="rates">
@@ -327,14 +363,26 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
 </section>
 </main>
 
+<div id="dim"><div class="wani">
+  <div class="desk"><div class="paper"><i></i><i></i><i></i><i></i><i></i><i></i></div><div class="pen">✍️</div><div class="face"></div></div>
+  <b><span id="dimWhat">와니가 작성 중</span><span class="dots"></span></b><div class="step" id="dimStep"></div>
+</div></div>
 <div id="jobPanel">
-  <header><b id="jobTitle">작업</b><span class="inline"><button class="btn small" id="jobShow" title="숨겨진 그룹웨어 창을 띄워서 직접 확인·수정">그룹웨어 창 열기</button><button class="btn small" id="jobCancel">취소</button><button class="btn small" id="jobClose">닫기</button></span></header>
+  <header><span class="inline"><b id="jobTitle">작업</b><span id="jobSpin"></span></span><span class="inline"><button class="btn small" id="jobShow" title="숨겨진 그룹웨어 창을 띄워서 직접 확인·수정">그룹웨어 창 열기</button><button class="btn small" id="jobCancel">취소</button><button class="btn small" id="jobClose">닫기</button></span></header>
   <pre id="jobLog"></pre>
-  <div id="jobAsk"><p id="jobQ"></p><p class="sub" style="margin:-4px 0 8px">그룹웨어는 뒤에서 진행 중이에요. 직접 손봐야 하면 위 [그룹웨어 창 열기]를 누르세요.</p>
+  <div id="jobAsk"><p id="jobQ"></p><p class="sub" style="margin:-4px 0 8px">작업은 뒤에서 진행 중이에요. 직접 손봐야 하면 위 [… 열기] 버튼으로 창을 띄우세요.</p>
     <div class="inline"><input id="jobInput" inputmode="numeric" class="hidden" placeholder="숫자 입력">
       <button class="btn" id="jobNo">아니오</button><button class="btn primary" id="jobYes">계속</button></div></div>
 </div>
 
+<div id="updModal"><div class="box">
+  <h2 style="margin:0 0 4px">새 버전이 있어요</h2>
+  <p class="sub" id="updMsg" style="margin:0"></p>
+  <pre id="updNotes" class="hidden"></pre>
+  <div id="updProg"><i></i></div>
+  <p class="err" id="updErr" style="margin:8px 0 0"></p>
+  <div class="inline" style="justify-content:flex-end;margin-top:16px"><button class="btn" id="updLater">나중에</button><button class="btn primary" id="updGo">업데이트</button></div>
+</div></div>
 <div id="loginModal"><form class="box" id="loginForm" autocomplete="off">
   <h2>그룹웨어 로그인</h2>
   <p class="sub" id="lg_sub" style="margin:0">아마란스 로그인이 필요해요. 입력하면 앱이 대신 로그인해요.</p>

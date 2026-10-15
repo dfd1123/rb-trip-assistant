@@ -2,7 +2,8 @@
 // 와니의 결재 도우미 - Electron 메인 프로세스
 // 화면(렌더러) ↔ 작업(엔진) 중계. 그룹웨어와 네이버 지도는 앱 안의 별도 창(내장 Chromium)에서 조작한다.
 
-const { app, BrowserWindow, ipcMain, clipboard, shell, safeStorage } = require('electron');
+const { app, BrowserWindow, ipcMain, clipboard, shell, safeStorage, dialog } = require('electron');
+try { process.loadEnvFile(require('path').join(__dirname, '..', '.env')); } catch (e) { /* 개발용 .env 없음 (배포본엔 없음) */ }
 const path = require('path');
 const R = require('./engine/rules');
 const runner = require('./engine/runner');
@@ -86,12 +87,16 @@ function hideGw() {
   if (gwWin && !gwWin.isDestroyed()) gwWin.hide();
 }
 
+// 네이버 지도 창도 숨긴 채 돌리고, 자동 검색이 안 될 때 작업창 [네이버 지도 열기]로만 띄운다
+let naverWin = null;
 function makeNaverWindow() {
-  return new BrowserWindow({
-    width: 1300, height: 900, icon: ICON, title: '네이버 지도 — 교통비 조회', autoHideMenuBar: true,
-    webPreferences: { partition: 'persist:naver', contextIsolation: true, sandbox: true },
+  naverWin = new BrowserWindow({
+    show: false, width: 1300, height: 900, icon: ICON, title: '네이버 지도 — 교통비 조회', autoHideMenuBar: true,
+    webPreferences: { partition: 'persist:naver', contextIsolation: true, sandbox: true, backgroundThrottling: false },
   });
+  return naverWin;
 }
+function showNaver() { if (naverWin && !naverWin.isDestroyed()) { naverWin.show(); naverWin.focus(); return true; } return false; }
 
 // ---------- 작업 1건 (사람 확인 포함) ----------
 class Cancelled extends Error { constructor() { super('취소했어요.'); } }
@@ -121,13 +126,14 @@ let job = null;
 
 function startJob(kind, fn, title) {
   if (job && job.state === 'waiting') job.cancel();          // 사람 입력만 기다리던 이전 작업은 취소
+  else if (job && job.state === 'running' && job.kind === 'fare') job.cancel();   // 교통비 조회는 새 조회가 덮어씀 (교통편 연달아 바꿀 때)
   else if (job && job.state === 'running') throw new Error('이전 작업이 아직 진행 중이에요. 작업창의 [취소]를 누른 뒤 다시 시도해 주세요.');
   const j = job = new Job(kind, title);
   const env = { debugDir: app.isPackaged ? path.join(app.getPath('userData'), 'debug') : path.join(__dirname, '..', 'debug'), cfg: store.config(), store, ui: j, log: m => j.info(m), gwWindow: () => gwWindow(false), showGw, makeNaverWindow, creds: gwCreds };
   (async () => {
     try { j.result = await fn(env); j.state = 'done'; j.info('✔ 완료'); }
     catch (e) { j.error = e instanceof R.InputError ? `입력 오류: ${e.message}` : e.message; j.state = j.cancelled ? 'cancelled' : 'error'; }
-    finally { if (mainWin && !mainWin.isDestroyed()) mainWin.focus(); }
+    finally { if (j.state !== 'done' && mainWin && !mainWin.isDestroyed()) mainWin.focus(); }   // 성공 시엔 작성 팝업이 앞
   })();
   return { ok: true };
 }
@@ -170,8 +176,15 @@ async function gwLogin({ id, pw, save }) {
 }
 
 // ---------- AI 키 (OS 보안 저장소로 암호화) ----------
+// 팀 공용 기본 키: 빌드 때 GEMINI_API_KEY 환경변수를 src/engine/builtin-key.json 에 써 넣는다 (scripts/write-builtin-key.js, git 제외).
+// 개발 중엔 환경변수 GEMINI_API_KEY 를 바로 쓴다. 설정에서 개인 키를 넣으면 그게 우선.
+function builtinAi() {
+  const key = process.env.GEMINI_API_KEY || (() => { try { return require('./engine/builtin-key.json').key; } catch (e) { return ''; } })();
+  return key ? { provider: 'gemini', model: '', key } : null;
+}
 function aiSettings(cfg) {
-  if (!cfg.aiProvider || !cfg.aiKeyEnc) return null;
+  if (cfg.aiProvider === 'none') return null;                       // 설정에서 '사용 안 함'을 고른 경우
+  if (!cfg.aiProvider || !cfg.aiKeyEnc) return cfg.aiKeyEnc ? null : builtinAi();   // 개인 키 없으면 팀 공용 키
   try {
     const buf = Buffer.from(cfg.aiKeyEnc, 'base64');
     const key = safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(buf) : buf.toString('utf8');
@@ -181,7 +194,7 @@ function aiSettings(cfg) {
 function encryptKey(key) {
   return (safeStorage.isEncryptionAvailable() ? safeStorage.encryptString(key) : Buffer.from(key, 'utf8')).toString('base64');
 }
-const publicConfig = c => { const { aiKeyEnc, gwPwEnc, ...rest } = c; return { ...rest, aiKeySet: Boolean(aiKeyEnc), gwSaved: Boolean(c.gwId && gwPwEnc) }; };
+const publicConfig = c => { const { aiKeyEnc, gwPwEnc, ...rest } = c; return { ...rest, aiKeySet: Boolean(aiKeyEnc) || Boolean(aiSettings(c)), aiBuiltin: !aiKeyEnc && Boolean(aiSettings(c)), gwSaved: Boolean(c.gwId && gwPwEnc) }; };
 
 /** 한 줄 메모 → 신청서. AI 가 있으면 문장/추론은 AI, 금액·출장지 이름은 항상 규칙. */
 async function quick(memo) {
@@ -250,7 +263,7 @@ async function route(p, body = {}) {
   switch (p) {
     case '/api/meta':
       return { config: publicConfig(cfg), configured: store.hasConfig(), items: Object.fromEntries(Object.entries(R.BUDGET_ITEMS).map(([k, v]) => [k, v[1]])),
-        version: app.getVersion(), providers: Object.fromEntries(Object.entries(AI.PROVIDERS).map(([k, v]) => [k, v])), places: store.places().slice(0, 8) };
+        version: app.getVersion(), providers: Object.fromEntries(Object.entries(AI.PROVIDERS).map(([k, v]) => [k, v])) };
     case '/api/config': {
       const patch = { ...body };
       if ('aiKey' in patch) { const k = String(patch.aiKey || '').trim(); delete patch.aiKey; if (k) patch.aiKeyEnc = encryptKey(k); }
@@ -264,30 +277,58 @@ async function route(p, body = {}) {
     case '/api/quick': return quick(String(body.memo || ''));
     case '/api/report-quick': return quickReport(body.id, String(body.memo || ''));
     case '/api/expenses': { const r = Q.computeExpenses({ start: body.start, end: body.end || body.start, startTime: body.start_time, endTime: body.end_time, reason: body.reason || '', rates: cfg.rates, mealTimes: cfg.mealTimes }); return { expenses: r.expenses, summary: r.summary, timed: r.timed }; }
-    case '/api/repeat': { const a = store.load(body.id).apply; return { data: { ...a, dates: { start: '', end: '' }, transport: { ...a.transport, total: null, screenshot: '' } } }; }
+    case '/api/repeat': { const a = store.load(body.id).apply;   // keep: 반려돼서 고쳐 올릴 땐 날짜·시각 그대로
+      const dates = body.keep ? { start: a.start, end: a.end, start_time: a.start_time, end_time: a.end_time } : { start: '', end: '' };
+      return { data: { ...a, dates, transport: { ...a.transport, total: null, screenshot: '' } } }; }
     case '/api/prompt': return { text: R.applyPrompt() + String(body.memo || '').trim() + '\n' };
     case '/api/parse': return { data: R.extractYaml(body.text || '') };
     case '/api/title': { const r = String(body.reason || '').trim(); return { apply: r ? R.applyTitle(r) : '', report: r ? R.reportTitle(r) : '' }; }
     case '/api/plan': return runner.planApply(body, cfg);
-    case '/api/trips': return { trips: store.list() };
-    case '/api/draft': { const d = runner.reportDraft(store, cfg, body.id); return { draft: d, prompt: R.reportPrompt(d) }; }
-    case '/api/update': return { ...updater.state, current: app.getVersion() };
-    case '/api/update/install': return { restarting: updater.install() };
+    case '/api/trips': return { trips: store.list().map(t => ({ ...t, reportMemo: R.budgetMemo(R.reportTitle(t.reason || '')) })) };   // reportMemo: 보고 품의 적요 (연결이 끊긴 보고 품의를 찾는 데 씀)
+    case '/api/draft': {   // 전에 작성한 보고서가 있으면 그대로, 없으면 신청 내용으로 초안
+      const base = runner.reportDraft(store, cfg, body.id); const saved = store.load(body.id).report;
+      const d = saved ? { ...base, ...saved, trip_id: body.id } : base;
+      return { draft: d, prompt: R.reportPrompt(d), resumed: !!saved };
+    }
+    case '/api/trip/link-report': { const rec = store.load(body.id); const r = body.row; rec.gwReport = { key: r.key, ym: r.ym, day: String(r.day), seq: String(r.seq) }; store.save(body.id, rec); return { ok: true }; }
+    case '/api/update': return { ...updater.state, current: app.getVersion(), platform: process.platform };
+    case '/api/update/check': return { ...(await updater.check(!!body.force)), current: app.getVersion() };
+    case '/api/update/install': return await updater.install();
     case '/api/copy': clipboard.writeText(String(body.text || '')); return { ok: true };
     case '/api/open': if (body.path) shell.openPath(body.path); return { ok: true };
+    case '/api/pick-proofs': {   // 정산 증빙: 이미지·PDF 1개
+      const r = await dialog.showOpenDialog(mainWin, { title: '증빙 자료 선택 (이미지·PDF 1개)', properties: ['openFile'],
+        filters: [{ name: '이미지·PDF', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'heic', 'heif', 'bmp', 'tif', 'tiff', 'pdf'] }] });
+      return { paths: r.canceled ? [] : r.filePaths };
+    }
     case '/api/gw/status': return gwStatus();
     case '/api/gw/login': return gwLogin(body);
     case '/api/gw/forget': sessionCreds = null; store.saveConfig({ gwId: '', gwPwEnc: '' }); return { ok: true };
-    case '/api/gw/show': showGw(); return { ok: true };
+    case '/api/gw/show': if (job && job.kind === 'fare' && showNaver()) return { ok: true }; showGw(); return { ok: true };
     case '/api/gw/hide': hideGw(); return { ok: true };
     case '/api/job/gw-list': return startJob('gw-list', env => runner.runListBudget(env), body.title);
+    case '/api/job/report-load': return startJob('report-load', env => runner.runLoadReport(env, String(body.id)), body.title);
     case '/api/job/trip-delete': return startJob('trip-delete', env => runner.runDeleteTrip(env, body.id), body.title);
     case '/api/trip/forget': store.remove(String(body.id)); return { ok: true };
+    case '/api/trip/adopt': {   // 그룹웨어에만 있는 출장 신청 품의 → 이 PC 기록. 결재 문서 본문을 읽어 출장지·기간·동행자·목적을 채운다
+      const r = body.row; const pday = `${r.ym}-${String(r.day).padStart(2, '0')}`;
+      const reason = String(r.docTitle || r.memo || '출장').replace(/^\[[^\]]*\]\s*/, '').replace(/(으로|로) 인한 출장의 건$/, '').replace(/\s*출장의 건$/, '').trim() || '출장';
+      let f = null, note = '';
+      if (r.docId) { try { const { Amaranth } = require('./engine/gw'); const gw = new Amaranth({ win: gwWindow(false), baseUrl: cfg.baseUrl, ui: null, log: () => {}, debugDir: null, creds: gwCreds }); f = await gw.apiApplyDocFields(r.docId, r.formId); } catch (e) { note = e.message; } }
+      const prev = store.list().find(t => t.gwApply && t.gwApply.key === r.key);   // 이미 들여온 기록이면 그 자리에 덮어쓴다 (본문 다시 읽기)
+      const id = prev ? prev.id : store.newId((f && f.start) || pday, reason);
+      const keep = prev ? (({ report, gwReport, reportStatus }) => ({ report, gwReport, reportStatus }))(store.load(id)) : {};   // 작성 중이던 보고서·보고 품의 연결은 유지
+      store.save(id, { ...keep, id, created: new Date().toISOString(), title: R.applyTitle(reason), status: '그룹웨어', gwApply: { key: r.key, ym: r.ym, day: String(r.day), seq: String(r.seq) },
+        apply: { reason, destination: (f && f.destination) || '', start: (f && f.start) || pday, end: (f && f.end) || pday, start_time: (f && f.start_time) || '', end_time: (f && f.end_time) || '',
+          category: (f && f.category) || '일반', project: (f && f.project) || '', transport: { mode: (f && f.transport) || 'car', to: '', from: '', total: null },
+          companions: (f && f.companions) || [], companion_purpose: (f && f.companion_purpose) || '', purpose: (f && f.purpose) || '', expenses: [] } });
+      return { id, filled: !!f, note };
+    }
     case '/api/job/gw-delete': return startJob('gw-delete', env => runner.runDeleteBudget(env, body.keys), body.title);
     case '/api/job/login': return startJob('login', env => runner.runLogin(env), body.title);
     case '/api/job/fare': return startJob('fare', env => runner.runFare({ ...env, force: Boolean(body.force) }, body), body.title);
-    case '/api/job/apply': runner.planApply(body.data, cfg); return startJob('apply', env => runner.runApply(env, body.data, { save: body.save !== false }), body.title);
-    case '/api/job/report': R.parseReport(body.data); return startJob('report', env => runner.runReport(env, body.data, { save: body.save !== false }), body.title);
+    case '/api/job/apply': runner.planApply(body.data, cfg); return startJob('apply', env => runner.runApply(env, body.data, { save: false }), body.title);     // 보관·상신은 사람이
+    case '/api/job/report': R.parseReport(body.data); return startJob('report', env => runner.runReport(env, body.data, { save: false }), body.title);
     case '/api/job/cancel': if (job) job.cancel(); return { ok: true };
     case '/api/job': return job ? job.snapshot(Number(body.since || 0)) : { state: 'none' };
     case '/api/job/answer': if (job) job.answer(body.value); return { ok: true };

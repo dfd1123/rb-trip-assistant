@@ -24,8 +24,8 @@ const dialog = title => { const heads = byText(title).reverse();
 const loginId = () => all('input').find(e => vis(e) && !e.disabled && !e.readOnly && /^(text|email|tel|)$/i.test(e.getAttribute('type') || '') && !/date|search|검색|captcha/i.test((e.name || '') + (e.id || '') + (e.placeholder || '') + (e.className || '')));
 const loginPw = () => all('input[type=password]').find(e => vis(e) && !e.disabled);
 // 캔버스 그리드(RealGridJS 1.x, OBTDataGrid): 화면에 글자가 없으므로 React 내부에서 GridView·DataProvider 를 찾아 쓴다
-const rgFind = root => {
-  const el = (root || document).querySelector('[data-orbit-component=OBTDataGrid]') || (root || document).querySelector('canvas');
+const rgFind = (root, startEl) => {
+  const el = startEl || (root || document).querySelector('[data-orbit-component=OBTDataGrid]') || (root || document).querySelector('canvas');
   if (!el) return null;
   const isDp = o => o && typeof o === 'object' && typeof o.getRowCount === 'function' && (typeof o.getJsonRow === 'function' || typeof o.getValue === 'function');
   const isGv = o => o && typeof o === 'object' && typeof o.setCurrent === 'function';
@@ -117,9 +117,9 @@ class Page {
     for (let i = 1; i <= count; i++) {
       this.wc.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: i });
       this.wc.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: i });
-      await sleep(60);
+      await sleep(50);
     }
-    await sleep(250);
+    await sleep(150);
   }
   dblclick(pt) { return this.click(pt, { count: 2 }); }
 
@@ -148,11 +148,11 @@ class Page {
     this.wc.sendInputEvent({ type: 'keyDown', keyCode, modifiers });
     if (keyCode === 'Enter') this.wc.sendInputEvent({ type: 'char', keyCode: '\r', modifiers });
     this.wc.sendInputEvent({ type: 'keyUp', keyCode, modifiers });
-    await sleep(120);
+    await sleep(80);
   }
-  async press(keyCode, times = 1) { for (let i = 0; i < times; i++) { await this.key(keyCode); await sleep(250); } }
-  async selectAll() { await this.key('A', [process.platform === 'darwin' ? 'meta' : 'control']); }
-  async type(text) { await this.wc.insertText(String(text)); await sleep(150); }
+  async press(keyCode, times = 1) { for (let i = 0; i < times; i++) { await this.key(keyCode); await sleep(150); } }
+  async selectAll() { this.wc.focus(); this.wc.selectAll(); await sleep(120); }   // 단축키(Cmd+A)는 메뉴 없는 창에서 안 먹음
+  async type(text) { await this.wc.insertText(String(text)); await sleep(100); }
 
   /** 모든 프레임(iframe 포함) */
   frames() { return this.wc.mainFrame.framesInSubtree; }
@@ -180,6 +180,31 @@ class Page {
     const img = await this.wc.capturePage();
     require('fs').writeFileSync(file, img.toPNG());
     return file;
+  }
+
+  /** XHR/fetch 요청·응답 기록 시작. 돌려주는 함수를 부르면 기록을 끝내고 목록을 준다 (그룹웨어 API 파악용 진단) */
+  async netLogStart() {
+    const dbg = this.wc.debugger;
+    const attached = dbg.isAttached();
+    if (!attached) dbg.attach('1.3');
+    await dbg.sendCommand('Network.enable');
+    const reqs = new Map(); const pending = [];
+    const onMsg = (e, method, params) => {
+      if (method === 'Network.requestWillBeSent' && /xhr|fetch/i.test(params.type || '')) {
+        const r = params.request; reqs.set(params.requestId, { url: r.url, method: r.method, headers: r.headers, postData: r.postData || '' });
+      }
+      if (method === 'Network.responseReceived' && reqs.has(params.requestId)) Object.assign(reqs.get(params.requestId), { status: params.response.status, mime: params.response.mimeType });
+      if (method === 'Network.loadingFinished' && reqs.has(params.requestId))
+        pending.push(dbg.sendCommand('Network.getResponseBody', { requestId: params.requestId }).then(b => { reqs.get(params.requestId).body = String(b.body || '').slice(0, 300000); }).catch(() => {}));
+    };
+    dbg.on('message', onMsg);
+    return async () => {
+      await sleep(1000); await Promise.all(pending);
+      dbg.off('message', onMsg);
+      try { await dbg.sendCommand('Network.disable'); } catch (e) { /* */ }
+      if (!attached) dbg.detach();
+      return [...reqs.values()];
+    };
   }
 
   /** <input type=file> 에 파일 넣기 (CDP) */

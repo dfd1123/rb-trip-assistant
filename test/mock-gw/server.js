@@ -56,7 +56,11 @@ function gridHtml(id,cols,all){
 }
 function render(){
   localStorage.top=JSON.stringify(S.top);
+  // 실제 화면처럼 위쪽 그리드 React fiber 에 RealGrid2 데이터 공급자(getRowCount/getJsonRow)를 달아 둔다
+  const ST={'진행중':'0','결재완료':'1','작성':'2','상신대기':'2'};
+  const dp={ getRowCount:()=>S.top.length, getJsonRow:i=>{const r=S.top[i]; if(!r) return null; return r.순번?{getDtYymm:(r.품의연월||'').replace('-',''),getDtDd:r.품의일,getSq:r.순번,getFg:r.품의구분==='지출'?'1':'2',rmkDc:r.적요||'',unitSumam:Number(String(r.총금액||'0').replace(/,/g,''))+'.0000',approState:ST[r.결재상태]||'2',noDoc:''}:{getDtYymm:'',getSq:''};} };
   $('#app').innerHTML='<div class="tools"><button id="btnPrint" title="인쇄"><img src="/ic_print.png" alt=""></button><button id="btnDel" title="삭제"><img src="/ic_delete.png" alt=""></button></div>'+gridHtml('top',TOP,S.top)+gridHtml('bot',BOT,S.bot)+(S.checked>=0?'<div class="bar"><button id="btnAppr">결재상신</button></div>':'');
+  $('#top').__reactFiber$mock={memoizedProps:{dataProvider:dp},stateNode:null,return:null};
   if($('#btnAppr')) $('#btnAppr').onclick=approvalDialog;
   $('#btnDel').onclick=()=>{ if(!S.marks.size) return; dialog('알림','<p>선택한 품의를 삭제하시겠습니까?</p>',()=>{ S.top=S.top.filter((r,i)=>!S.marks.has(i)||/진행|완료/.test(r.결재상태||'')); S.marks.clear(); S.checked=-1; render(); }); };
 }
@@ -93,6 +97,7 @@ document.addEventListener('dblclick',e=>{
   const td=e.target.closest('td.rg-data-cell'); if(!td) return; const g=td.dataset.g, r=+td.dataset.r, c=td.dataset.c;
   if(g==='top'&&c==='품의구분'){ const l=document.createElement('div'); l.className='rg-dropdownlist'; l.innerHTML='<div class="rg-dropdown-item"><span class="rg-dropdown-label">1.지출</span></div><div class="rg-dropdown-item"><span class="rg-dropdown-label">2.수입</span></div>';
     td.appendChild(l); l.querySelectorAll('.rg-dropdown-item').forEach(o=>o.onclick=ev=>{ ev.stopPropagation(); S.top[r].품의구분=o.textContent.replace(/^[0-9]+[.]/,''); render(); }); }
+  if(g==='top'&&c==='적요') editCell(td,v=>{ S.top[r].적요=v; S.focus={g,r,c}; render(); });
   if(g==='bot'&&(c==='품의금액'||c==='적요')) editCell(td,v=>{ S.bot[r][c]=c==='품의금액'?Number(v.replace(/,/g,'')).toLocaleString('en-US'):v; S.focus={g,r,c:c==='적요'?'첨부파일':c}; render(); });
 });
 document.addEventListener('click',e=>{

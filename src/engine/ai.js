@@ -7,21 +7,23 @@ const R = require('./rules');
 const PROVIDERS = {
   anthropic: { label: 'Claude', model: 'claude-haiku-5-5' },
   openai: { label: 'OpenAI', model: 'gpt-4o-mini' },
-  gemini: { label: 'Gemini', model: 'gemini-2.5-flash' },
+  gemini: { label: 'Gemini', model: 'gemini-3.5-flash-lite', fallback: ['gemini-flash-lite-latest'] },   // 3.8-flash 는 무료 티어에서 503 잦음, 3.5-flash 는 생각이 길어 45초 초과
 };
 
 async function post(url, headers, body, timeoutMs = 45000) {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), timeoutMs);
-  try {
-    const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body), signal: ctrl.signal });
-    const json = await res.json().catch(() => ({}));
-    if (!res.ok) {
+  // 503(혼잡)·429(한도)·529 는 잠깐 뒤 다시 (최대 3회: 2초, 5초 간격)
+  for (let attempt = 0; ; attempt++) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body), signal: ctrl.signal });
+      const json = await res.json().catch(() => ({}));
+      if (res.ok) return json;
+      if ([429, 503, 529].includes(res.status) && attempt < 2) { await new Promise(r => setTimeout(r, [2000, 5000][attempt])); continue; }
       const msg = (json.error && (json.error.message || json.error.type)) || res.statusText;
       throw new Error(`AI 호출 실패 (${res.status}): ${msg}${res.status === 404 ? ' — 설정에서 모델 이름을 확인해 주세요.' : ''}`);
-    }
-    return json;
-  } finally { clearTimeout(t); }
+    } finally { clearTimeout(t); }
+  }
 }
 
 /** @returns {Promise<string>} 모델 답변 텍스트 */
@@ -40,9 +42,17 @@ async function complete({ provider, model, key }, prompt) {
       { model, messages: [{ role: 'user', content: prompt }] });
     return j.choices[0].message.content;
   }
-  const j = await post(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
-    { 'x-goog-api-key': key }, { contents: [{ parts: [{ text: prompt }] }] });
-  return j.candidates[0].content.parts.map(x => x.text || '').join('');
+  // 혼잡(503)·시간 초과면 가벼운 모델로 한 번 더
+  const models = [model, ...(p.fallback || []).filter(m => m !== model)];
+  let last;
+  for (const m of models) {
+    try {
+      const j = await post(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(m)}:generateContent`,
+        { 'x-goog-api-key': key }, { contents: [{ parts: [{ text: prompt }] }] });
+      return j.candidates[0].content.parts.map(x => x.text || '').join('');
+    } catch (e) { last = e; if (!/\(503\)|\(429\)|aborted/.test(e.message)) throw e; }
+  }
+  throw last;
 }
 
 const WEEK = '일월화수목금토';

@@ -53,9 +53,14 @@ test('AI 답변에서 YAML 꺼내기 (날짜는 문자열로)', () => {
 });
 
 test('보고서: 정부과제는 과제명 필수', () => {
-  const base = { reason: 'r', name: 'n', period: 'p', destination: 'd', purpose: 'p', report: 'r' };
+  const base = { reason: 'r', name: 'n', period: 'p', destination: 'd', purpose: 'p', report: 'r', schedule: [{ date: '10/20', place: 'x', detail: '점검' }], expenses: [{ item: 'meal', amount: 1000, proofs: ['/tmp/영수증.jpg'] }] };
   assert.throws(() => R.parseReport({ ...base, category: '정부과제' }), /과제명/);
   assert.equal(R.parseReport({ ...base, category: '로봇' }).category, '로봇');
+  assert.throws(() => R.parseReport({ ...base, schedule: [{ date: '10/20', place: 'x', detail: '' }] }), /세부 활동/);   // 세부 활동 내용 필수
+  assert.throws(() => R.parseReport({ ...base, expenses: [] }), /경비/);                                              // 경비 필수
+  assert.throws(() => R.parseReport({ ...base, expenses: [{ item: 'meal', amount: 1000 }] }), /증빙/);                 // 줄마다 증빙 필수
+  assert.throws(() => R.parseReport({ ...base, expenses: [{ item: 'meal', amount: 1000, proofs: ['/tmp/a.docx'] }] }), /이미지나 PDF/);
+  assert.deepEqual(R.parseReport({ ...base, category: '로봇' }).attachments, ['/tmp/영수증.jpg']);                    // 증빙은 보고서 첨부로
 });
 
 const Q = require('../src/engine/quick');
@@ -107,7 +112,7 @@ test('AI 결과 병합: 출장지 이름은 기존 목록으로, 금액은 규�
   const base = Q.quickApply('다음주 화~목 판교 검증', { today: TODAY, places: PLACES }).data;
   const m = Q.mergeAi(base, { reason: 'RBY1-Muscat 연동 검증', destination: '판교 AI 사무소', dates: { start: '2026-10-20', end: '2026-10-22' }, purpose: 'AI 문장', transport: { mode: 'transit' } }, PLACES, { defaultOrigin: '세종' });
   assert.equal(m.destination, '레인보우로보틱스 판교 AI 사무소');
-  assert.equal(m.transport.to, '레인보우로보틱스 판교 AI 사무소');
+  assert.equal(m.transport.to, '텔레칩스 판교사옥');   // 지도 검색어는 네이버에 등록된 이름
   assert.equal(m.transport.mode, 'transit');
   assert.equal(m.transport.from, '세종');
   assert.equal(m.purpose, 'AI 문장');
@@ -183,4 +188,38 @@ test('품의 삭제 가능 여부 (결재상태)', () => {
   const { Amaranth } = require('../src/engine/gw');
   for (const t of ['상신대기', '작성', '보관', '반려', '']) assert.equal(Amaranth.locked(t), false, t);
   for (const t of ['결재중', '진행중', '결재완료', '승인', '종결']) assert.equal(Amaranth.locked(t), true, t);
+});
+
+test('신청 직전 교통비 필수 (자차·대중교통)', () => {
+  const { planApply } = require('../src/engine/runner');
+  const base = { reason: 'x', destination: 'y', dates: { start: '2026-10-20', end: '2026-10-20', start_time: '09:00', end_time: '18:00' }, purpose: 'p' };
+  assert.throws(() => planApply({ ...base, transport: { mode: 'car', to: '판교' } }, {}), /교통비는 필수/);
+  assert.throws(() => planApply({ ...base, transport: { mode: 'transit', to: '판교', total: 0 } }, {}), /교통비는 필수/);
+  assert.ok(planApply({ ...base, transport: { mode: 'car', to: '판교', total: 74814 } }, {}).transport.total === 74814);
+  assert.ok(planApply({ ...base, transport: { mode: 'corporate' } }, {}));
+});
+
+test('품의 적요', () => {
+  assert.equal(R.budgetMemo(R.applyTitle('RBY1 정비')), 'RBY1 정비로 인한 출장');
+  assert.equal(R.budgetMemo(R.reportTitle('FCC인증')), 'FCC인증으로 인한 출장 보고');
+});
+
+test('한 줄: "9시부터 가서 … 복귀"', () => {
+  const Q = require('../src/engine/quick');
+  const r = Q.quickApply('다음주 화~목 아침 9시부터 가서 오후 6시에 복귀 레인보우로보틱스 판교 사무소로 RBY1 정비를 위해 출장', { today: new Date('2026-10-15'), places: require('../src/engine/store').PRESET_PLACES });
+  assert.equal(r.data.dates.start_time, '09:00');
+  assert.equal(r.data.dates.end_time, '18:00');
+  assert.equal(r.data.reason, 'RBY1 정비');
+});
+
+test('네이버 대중교통: 총 요금 줄이 없으면 첫 경로 구간 요금 합', () => {
+  assert.equal(R.parseTransitText('최적\n1시간59분\n세종\nB4\n33분\nKTX-산천\n30분10,700원\n6003\n44분3,200원\n상세보기\n최소시간\n30분10,700원\n상세보기'), 13900);
+  assert.equal(R.parseTransitText('총 요금 4,500원'), 4500);
+  assert.equal(R.parseTransitText('경로 없음'), null);
+});
+
+test('연구과제는 과제명 필수', () => {
+  const base = { reason: 'x', destination: 'y', dates: { start: '2026-10-20', end: '2026-10-20', start_time: '09:00', end_time: '18:00' }, purpose: 'p', transport: { mode: 'car', to: 'z', total: 1000 } };
+  assert.throws(() => R.parseApply({ ...base, category: '연구과제' }), /과제명/);
+  assert.equal(R.parseApply({ ...base, category: '연구과제', project: 'RBY1 과제' }).project, 'RBY1 과제');
 });

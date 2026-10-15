@@ -10,14 +10,22 @@ const URL = mode => `https://map.naver.com/p/directions/-/-/-/${mode === 'car' ?
 
 async function trySearch(p, origin, dest) {
   try {
-    for (const [ph, value] of [['출발', origin], ['도착|목적', dest]]) {
-      await p.clickWhere(re => all('input').find(i => vis(i) && new RegExp(re).test(i.placeholder || '')), ph);
+    // 입력칸: placeholder 가 없어진 뒤로는 .input_search 순서(첫째 출발, 둘째 도착)로 찾는다. 옛 화면은 placeholder 로.
+    for (const [k, value] of [[0, origin], [1, dest]]) {
+      await p.clickWhere(idx => { const boxes = all('input.input_search, input[id^=input_search]').filter(vis); if (boxes.length >= 2) return boxes[idx];
+        return all('input').find(i => vis(i) && new RegExp(idx === 0 ? '출발' : '도착|목적').test(i.placeholder || '')); }, k);
       await p.selectAll(); await p.type(value);
-      await sleep(1300);
-      await p.key('Down'); await p.key('Enter');
+      await sleep(1500);
+      // 자동완성(ul.list_place > li.item_place)엔 '검색어' 추천·최근 경로도 섞여 있다 → 글자가 '장소'로 시작하는 첫 항목만
+      const hit = await p.eval(() => { const li = all('.list_place .item_place').find(e => vis(e) && /^장소/.test(e.innerText.trim())); return li ? center(li) : null; });
+      if (hit) await p.click(hit);
+      else if (await p.eval(() => all('.list_place .item_place').some(vis))) return false;   // 목록은 떴는데 장소가 없음
+      else { await p.key('Down'); await p.key('Enter'); }
       await sleep(900);
     }
-    try { await p.clickWhere(() => all('button').find(b => vis(b) && norm(b.textContent).includes('길찾기'))); } catch (e) { /* 자동 검색되는 경우 */ }
+    if (await p.eval(() => /검색 결과가 없습니다/.test(document.body.innerText))) return false;
+    // 왼쪽 메뉴의 '길찾기(선택됨)' 버튼을 누르면 입력이 초기화된다 → 글자가 정확히 '길찾기'인 패널 버튼(마지막 것)만
+    try { await p.clickWhere(() => all('button').filter(b => vis(b) && norm(b.textContent) === '길찾기').pop()); } catch (e) { /* 자동 검색되는 경우 */ }
     await sleep(4000);
     return true;
   } catch (e) { return false; }
@@ -38,29 +46,28 @@ async function lookupFare({ makeWindow, mode, origin, dest, shotPath, ui, log })
     }
     await sleep(2500);
     log(`네이버 지도 ${mode === 'car' ? '자동차' : '대중교통'} 길찾기: ${origin} → ${dest}`);
-    if (!(await trySearch(p, origin, dest)))
-      await ui.assist('자동 검색에 실패했습니다. 열린 네이버 지도 창에서 직접 길찾기를 해서 첫 번째 경로가 보이게 한 뒤 [계속]을 눌러주세요.');
-    if (mode === 'transit') {
-      try { await p.clickWhere(() => byText('상세보기')[0]); await sleep(2000); } catch (e) { /* 없음 */ }
-      await ui.pause('버스 포함 총 요금이 지도 창에 보이는지 확인하고 [계속]을 눌러주세요. (안 보이면 첫 경로의 상세보기를 열어주세요)');
-    }
-    const text = await p.allText();
+    const found = await trySearch(p, origin, dest);
+    // 경로 목록이 뜰 때까지 (대중교통: '상세보기', 자동차: '연료비')
+    if (found) await p.waitFor(re => new RegExp(re).test(document.body.innerText), [mode === 'car' ? '연료비' : '상세보기'], { timeout: 15000 });
+    const text = found ? await p.allText() : '';
     require('fs').mkdirSync(require('path').dirname(shotPath), { recursive: true });
     await p.screenshot(shotPath);
+    // 못 읽으면 바로 사람에게: [네이버 지도 열기]로 직접 검색해서 금액만 입력
+    const manualHint = `자동 교통비 검색이 안 됐어요${found ? '' : ` ('${dest}'를 지도에서 못 찾음 — 지도 검색어 칸에 주소를 넣으면 다음엔 자동)`}. 위 [네이버 지도 열기]를 눌러 직접 길찾기한 뒤 `;
 
     if (mode === 'car') {
-      let v = parseCarText(text);
+      let v = found ? parseCarText(text) : null;
       if (v && !(await ui.confirm(`읽은 값: 연료비 ${v.fuel.toLocaleString('ko-KR')}원, 통행료 ${v.toll.toLocaleString('ko-KR')}원 (편도). 맞나요?`))) v = null;
       const source = v ? 'naver' : 'manual';
-      if (!v) v = { fuel: await ui.askInt('연료비(편도, 원)'), toll: await ui.askInt('통행료(편도, 원, 없으면 0)') };
+      if (!v) v = { fuel: await ui.askInt(manualHint + '연료비(편도, 원)를 입력해 주세요'), toll: await ui.askInt('통행료(편도, 원, 없으면 0)') };
       const oneWay = v.fuel + v.toll;
       return { mode, oneWay, ...v, total: roundTrip(oneWay), source, screenshot: shotPath,
         describe: `(연료비 ${v.fuel.toLocaleString('ko-KR')} + 통행료 ${v.toll.toLocaleString('ko-KR')}) × 2 = ${roundTrip(oneWay).toLocaleString('ko-KR')}원` };
     }
-    let t = parseTransitText(text);
+    let t = found ? parseTransitText(text) : null;
     if (t && !(await ui.confirm(`읽은 값: 총 요금 ${t.toLocaleString('ko-KR')}원 (편도). 맞나요?`))) t = null;
     const source = t ? 'naver' : 'manual';
-    if (!t) t = await ui.askInt('버스 포함 총 요금(편도, 원)');
+    if (!t) t = await ui.askInt(manualHint + '버스 포함 총 요금(편도, 원)을 입력해 주세요');
     return { mode, oneWay: t, total: roundTrip(t), source, screenshot: shotPath,
       describe: `${t.toLocaleString('ko-KR')} × 2 = ${roundTrip(t).toLocaleString('ko-KR')}원` };
   } finally {
