@@ -272,7 +272,7 @@ $('#btnSave').onclick = async () => {
   await rpc('/api/config', {name: $('#s_name').value.trim(), budgetDept: $('#s_dept').value.trim(), defaultOrigin: $('#s_origin').value.trim()});
   $('#s_msg').textContent = '저장됨'; META = await rpc('/api/meta'); $('#a_from').value ||= META.config.defaultOrigin;
 };
-$('#btnLogin').onclick = () => runJob('로그인 확인', '/api/job/login', {});
+$('#btnLogin').onclick = () => runJob('로그인 확인', '/api/job/login', {}, () => checkGw(false));
 function loadAiSettings(){
   const c = META.config, sel = $('#s_ai');
   sel.innerHTML = '<option value="">사용 안 함 (템플릿)</option>' + Object.entries(META.providers).map(([k,v]) => `<option value="${k}">${v.label}</option>`).join('');
@@ -339,6 +339,43 @@ $('#jobClose').onclick = () => $('#jobPanel').style.display = 'none';
 $('#jobCancel').onclick = () => rpc('/api/job/cancel');
 function alertErr(m){ $('#jobPanel').style.display='block'; $('#jobTitle').textContent='오류'; $('#jobLog').textContent = m; $('#jobAsk').style.display='none'; }
 
+/* ---------- 그룹웨어 로그인 ---------- */
+let gwChecked = 0;
+function setGwPill(st){
+  const p = $('#gwPill'); p.classList.toggle('ok', st === 'ok'); p.classList.toggle('bad', st === 'bad');
+  p.querySelector('span').textContent = st === 'ok' ? '그룹웨어 로그인됨' : st === 'bad' ? '그룹웨어 로그인 필요' : '그룹웨어 확인 중';
+}
+function showGwSaved(){ $('#s_gw').textContent = META.config.gwSaved ? `저장된 계정: ${META.config.gwId}` : '저장된 계정 없음'; }
+function openLogin(msg){
+  $('#lg_err').textContent = msg || ''; $('#lg_id').value = $('#lg_id').value || META.config.gwId || '';
+  $('#loginModal').classList.add('on'); ($('#lg_id').value ? $('#lg_pw') : $('#lg_id')).focus();
+}
+const closeLogin = () => { $('#loginModal').classList.remove('on'); $('#lg_pw').value = ''; };
+async function checkGw(openIfNeeded = true){
+  setGwPill('');
+  const st = await rpc('/api/gw/status').catch(e => ({ loggedIn: false, error: e.message }));
+  gwChecked = Date.now();
+  setGwPill(st.loggedIn ? 'ok' : 'bad');
+  if(!st.loggedIn && openIfNeeded) openLogin(st.failed ? '저장된 계정으로 로그인하지 못했어요. 비밀번호가 바뀌었다면 다시 입력해 주세요.' : '');
+  return st;
+}
+$('#gwPill').onclick = () => $('#gwPill').classList.contains('ok') ? checkGw() : openLogin();
+$('#loginForm').onsubmit = async e => {
+  e.preventDefault();
+  $('#lg_ok').disabled = true; $('#lg_ok').textContent = '로그인 중…'; $('#lg_err').textContent = '';
+  try {
+    const r = await rpc('/api/gw/login', { id: $('#lg_id').value, pw: $('#lg_pw').value, save: $('#lg_save').checked });
+    if(r.loggedIn){ closeLogin(); setGwPill('ok'); META = await rpc('/api/meta'); showGwSaved(); if(r.note) alertErr(r.note); }
+    else $('#lg_err').textContent = r.error;
+  } catch(err){ $('#lg_err').textContent = err.message; }
+  finally { $('#lg_ok').disabled = false; $('#lg_ok').textContent = '로그인'; }
+};
+$('#lg_close').onclick = closeLogin;
+$('#lg_manual').onclick = () => { closeLogin(); runJob('로그인 확인', '/api/job/login', {}, () => checkGw(false)); };
+$('#btnGwLogin').onclick = () => openLogin();
+$('#btnGwForget').onclick = async () => { await rpc('/api/gw/forget'); META = await rpc('/api/meta'); showGwSaved(); };
+window.addEventListener('focus', () => { if(Date.now() - gwChecked > 20 * 60 * 1000 && !$('#loginModal').classList.contains('on')) checkGw(); });
+
 /* ---------- 시작 ---------- */
 (async () => {
   META = await rpc('/api/meta');
@@ -360,5 +397,6 @@ function alertErr(m){ $('#jobPanel').style.display='block'; $('#jobTitle').textC
   const cur = await rpc('/api/job').catch(() => null);          // 새로고침 전 작업이 남아 있으면 이어서 보여주기
   if(cur && (cur.state === 'running' || cur.state === 'waiting')) watchJob(cur.title || '진행 중인 작업', cur.kind === 'fare' ? r => setFare(r) : (cur.kind === 'apply' || cur.kind === 'report') ? () => loadTrips() : null);
   $('#q_memo').focus();
+  showGwSaved(); checkGw();
   if(!META.configured || !c.name){ $$('nav button')[2].click(); $('#s_msg').textContent = '처음이면 이름부터 저장해 주세요'; }
 })();

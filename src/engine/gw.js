@@ -12,13 +12,14 @@ const popupsOf = new WeakMap();   // 그룹웨어 창 → 그 창에서 열린 �
 const amountOf = s => Number(String(s || '').replace(/[^\d]/g, '')) || 0;
 
 class Amaranth {
-  constructor({ win, baseUrl, ui, log, debugDir }) {
+  constructor({ win, baseUrl, ui, log, debugDir, creds }) {
     this.page = new Page(win);
     this.win = win;
     this.baseUrl = baseUrl.replace(/\/$/, '');
     this.ui = ui;
     this.log = log;
     this.debugDir = debugDir;
+    this.creds = creds || (() => null);   // () => {id, pw} | null
     if (!popupsOf.has(win.webContents)) {
       const set = new Set();
       popupsOf.set(win.webContents, set);
@@ -54,13 +55,46 @@ class Amaranth {
     return this.page.eval(() => /login/i.test(location.href) || Array.from(document.querySelectorAll('input[type=password]')).some(vis)).catch(() => true);
   }
 
-  async ensureLogin(timeoutMs = 10 * 60 * 1000) {
+  /** 그룹웨어를 열어 로그인 화면인지 확인 (창은 보이지 않아도 됨) */
+  async loginNeeded() {
     const p = this.page;
     if (!p.url().startsWith(this.baseUrl)) await p.goto(this.baseUrl);
     await sleep(2500);
-    if (!(await this.isLoginPage())) return;
+    return this.isLoginPage();
+  }
+
+  /** 아이디·비밀번호 자동 입력. 아이디 → (다음) → 비밀번호 두 단계 화면도 처리. 성공하면 true */
+  async autoLogin(id, pw) {
+    const p = this.page;
+    if (!id || !pw) return false;
+    this.log('저장된 계정으로 그룹웨어에 로그인합니다.');
+    const has = what => p.eval(w => !!(w === 'pw' ? loginPw() : loginId()), what);
+    try {
+      if (!(await has('pw')) && (await has('id'))) {             // 1단계: 아이디만 있는 화면 → 다음
+        await p.clickWhere(() => loginId()); await p.selectAll(); await p.type(id);
+        const next = await p.eval(() => { const b = all('button, [role=button], input[type=submit], a, span, div').filter(e => vis(e) && /^(다음|NEXT|Next|확인|로그인|LOGIN|Login)$/.test(norm(e.textContent || e.value))).pop(); return b ? center(b) : null; });
+        if (next) await p.click(next); else await p.key('Enter');
+        await p.waitFor(() => !!loginPw(), [], { timeout: 8000 });
+      }
+      if (await has('pw')) {
+        if (await has('id') && !(await p.eval(v => loginId().value === v, id))) { await p.clickWhere(() => loginId()); await p.selectAll(); await p.type(id); }
+        await p.clickWhere(() => loginPw()); await p.selectAll(); await p.type(pw);
+        await p.key('Enter');
+      }
+      const end = Date.now() + 15000;
+      while (Date.now() < end) { await sleep(1000); if (!(await this.isLoginPage())) { await sleep(2500); this.log('로그인 성공'); return true; } }
+    } catch (e) { /* 아래에서 실패 처리 */ }
+    await this.debugDump('login', '로그인');
+    this.log('자동 로그인에 실패했어요 (아이디·비밀번호 확인, 추가 인증 등).');
+    return false;
+  }
+
+  async ensureLogin(timeoutMs = 10 * 60 * 1000) {
+    if (!(await this.loginNeeded())) return;
+    const c = this.creds();
+    if (c && await this.autoLogin(c.id, c.pw)) return;
     this.win.show(); this.win.focus();
-    this.log('그룹웨어에 로그인되어 있지 않아요. 열린 아마란스 창에서 로그인해 주세요. 로그인하면 자동으로 이어서 진행합니다. (비밀번호는 앱이 저장하지 않습니다)');
+    this.log('그룹웨어에 로그인되어 있지 않아요. 열린 아마란스 창에서 로그인해 주세요. 로그인하면 자동으로 이어서 진행합니다. (설정 → 그룹웨어 계정에 저장해 두면 다음부터 자동 로그인)');
     const end = Date.now() + timeoutMs;
     while (await this.isLoginPage()) {
       if (Date.now() > end) throw new Error('로그인 대기 시간(10분)이 지났습니다. 다시 [그룹웨어에 입력하기]를 눌러 주세요.');

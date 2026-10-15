@@ -21,6 +21,8 @@ const dialog = title => { const heads = byText(title).reverse();
   for (const h of heads) { let p = h; while (p && p !== document.body) {
     if (okButtons(p).length) return p; p = p.parentElement; } }
   return null; };
+const loginId = () => all('input').find(e => vis(e) && !e.disabled && !e.readOnly && /^(text|email|tel|)$/i.test(e.getAttribute('type') || '') && !/date|search|검색|captcha/i.test((e.name || '') + (e.id || '') + (e.placeholder || '') + (e.className || '')));
+const loginPw = () => all('input[type=password]').find(e => vis(e) && !e.disabled);
 const grid = hdr => all('.rg-root').find(r => vis(r) && all('.rg-header-cell', r).some(h => norm(h.textContent) === norm(hdr)));
 const headers = g => all('.rg-header-cell', g).map(h => norm(h.textContent));
 const rows = g => all('tr.rg-data-row', g);

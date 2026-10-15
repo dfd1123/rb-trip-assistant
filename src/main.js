@@ -10,6 +10,7 @@ const { Store } = require('./engine/store');
 const Q = require('./engine/quick');
 const AI = require('./engine/ai');
 const updater = require('./updater');
+const GW = require('./engine/gw');
 
 const ICON = path.join(__dirname, '..', 'assets', 'icon-512.png');
 app.setName('와니의 결재 도우미');   // 개발 모드에서도 메뉴·알림에 앱 이름
@@ -48,10 +49,10 @@ function createMain() {
 }
 
 /** 그룹웨어 창. 로그인 세션은 persist:gw 파티션(이 PC)에만 저장된다. */
-function gwWindow() {
-  if (gwWin && !gwWin.isDestroyed()) return gwWin;
+function gwWindow(show = true) {
+  if (gwWin && !gwWin.isDestroyed()) { if (show && !gwWin.isVisible()) gwWin.show(); return gwWin; }
   gwWin = new BrowserWindow({
-    width: 1500, height: 950, icon: ICON, title: '아마란스 — 와니의 결재 도우미가 입력 중', autoHideMenuBar: true,
+    show, width: 1500, height: 950, icon: ICON, title: '아마란스 — 와니의 결재 도우미가 입력 중', autoHideMenuBar: true,
     webPreferences: { partition: 'persist:gw', contextIsolation: true, sandbox: true },
   });
   // 결재 작성 팝업(window.open)은 앱 창으로 열고 같은 세션을 쓴다
@@ -99,13 +100,50 @@ function startJob(kind, fn, title) {
   if (job && job.state === 'waiting') job.cancel();          // 사람 입력만 기다리던 이전 작업은 취소
   else if (job && job.state === 'running') throw new Error('이전 작업이 아직 진행 중이에요. 작업창의 [취소]를 누른 뒤 다시 시도해 주세요.');
   const j = job = new Job(kind, title);
-  const env = { debugDir: app.isPackaged ? path.join(app.getPath('userData'), 'debug') : path.join(__dirname, '..', 'debug'), cfg: store.config(), store, ui: j, log: m => j.info(m), gwWindow, makeNaverWindow };
+  const env = { debugDir: app.isPackaged ? path.join(app.getPath('userData'), 'debug') : path.join(__dirname, '..', 'debug'), cfg: store.config(), store, ui: j, log: m => j.info(m), gwWindow, makeNaverWindow, creds: gwCreds };
   (async () => {
     try { j.result = await fn(env); j.state = 'done'; j.info('✔ 완료'); }
     catch (e) { j.error = e instanceof R.InputError ? `입력 오류: ${e.message}` : e.message; j.state = j.cancelled ? 'cancelled' : 'error'; }
     finally { if (mainWin && !mainWin.isDestroyed()) mainWin.focus(); }
   })();
   return { ok: true };
+}
+
+// ---------- 그룹웨어 계정 (비밀번호는 OS 보안 저장소로 암호화해서만 저장) ----------
+let sessionCreds = null;   // 저장 안 함을 고른 경우 앱이 켜져 있는 동안만 기억
+function gwCreds() {
+  if (sessionCreds) return sessionCreds;
+  const c = store.config();
+  if (!c.gwId || !c.gwPwEnc || !safeStorage.isEncryptionAvailable()) return null;
+  try { return { id: c.gwId, pw: safeStorage.decryptString(Buffer.from(c.gwPwEnc, 'base64')) }; } catch (e) { return null; }
+}
+const jobBusy = () => job && (job.state === 'running' || job.state === 'waiting');
+const gwFor = (show, extra = {}) => new GW.Amaranth({ win: gwWindow(show), baseUrl: store.config().baseUrl, ui: { info() {}, async assist() {} }, log: () => {}, creds: gwCreds, ...extra });
+
+async function gwStatus() {
+  const saved = Boolean(store.config().gwId && store.config().gwPwEnc);
+  if (jobBusy()) return { loggedIn: true, busy: true, saved };
+  const gw = gwFor(false);
+  if (!(await gw.loginNeeded())) return { loggedIn: true, saved };
+  const c = gwCreds();
+  if (c && await gw.autoLogin(c.id, c.pw)) return { loggedIn: true, saved, auto: true };
+  return { loggedIn: false, saved, failed: Boolean(c), id: store.config().gwId || '' };
+}
+
+async function gwLogin({ id, pw, save }) {
+  id = String(id || '').trim(); pw = String(pw || '');
+  if (!id || !pw) throw new Error('아이디와 비밀번호를 입력해 주세요.');
+  if (jobBusy()) throw new Error('작업이 진행 중이에요. 끝난 뒤 다시 해 주세요.');
+  const gw = gwFor(false);
+  if (await gw.loginNeeded()) {
+    if (!(await gw.autoLogin(id, pw))) return { loggedIn: false, error: '로그인에 실패했어요. 아이디·비밀번호를 확인하거나 [그룹웨어 창에서 직접 로그인]을 써 주세요.' };
+  }
+  let note = '';
+  if (save) {
+    if (safeStorage.isEncryptionAvailable()) { store.saveConfig({ gwId: id, gwPwEnc: safeStorage.encryptString(pw).toString('base64') }); sessionCreds = null; }
+    else { sessionCreds = { id, pw }; note = '이 PC는 보안 저장소를 쓸 수 없어서 앱을 끄면 잊어버려요.'; }
+  } else sessionCreds = { id, pw };
+  return { loggedIn: true, saved: Boolean(save && !note), note };
 }
 
 // ---------- AI 키 (OS 보안 저장소로 암호화) ----------
@@ -120,7 +158,7 @@ function aiSettings(cfg) {
 function encryptKey(key) {
   return (safeStorage.isEncryptionAvailable() ? safeStorage.encryptString(key) : Buffer.from(key, 'utf8')).toString('base64');
 }
-const publicConfig = c => { const { aiKeyEnc, ...rest } = c; return { ...rest, aiKeySet: Boolean(aiKeyEnc) }; };
+const publicConfig = c => { const { aiKeyEnc, gwPwEnc, ...rest } = c; return { ...rest, aiKeySet: Boolean(aiKeyEnc), gwSaved: Boolean(c.gwId && gwPwEnc) }; };
 
 /** 한 줄 메모 → 신청서. AI 가 있으면 문장/추론은 AI, 금액·출장지 이름은 항상 규칙. */
 async function quick(memo) {
@@ -214,6 +252,10 @@ async function route(p, body = {}) {
     case '/api/update/install': return { restarting: updater.install() };
     case '/api/copy': clipboard.writeText(String(body.text || '')); return { ok: true };
     case '/api/open': if (body.path) shell.openPath(body.path); return { ok: true };
+    case '/api/gw/status': return gwStatus();
+    case '/api/gw/login': return gwLogin(body);
+    case '/api/gw/forget': sessionCreds = null; store.saveConfig({ gwId: '', gwPwEnc: '' }); return { ok: true };
+    case '/api/gw/show': gwWindow(true).focus(); return { ok: true };
     case '/api/job/login': return startJob('login', env => runner.runLogin(env), body.title);
     case '/api/job/fare': return startJob('fare', env => runner.runFare({ ...env, force: Boolean(body.force) }, body), body.title);
     case '/api/job/apply': runner.planApply(body.data, cfg); return startJob('apply', env => runner.runApply(env, body.data, { save: body.save !== false }), body.title);

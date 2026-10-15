@@ -32,13 +32,9 @@ app.whenReady().then(async () => {
       if (gw && !gw.isDestroyed()) return gw;
       gw = new BrowserWindow({ width: 1400, height: 950, show: true, webPreferences: { partition: 'e2e-' + Date.now() } });
       gw.webContents.setWindowOpenHandler(() => ({ action: 'allow' }));
-      // 사람이 로그인하는 것을 흉내: 로그인 화면이 뜨면 잠시 후 로그인 처리
-      gw.webContents.on('did-navigate-in-page', (_e, u) => {
-        if (u.includes('#/login')) setTimeout(() => gw.webContents.executeJavaScript("localStorage.auth=1; location.hash='#/main'"), 800);
-      });
       return gw;
     };
-    const env = { cfg: store.config(), store, ui, log: m => { ui.info(m); console.log('  ·', m); }, gwWindow, makeNaverWindow: () => { throw new Error('no naver'); } };
+    const env = { cfg: store.config(), store, ui, log: m => { ui.info(m); console.log('  ·', m); }, gwWindow, makeNaverWindow: () => { throw new Error('no naver'); }, creds: () => ({ id: 'tester', pw: 'pw1234' }) };
 
     const data = {
       reason: '판교 AI 사무소 RBY1-Muscat 연동 검증', destination: '레인보우로보틱스 판교 AI 사무소',
@@ -47,6 +43,15 @@ app.whenReady().then(async () => {
       purpose: 'SDK 래핑 및 실기 검증\n두번째 줄',
       expenses: [{ item: 'domestic_lodging', amount: 160000 }, { item: 'meal', amount: 90000, memo: '판교 출장 식대' }],
     };
+    // 자동 로그인: 틀린 비밀번호는 실패, 맞으면 성공
+    {
+      const { Amaranth } = require('../src/engine/gw');
+      const g = new Amaranth({ win: gwWindow(), baseUrl: url, ui, log: () => {} });
+      assert.equal(await g.loginNeeded(), true);
+      assert.equal(await g.autoLogin('tester', 'wrong'), false);
+      await gw.webContents.executeJavaScript("location.reload()"); await new Promise(r => setTimeout(r, 1500));
+      console.log('  자동 로그인 실패 케이스 OK');
+    }
     const t0 = Date.now();
     const { id } = await runner.runApply(env, data);
     console.log(`  runApply ${((Date.now() - t0) / 1000).toFixed(1)}s, id=${id}`);

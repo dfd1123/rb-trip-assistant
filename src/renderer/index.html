@@ -17,7 +17,14 @@
 body{margin:0;background:var(--bg);color:var(--ink);font-size:14px;line-height:1.5}
 header{background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
 .bar{max-width:1080px;margin:0 auto;padding:0 20px;display:flex;align-items:center;gap:28px;height:60px}
-.ver{margin-left:auto;color:var(--muted);font-size:12px}
+.gwpill{margin-left:auto;display:flex;align-items:center;gap:6px;border:1px solid var(--line);background:#fff;border-radius:999px;padding:4px 12px;font:inherit;font-size:12px;color:var(--muted);cursor:pointer}
+.gwpill i{width:8px;height:8px;border-radius:50%;background:#c4c9d2}
+.gwpill.ok i{background:#22a06b} .gwpill.bad{border-color:#f0b37e;color:#b45309} .gwpill.bad i{background:#f59e0b}
+#loginModal{position:fixed;inset:0;background:rgba(15,23,42,.35);display:none;align-items:center;justify-content:center;z-index:50}
+#loginModal.on{display:flex}
+#loginModal .box{background:#fff;border-radius:14px;padding:24px;width:380px;max-width:calc(100vw - 32px);box-shadow:0 20px 50px rgba(0,0,0,.2)}
+#loginModal h2{margin:0 0 4px} #loginModal input{margin-top:10px}
+.ver{color:var(--muted);font-size:12px}
 .brand{display:flex;align-items:center;gap:8px}
 .brand img{height:34px;display:block}
 .brand b{display:block;font-size:17px;color:#16365f;letter-spacing:-.3px;line-height:1.1}
@@ -103,7 +110,8 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
     <button data-tab="trips">내 출장 · 보고서</button>
     <button data-tab="settings">설정</button>
   </nav>
-  <span class="ver" id="ver"></span>
+  <button class="gwpill" id="gwPill" title="그룹웨어 로그인 상태"><i></i><span>그룹웨어 확인 중</span></button>
+  <span class="ver" id="ver" style="margin-left:0"></span>
 </div></header>
 
 <div id="updBar" class="hidden" style="background:#e8f3fb;border-bottom:1px solid #cfe3f2;font-size:13px">
@@ -255,15 +263,22 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
 <!-- ================= 설정 ================= -->
 <section id="tab-settings" class="hidden">
   <div class="card" style="max-width:780px">
-    <h2>내 설정</h2><p class="sub">이 PC에만 저장돼요. 비밀번호는 저장하지 않습니다.</p>
+    <h2>내 설정</h2><p class="sub">이 PC에만 저장돼요.</p>
     <div class="row"><label>이름</label><input id="s_name"></div>
     <div class="row"><label>예산 부서</label><input id="s_dept" placeholder="사업코드도움에서 고르는 이름"></div>
     <div class="row"><label>기본 출발지</label><input id="s_origin"></div>
     <div class="inline" style="justify-content:flex-end;gap:8px;margin-top:12px">
       <span class="fare" id="s_msg"></span>
-      <button class="btn" id="btnLogin">그룹웨어 로그인 확인</button>
       <button class="btn primary" id="btnSave">저장</button>
     </div>
+  </div>
+  <div class="card" style="max-width:780px">
+    <h2>그룹웨어 계정</h2>
+    <p class="sub">저장해 두면 앱을 켤 때·입력할 때 로그인이 풀려 있으면 알아서 로그인해요. 비밀번호는 이 PC의 OS 보안 저장소(macOS 키체인 등)로 암호화돼 저장되고 밖으로 나가지 않아요.</p>
+    <div class="inline" style="gap:8px"><span id="s_gw" style="flex:1;color:var(--muted)"></span>
+      <button class="btn" id="btnGwLogin">계정 입력 / 로그인</button>
+      <button class="btn" id="btnGwForget">저장된 계정 삭제</button>
+      <button class="btn" id="btnLogin">그룹웨어 창에서 직접 로그인</button></div>
   </div>
   <div class="card" style="max-width:780px">
     <h2>AI 문장 작성 (선택)</h2>
@@ -305,6 +320,19 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
     <div class="inline"><input id="jobInput" inputmode="numeric" class="hidden" placeholder="숫자 입력">
       <button class="btn" id="jobNo">아니오</button><button class="btn primary" id="jobYes">계속</button></div></div>
 </div>
+
+<div id="loginModal"><form class="box" id="loginForm" autocomplete="off">
+  <h2>그룹웨어 로그인</h2>
+  <p class="sub" id="lg_sub" style="margin:0">아마란스 로그인이 필요해요. 입력하면 앱이 대신 로그인해요.</p>
+  <input id="lg_id" placeholder="아이디" autocomplete="username">
+  <input id="lg_pw" type="password" placeholder="비밀번호" autocomplete="current-password">
+  <label class="inline" style="margin:10px 0 0;font-size:13px;color:var(--muted)"><input type="checkbox" id="lg_save" checked style="width:auto;margin:0"> 이 PC에 저장해서 다음부터 자동 로그인 (암호화)</label>
+  <div class="err" id="lg_err"></div>
+  <button class="btn primary" id="lg_ok" style="width:100%;margin-top:12px">로그인</button>
+  <div class="inline" style="justify-content:space-between;margin-top:8px">
+    <button type="button" class="btn small" id="lg_manual">그룹웨어 창에서 직접 로그인</button>
+    <button type="button" class="btn small" id="lg_close">나중에</button></div>
+</form></div>
 
 <script src="app.js"></script>
 </body>

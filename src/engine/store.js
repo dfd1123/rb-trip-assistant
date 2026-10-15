@@ -14,6 +14,8 @@ const DEFAULT_CONFIG = {
   aiProvider: '',          // '' | anthropic | openai | gemini
   aiModel: '',
   aiKeyEnc: '',            // OS 보안 저장소로 암호화된 개인 API 키
+  gwId: '',                // 그룹웨어 아이디 (자동 로그인)
+  gwPwEnc: '',             // OS 보안 저장소로 암호화된 그룹웨어 비밀번호
 };
 
 // 처음부터 알고 있는 출장지 (이후엔 신청 기록에서 자동으로 늘어남)

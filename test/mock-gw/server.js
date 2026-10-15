@@ -20,9 +20,18 @@ input.rg-editor{position:absolute;left:0;top:0;width:100%;height:100%;box-sizing
 </style></head><body><div id="app"></div><script>
 const $=s=>document.querySelector(s);
 function route(){
-  if(!localStorage.auth){ if(location.hash!=='#/login') location.hash='#/login'; $('#app').innerHTML='<h1>로그인</h1>'; return; }
+  if(!localStorage.auth){ if(location.hash!=='#/login') location.hash='#/login'; return loginPage(); }
   if(location.hash.startsWith('#/HP/NPC1023/NCA0018')) return budget();
   $('#app').innerHTML='<h1>일정 HOME</h1>';
+}
+// 로그인: 아이디 → [다음] → 비밀번호 (두 단계). 테스트 계정 tester / pw1234
+function loginPage(){
+  $('#app').innerHTML='<h1>로그인</h1><div id="lg"><input type="text" id="uid" placeholder="아이디"> <button id="next">다음</button></div><p id="lgerr"></p>';
+  $('#next').onclick=()=>{ const id=$('#uid').value; if(!id) return;
+    $('#lg').innerHTML='<span>'+id+'</span> <input type="password" id="upw" placeholder="비밀번호">';
+    $('#upw').addEventListener('keydown',e=>{ if(e.key!=='Enter') return;
+      if(id==='tester'&&e.target.value==='pw1234'){ localStorage.auth=1; location.hash='#/main'; } else $('#lgerr').textContent='비밀번호가 틀렸습니다'; }); };
+  $('#uid').addEventListener('keydown',e=>{ if(e.key==='Enter') $('#next').click(); });
 }
 window.addEventListener('hashchange', route);
 const TOP=['품의연월','품의일','순번','품의구분','적요','총금액','결재상태','문서번호'], BOT=['부서','예산과목','품의금액','적요','첨부파일'];
