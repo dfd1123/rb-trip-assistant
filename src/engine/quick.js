@@ -186,8 +186,8 @@ function computeExpenses({ start, end, startTime = '', endTime = '', reason, rat
   const mealTotal = plan.reduce((s, p) => s + p.meals.reduce((a, m) => a + rates[m], 0), 0);
   const counts = MEALS.map(([k, ko]) => [ko, plan.filter(p => p.meals.includes(k)).length]).filter(([, n]) => n);
   const out = [];
-  if (nights > 0) out.push({ item: 'domestic_lodging', amount: rates.lodgingPerNight * nights, memo: `${reason} 출장 숙박비 (${nights}박 × ${rates.lodgingPerNight.toLocaleString('ko-KR')}원)` });
-  if (mealTotal > 0) out.push({ item: 'meal', amount: mealTotal, memo: `${reason} 출장 식대 (${counts.map(([ko, n]) => `${ko} ${n}회`).join(', ')})` });
+  if (nights > 0) out.push({ item: 'domestic_lodging', amount: rates.lodgingPerNight * nights, memo: `출장 숙박비 (${nights}박 × ${rates.lodgingPerNight.toLocaleString('ko-KR')}원)` });
+  if (mealTotal > 0) out.push({ item: 'meal', amount: mealTotal, memo: `출장 식대 (${counts.map(([ko, n]) => `${ko} ${n}회`).join(', ')})` });
   return { expenses: out, plan, summary: mealSummary(plan), timed: Boolean(startTime || endTime) };
 }
 

@@ -35,7 +35,7 @@ test('신청서 검증과 기본 적요', () => {
     transport: { mode: 'car', to: '판교' }, purpose: '목적', expenses: [{ item: 'meal', amount: '90,000원' }] });
   assert.equal(a.period, '2026.10.20 - 2026.10.22');
   assert.equal(a.expenses[0].amount, 90000);
-  assert.equal(a.expenses[0].memo, '판교 출장 출장 식대');
+  assert.equal(a.expenses[0].memo, '출장 식대');
   assert.equal(a.expenses[0].code, '8120004');
   assert.deepEqual(a.transport.check, ['자차']);
   assert.throws(() => R.parseApply({ ...a, dates: { start: '2026-10-22', end: '2026-10-20' } }), R.InputError);

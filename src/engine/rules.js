@@ -94,7 +94,7 @@ function parseExpenses(rows, where = 'expenses', reason = '') {
     const w = `${where}[${i + 1}]`;
     const item = req(r, 'item', w);
     if (!BUDGET_ITEMS[item]) throw new InputError(`${w}: 알 수 없는 item '${item}'. 가능: ${Object.keys(BUDGET_ITEMS).join(', ')}`);
-    const memo = String(r.memo || '').trim() || `${reason} 출장 ${shortLabel(item)}`;
+    const memo = String(r.memo || '').trim() || `출장 ${shortLabel(item)}`;
     return { item, amount: amount(req(r, 'amount', w), w), memo, code: BUDGET_ITEMS[item][0], label: BUDGET_ITEMS[item][1] };
   });
 }
@@ -156,7 +156,7 @@ function parseReport(data) {
 }
 
 function transportExpense(a, total) {
-  const memo = a.transport.mode === 'car' ? `${a.reason} 출장 유류비 및 통행료 (왕복)` : `${a.reason} 출장 대중교통비 (왕복)`;
+  const memo = a.transport.mode === 'car' ? `출장 유류비 및 통행료 (왕복)` : `출장 대중교통비 (왕복)`;
   return { item: 'domestic_transport', amount: total, memo, code: BUDGET_ITEMS.domestic_transport[0], label: BUDGET_ITEMS.domestic_transport[1] };
 }
 
@@ -192,8 +192,8 @@ companion_purpose: ""
 purpose: |
   판교 AI 연구소의 RBY1 로봇과 Muscat 플랫폼의 정식 연동을 위해 ...
 expenses:
-  - {item: domestic_lodging, amount: 280000, memo: 판교 AI 사무소 출장 숙박비}
-  - {item: meal, amount: 190000, memo: 판교 AI 사무소 출장 식대}
+  - {item: domestic_lodging, amount: 140000, memo: 출장 숙박비 (2박 × 70,000원)}
+  - {item: meal, amount: 106000, memo: 출장 식대 (아침 2회, 점심 3회, 저녁 3회)}
 \`\`\`
 
 [메모]
