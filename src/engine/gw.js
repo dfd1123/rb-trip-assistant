@@ -861,8 +861,10 @@ class Amaranth {
     if (norm(((await this.rowVals(gridHdr, row)) || {})[col] || '').includes(norm(want))) return;   // 이미 그 값이면 건드리지 않음
     await p.dblclick(await this.cellPoint(gridHdr, row, col));
     await sleep(500);
-    const opt = await p.waitFor(k => { const el = all('.rg-dropdown-item').find(e => vis(e) && norm(e.textContent).replace(/^\d+\./, '') === k); return el ? center(el) : null; }, [want], { timeout: 3000 });
-    if (!opt) throw new Error(`'${want}' 항목이 안 보임`);
+    // 목록 항목: "3.외상" 처럼 번호가 붙은 글자. 클래스(.rg-dropdown-item 등)에 기대지 않고 글자로 찾는다 — 가장 안쪽 요소
+    const opt = await p.waitFor(k => { const cand = all('.rg-dropdown-item, li, [role=option], div, span').filter(e => vis(e) && /^\d+\./.test(norm(e.textContent)) && norm(e.textContent).replace(/^\d+\./, '') === k);
+      const el = cand.find(e => !cand.some(o => o !== e && e.contains(o))); return el ? center(el) : null; }, [want], { timeout: 5000 });
+    if (!opt) { await this.debugDump(`dropdown-${norm(col)}`, '결의서전송'); throw new Error(`'${want}' 항목이 안 보임`); }
     await p.click(opt); await sleep(400);
     const got = String(((await this.rowVals(gridHdr, row)) || {})[col] || '');
     if (!norm(got).includes(norm(want))) throw new Error(`${col} 칸이 '${got || '빈칸'}'`);
