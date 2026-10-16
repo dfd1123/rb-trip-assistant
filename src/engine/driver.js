@@ -228,30 +228,6 @@ class Page {
     };
   }
 
-  /** 클릭하면 파일 선택 창이 뜨는 곳에 파일 넣기: 선택 창을 가로채서(CDP) 그 입력칸에 바로 넣는다. 창이 안 떴으면 false
-   *  click: 선택 창을 띄우는 동작 (async) */
-  async withFileChooser(files, click, timeout = 3000) {
-    const dbg = this.wc.debugger;
-    const attached = dbg.isAttached();
-    if (!attached) dbg.attach('1.3');
-    let hit = null;
-    const onMsg = (_e, method, params) => { if (method === 'Page.fileChooserOpened') hit = params; };
-    dbg.on('message', onMsg);
-    try {
-      await dbg.sendCommand('Page.enable');
-      await dbg.sendCommand('Page.setInterceptFileChooserDialog', { enabled: true });
-      await click();
-      const end = Date.now() + timeout;
-      while (!hit && Date.now() < end) await sleep(100);
-      if (hit && hit.backendNodeId) await dbg.sendCommand('DOM.setFileInputFiles', { files, backendNodeId: hit.backendNodeId });
-      return !!hit;
-    } finally {
-      dbg.removeListener('message', onMsg);
-      try { await dbg.sendCommand('Page.setInterceptFileChooserDialog', { enabled: false }); } catch (e) { /* */ }
-      if (!attached) dbg.detach();
-    }
-  }
-
   /** <input type=file> 에 파일 넣기 (CDP) */
   async setFiles(selector, files) {
     const dbg = this.wc.debugger;

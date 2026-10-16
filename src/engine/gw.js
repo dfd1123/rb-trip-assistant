@@ -9,7 +9,7 @@ const { FILL_JS, FIND_JS } = require('./editorFill');
 
 const BUDGET_PATH = '/#/HP/NPC1023/NCA0018';
 const APPROVE_PATH = '/#/HP/NPC1025/NCA0019';   // 품의서승인(복수): 승인된 품의 → [결의서전송/취소]
-const { capToBudget, planPayees } = require('./rules');
+const { capToBudget, planPayees, PAY_MODES } = require('./rules');
 const popupsOf = new WeakMap();   // 그룹웨어 창 → 그 창에서 열린 작성 팝업들
 const norm = s => String(s || '').replace(/\s/g, '');
 const amountOf = s => Number(String(s || '').replace(/[^\d]/g, '')) || 0;
@@ -924,7 +924,12 @@ class Amaranth {
     const { plan, left } = planPayees(budgets, lines);   // 같은 예산과목 영수증 여러 장 = 그 예산 줄 아래 채주 여러 줄 (식대 4일치 등)
     for (const pb of plan) {
       if (!pb.lines.length) { this.log(`${pb.label}: 쓴 돈 없음 → 환원으로 전액 돌려줌`); continue; }
-      this.log(`${pb.label}: 영수증 ${pb.lines.length}건`);   // 예산내역(결제수단·과세구분 등)은 신청 품의 그대로 — 건드리지 않고 줄만 선택
+      const pays = [...new Set(pb.lines.map(l => l.pay || 'personal'))];
+      if (pays.length > 1) await ui.assist(`${pb.label} 에 개인경비와 법인카드가 섞여 있어요. 예산 줄 하나엔 결제수단 하나만 돼요. 그룹웨어에서 직접 나눠 넣고 [계속]을 눌러 주세요.`);
+      const mode = PAY_MODES[pays[0]] || PAY_MODES.personal;
+      this.log(`${pb.label}: ${mode.method}·${mode.tax}, 영수증 ${pb.lines.length}건`);
+      try { await this.pickDropdown('결제수단', pb.index, '결제수단', mode.method); } catch (e) { await ui.assist(`결제수단 선택 실패(${e.message}). ${pb.label} 예산 줄 결제수단을 '${mode.method}'로 골라 주세요.`); }
+      try { await this.pickDropdown('결제수단', pb.index, '과세구분', mode.tax); } catch (e) { await ui.assist(`과세구분 선택 실패(${e.message}). ${pb.label} 예산 줄 과세구분을 '${mode.tax}'로 골라 주세요.`); }
       pb.lines.filter(l => l.cut).forEach(l => this.log(`  ${l.memo || pb.label}: 품의 한도 ${pb.limit.toLocaleString('ko-KR')}원이라 ${l.cut.toLocaleString('ko-KR')}원 깎아 ${l.amount.toLocaleString('ko-KR')}원만 청구`));
       if (pb.dropped) this.log(`  한도를 다 써서 영수증 ${pb.dropped}건은 청구에서 뺐어요 (증빙은 보고서에 그대로 첨부)`);
       await this.selectBudgetRow(pb.index, pb.label);   // 이 예산 줄 선택 → 아래 채주내역이 이 줄 것 (선택 확인까지)
@@ -1015,16 +1020,14 @@ class Amaranth {
     try {
       const before = await dlgCount();
       const pt = await this.revealCell(G, k, '첨부파일');
-      const direct = await p.withFileChooser([file], () => p.click(pt));
-      if (direct) { await sleep(1500); this.log(`  첨부: ${name} (파일 선택 창)`); }
-      else {
+      await p.click(pt);   // 첨부파일 칸 → 파일업로드 창 (실제 화면 확인)
+      {
         await sleep(800);
         if ((await dlgCount()) <= before) throw new Error('첨부 창이 안 열림');
         await this.debugDump('attach-popup', '첨부|파일');
-        // 파일업로드 창: 📎(input.btnNemo.btn_fileAdd, title=첨부파일)을 누르면 파일 선택 창 → 가로채서 넣는다. 안 되면 그 버튼의 숨은 파일칸에 직접
-        const clip = await p.eval(() => { const d = dialog('파일업로드') || document; const b = all('input.btnNemo.btn_fileAdd, [title=첨부파일]', d).filter(vis).pop(); return b ? center(b) : null; });
-        let put = clip ? await p.withFileChooser([file], () => p.click(clip)) : false;
-        if (!put) {
+        // 파일업로드 창: 📎 버튼은 누르지 않는다 — 숨은 창에서 OS 파일 선택 창이 안 보이게 떠서 그 뒤 모든 입력이 막혔다.
+        // 대신 📎 의 숨은 파일칸(input[type=file].btn_fileAdd)에 파일을 직접 넣는다 (이 방법으로 실제 업로드됨)
+        {
           const marked = await p.eval(() => { const d = dialog('파일업로드') || document; const el = all('input[type=file].btn_fileAdd', d)[0] || all('input[type=file]', d)[0]; if (!el) return false;
             all('[data-ta-file]').forEach(x => x.removeAttribute('data-ta-file')); el.setAttribute('data-ta-file', '1'); return true; });
           if (!marked) throw new Error('파일업로드 창에서 파일 넣는 곳을 못 찾음');

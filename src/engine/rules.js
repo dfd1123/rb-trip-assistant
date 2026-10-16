@@ -181,6 +181,8 @@ function parseReport(data) {
 
 // ---------- 결의서전송(지출결의) 규칙 ----------
 const FUNDS = ['일반경비', '제조경비'];
+/** 결제수단별 예산 줄 결제수단·과세구분: 개인경비 = 외상+기타, 법인카드 = 신용카드+과세 (사용자 설명, 2026-10-16 재확인) */
+const PAY_MODES = { personal: { method: '외상', tax: '기타' }, card: { method: '신용카드', tax: '과세' } };
 const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 // 공휴일 (주말 아닌 날만 의미 있음). ponytail: 2026~2027 목록만 — 해가 바뀌면 여기에 추가 (음력 명절·대체공휴일·선거일은 해마다 다름)
 const HOLIDAYS = new Set([
@@ -298,5 +300,5 @@ module.exports = {
   APPLY_FORM, REPORT_FORM, BUDGET_ITEMS, TRANSPORT_MODES, CORPORATE_CARS, APPLY_CATEGORIES, REPORT_CATEGORIES,
   InputError, ro, applyTitle, reportTitle, budgetMemo, parseCarText, parseTransitText, roundTrip,
   parseApply, parseReport, parseExpenses, transportExpense, applyPrompt, reportPrompt, extractYaml,
-  FUNDS, fundPlanDate, supplyAmount, capToBudget, planPayees,
+  FUNDS, PAY_MODES, fundPlanDate, supplyAmount, capToBudget, planPayees,
 };
