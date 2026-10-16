@@ -53,7 +53,7 @@ test('AI 답변에서 YAML 꺼내기 (날짜는 문자열로)', () => {
 });
 
 test('보고서: 정부과제는 과제명 필수', () => {
-  const base = { reason: 'r', name: 'n', period: 'p', destination: 'd', purpose: 'p', report: 'r', schedule: [{ date: '10/20', place: 'x', detail: '점검' }], expenses: [{ item: 'meal', amount: 1000, proofs: ['/tmp/영수증.jpg'] }] };
+  const base = { reason: 'r', name: 'n', fund: '일반경비', period: 'p', destination: 'd', purpose: 'p', report: 'r', schedule: [{ date: '10/20', place: 'x', detail: '점검' }], expenses: [{ item: 'meal', amount: 1000, proofs: ['/tmp/영수증.jpg'] }] };
   assert.throws(() => R.parseReport({ ...base, category: '정부과제' }), /과제명/);
   assert.equal(R.parseReport({ ...base, category: '로봇' }).category, '로봇');
   assert.throws(() => R.parseReport({ ...base, schedule: [{ date: '10/20', place: 'x', detail: '' }] }), /세부 활동/);   // 세부 활동 내용 필수
@@ -194,9 +194,9 @@ test('신청 직전 교통비 필수 (자차·대중교통)', () => {
   const { planApply } = require('../src/engine/runner');
   const base = { reason: 'x', destination: 'y', dates: { start: '2026-10-20', end: '2026-10-20', start_time: '09:00', end_time: '18:00' }, purpose: 'p' };
   assert.throws(() => planApply({ ...base, transport: { mode: 'car', to: '판교' } }, { budgetDept: 'x' }), /교통비는 필수/);
-  assert.throws(() => planApply({ ...base, transport: { mode: 'transit', to: '판교', total: 0 } }, { budgetDept: 'x' }), /교통비는 필수/);
+  assert.ok(planApply({ ...base, transport: { mode: 'transit', to: '판교', total: 0 } }, { budgetDept: 'x' }));   // 0원도 입력으로 인정
   assert.ok(planApply({ ...base, transport: { mode: 'car', to: '판교', total: 74814 } }, { budgetDept: 'x' }).transport.total === 74814);
-  assert.ok(planApply({ ...base, transport: { mode: 'corporate' } }, { budgetDept: 'x' }));
+  assert.ok(planApply({ ...base, transport: { mode: 'corporate' }, expenses: [{ item: 'meal', amount: 9000 }] }, { budgetDept: 'x' }));
 });
 
 test('품의 적요', () => {
@@ -237,4 +237,72 @@ test('신청 교통비 여유분: 자차·대중교통만 +2만원', () => {
   assert.equal(R.transportExpense(t('transit'), 37000, 20000).amount, 57000);
   assert.equal(R.transportExpense(t('corporate'), 0, 20000).amount, 0);
   assert.equal(R.transportExpense(t('car'), 54528).amount, 54528);
+});
+
+test('동행자가 있으면 동행목적 필수', () => {
+  const base = { reason: 'x', destination: 'y', dates: { start: '2026-10-20', end: '2026-10-20', start_time: '09:00', end_time: '18:00' }, purpose: 'p', transport: { mode: 'car', to: 'z', total: 1000 } };
+  assert.throws(() => R.parseApply({ ...base, companions: ['홍길동'] }), /동행목적/);
+  assert.equal(R.parseApply({ ...base, companions: ['홍길동'], companion_purpose: '셋업 지원' }).companion_purpose, '셋업 지원');
+  assert.equal(R.parseApply(base).companions.length, 0);   // 동행자 없으면 비워도 됨
+});
+
+test('네이버 지도 장소 → 출장지 이름·주소', () => {
+  const { parsePlace } = require('../src/engine/naver');
+  assert.deepEqual(parsePlace('장소\n항공기제조업\n한국항공우주산업\n경남 사천시 사남면 공단1로 78 한국항공우주산업'), { name: '한국항공우주산업', address: '경남 사천시 사남면 공단1로 78' });
+  assert.deepEqual(parsePlace('장소\n기업,빌딩\n텔레칩스 판교사옥\n경기 성남시 수정구 금토로80번길 27'), { name: '텔레칩스 판교사옥', address: '경기 성남시 수정구 금토로80번길 27' });
+  assert.equal(parsePlace('검색어\n판교 텔레칩스'), null);
+});
+
+test('교통비·경비 0원 허용, 비운 교통비만 막음', () => {
+  const { planApply } = require('../src/engine/runner');
+  const cfg = { budgetDept: 'D', defaultOrigin: 'o' };
+  const base = { reason: 'x', destination: 'y', dates: { start: '2026-10-20', end: '2026-10-20', start_time: '09:00', end_time: '18:00' }, purpose: 'p' };
+  assert.ok(planApply({ ...base, transport: { mode: 'transit', to: 'z', total: 0 }, expenses: [{ item: 'meal', amount: 9000 }] }, cfg));
+  assert.ok(planApply({ ...base, transport: { mode: 'transit', to: 'z', total: 0 }, expenses: [{ item: 'meal', amount: 0 }] }, cfg));   // 전부 0원도 사용자가 넣은 그대로
+  assert.throws(() => planApply({ ...base, transport: { mode: 'transit', to: 'z' }, expenses: [{ item: 'meal', amount: 9000 }] }, cfg), /교통비는 필수/);
+});
+
+test('결의서전송 규칙: 자금계획일 · 공급가액', () => {
+  const d = s => new Date(`${s}T09:00:00`);
+  assert.equal(R.fundPlanDate('personal', { today: d('2026-10-16') }), '2026-10-20');   // 10~19일 → 20일(화)
+  assert.equal(R.fundPlanDate('personal', { today: d('2026-10-05') }), '2026-10-08');   // 1~9일 → 10일(토) → 9일 한글날 → 8일(목)
+  assert.equal(R.fundPlanDate('personal', { today: d('2026-10-20') }), '2026-10-23');   // 20~24일 → 25일(일) → 23일(금)
+  assert.equal(R.fundPlanDate('personal', { today: d('2026-10-25') }), '2026-11-10');   // 25일~ → 다음 달 10일(화)
+  assert.equal(R.fundPlanDate('personal', { today: d('2026-12-28') }), '2027-01-08');   // 2027-01-10(일) → 8일(금)
+  assert.equal(R.fundPlanDate('personal', { today: d('2026-06-15') }), '2026-06-19');   // 6/20(토) → 19일(금)
+  assert.equal(R.fundPlanDate('card', { today: d('2026-11-03'), usedOn: '2026-10-02' }), '2026-11-23');
+  assert.equal(R.fundPlanDate('card', { today: d('2026-12-05') }), '2027-01-23');
+  assert.equal(R.supplyAmount(11000, 'card'), 10000);
+  assert.equal(R.supplyAmount(11000, 'personal'), 11000);
+});
+
+test('정산은 품의 금액까지만', () => {
+  const l = (amount, pay = 'personal') => ({ amount, pay });
+  assert.deepEqual(R.capToBudget([l(79000)], 60000).map(x => [x.supply, x.cut]), [[60000, 19000]]);
+  assert.deepEqual(R.capToBudget([l(40000), l(40000), l(10000)], 60000).map(x => [x.amount, x.cut]), [[40000, 0], [20000, 20000]]);
+  assert.deepEqual(R.capToBudget([l(15000)], 190000).map(x => x.supply), [15000]);
+  assert.deepEqual(R.capToBudget([l(110000, 'card')], 66000).map(x => [x.amount, x.supply]), [[66000, 60000]]);   // 법인카드: 합계 66,000 = 공급 60,000 + 부가세 6,000
+});
+
+test('식대 여러 번(4일 출장): 예산 줄 하나 아래 채주 여러 줄, 한도까지', () => {
+  const budgets = [
+    { 예산과목: '여비교통비(판)_국내교통비', 품의금액: '60,000', 미지출액: '60,000' },
+    { 예산과목: '여비교통비(판)_국내숙박비', 품의금액: '280,000', 미지출액: '280,000' },
+    { 예산과목: '여비교통비(판)_식대', 품의금액: '190,000', 미지출액: '190,000' },
+  ];
+  const meal = (memo, amount) => ({ label: '여비교통비(판)_식대', pay: 'personal', amount, supply: amount, memo });
+  const lines = [
+    { label: '여비교통비(판)_국내교통비', pay: 'personal', amount: 79000, supply: 79000, memo: '10/2 주유비' },
+    meal('9/27 1인 석식', 15000), meal('9/28 1인 조식', 9000), meal('9/28 1인 중식', 12000), meal('9/28 1인 석식', 18000),
+    meal('9/29 1인 조식', 9000), meal('9/29 1인 중식', 11000), meal('9/29 1인 석식', 20000), meal('9/30 1인 조식', 8000),
+  ];
+  const { plan, left } = R.planPayees(budgets, lines);
+  assert.equal(left.length, 0);
+  assert.deepEqual(plan.map(x => x.lines.length), [1, 0, 8]);            // 식대 영수증 8장 → 식대 예산 줄 아래 채주 8줄
+  assert.equal(plan[2].lines.reduce((s, l) => s + l.supply, 0), 102000);   // 한도 190,000 안이라 그대로
+  assert.equal(plan[0].lines[0].supply, 60000);                            // 교통비는 품의 60,000 까지
+  // 한도를 넘으면 뒤 영수증부터 깎이고 빠진다
+  const tight = R.planPayees([{ ...budgets[2], 미지출액: '30,000' }], lines.slice(1)).plan[0];
+  assert.deepEqual(tight.lines.map(l => l.supply), [15000, 9000, 6000]);
+  assert.equal(tight.dropped, 5);
 });

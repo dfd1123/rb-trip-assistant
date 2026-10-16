@@ -32,8 +32,18 @@ function expRow(tbody, e={}, onchange){
   const opts = Object.entries(META.items).filter(([k]) => tid!=='a_exp' || k!=='domestic_transport')
     .map(([k,v]) => `<option value="${k}">${v.replace('여비교통비(판)_','')}</option>`).join('');
   const proofCell = tid === 'r_exp' ? '<td class="proof"><button class="btn small add">+ 증빙 첨부</button><div class="files"></div></td>' : '';
-  tr.innerHTML = `<td><select>${opts}</select></td><td><input inputmode="numeric"></td><td><input placeholder="비우면 자동"></td>${proofCell}<td><button class="btn small del">✕</button></td>`;
-  const [sel, amt, memo] = tr.querySelectorAll('select,input');
+  const payCell = tid === 'r_exp' ? '<td><select class="pay"><option value="personal">개인</option><option value="card">법인카드</option></select></td>' : '';   // 결제: 법인카드면 공급가액 = 합계 − 부가세, 법인카드는 자금계획일이 익월 23일
+  tr.innerHTML = `<td><select class="item">${opts}</select></td><td><input class="amt" inputmode="numeric"></td>${payCell}<td>${tid === 'r_exp' ? '<div class="memo-wrap"><span class="ppl-box"><input class="ppl" inputmode="numeric" title="몇 명이 먹었는지 (설정의 식대 기준과 가격으로 짐작해 넣어요)">명</span><input class="memo" placeholder="날짜·내용 (예: 9/28 1인 석식)"></div>' : '<input class="memo" placeholder="비우면 자동">'}</td>${proofCell}<td><button class="btn small del">✕</button></td>`;
+  const sel = tr.querySelector('.item'), amt = tr.querySelector('.amt'), memo = tr.querySelector('.memo'), pay = tr.querySelector('.pay');
+  if(pay){ pay.value = e.pay || 'personal'; pay.onchange = onchange; }
+  const ppl = tr.querySelector('.ppl');
+  if(ppl){   // 식대 인원: 적요의 "N인"과 같이 움직인다. 비어 있으면 금액으로 짐작
+    const box = tr.querySelector('.ppl-box');
+    const show = () => box.classList.toggle('hidden', sel.value !== 'meal');
+    ppl.value = e.people || '';
+    ppl.oninput = () => { ppl.value = ppl.value.replace(/[^\d]/g, '').slice(0, 2); if(ppl.value) memo.value = withPeople(memo.value, Number(ppl.value)); };
+    sel.addEventListener('change', show); show();
+  }
   if(proofCell){   // 정산 경비 증빙: 줄마다 1개 이상, 전부 보고서 첨부로 올라감
     let proofs = (e.proofs || []).slice(0, 1);   // 경비 한 줄에 증빙 1개
     const draw = () => {
@@ -48,23 +58,45 @@ function expRow(tbody, e={}, onchange){
       tr.dataset.proofs = JSON.stringify(proofs);
       const add = tr.querySelector('.add'); add.classList.toggle('hidden', proofs.length > 0); add.classList.toggle('need', !proofs.length && num(amt.value) > 0);
     };
-    tr.querySelector('.add').onclick = async () => { const {paths} = await rpc('/api/pick-proofs'); if(paths.length){ proofs = [paths[0]]; draw(); } };
+    tr.querySelector('.add').onclick = async () => { const {paths} = await rpc('/api/pick-proofs'); if(paths.length){ proofs = [paths[0]]; draw(); fillMemo(tr); } };
     draw();
   }
   sel.value = e.item || (tid==='a_exp' ? 'domestic_lodging' : 'domestic_transport');
-  amt.value = e.amount ? Number(e.amount).toLocaleString('ko-KR') : '';
+  amt.value = (e.amount === 0 || e.amount) && e.amount !== '' ? Number(e.amount).toLocaleString('ko-KR') : '';   // 0원도 그대로 보임
   memo.value = e.memo || '';
   amt.oninput = () => { amt.value = amt.value ? num(amt.value).toLocaleString('ko-KR') : ''; if(tid==='a_exp') autoExp = false; onchange(); if(tr.querySelector('.add')) tr.querySelector('.add').classList.toggle('need', num(amt.value) > 0 && !JSON.parse(tr.dataset.proofs || '[]').length); };
   sel.onchange = memo.oninput = onchange;
   tr.querySelector('.del').onclick = () => { tr.remove(); onchange(); };
   tbody.appendChild(tr); onchange();
 }
+/** 적요에 인원 넣기: "9/28 1인 석식" → "9/28 2인 석식" (없으면 날짜 뒤에) */
+const withPeople = (m, n) => /\d+\s*인/.test(m) ? m.replace(/\d+\s*인/, `${n}인`) : m.replace(/^(\d{1,2}\/\d{1,2})?\s*/, (_, d) => `${d ? d + ' ' : ''}${n}인 `).trim();
+/** 가격으로 식대 인원 짐작 (AI 가 없을 때): 설정의 회사 식대 기준(1인 한 끼). 적요에 조식·중식·석식이 있으면 그 기준, 없으면 세 끼 평균 */
+const guessPeople = (amount, memo = '') => { const r = (META.config && META.config.rates) || {};
+  const per = /조식|아침/.test(memo) ? r.breakfast : /중식|점심/.test(memo) ? r.lunch : /석식|저녁/.test(memo) ? r.dinner : ((r.breakfast || 0) + (r.lunch || 0) + (r.dinner || 0)) / 3;
+  return Math.max(1, Math.round((Number(amount) || 0) / (per || 12000))); };
+/** 적요가 비었고 증빙이 있으면 AI 가 영수증에서 날짜·내용을 읽어 적요에 ("9/28 1인 석식"). 적요는 그대로 채주 거래처비고가 된다 */
+async function fillMemo(tr){
+  const memo = tr.querySelector('.memo'), proof = JSON.parse(tr.dataset.proofs || '[]')[0];
+  if(!memo || memo.value.trim() || !proof) return;
+  memo.placeholder = 'AI 가 영수증 읽는 중…';
+  const ppl = tr.querySelector('.ppl'), meal = tr.querySelector('.item').value === 'meal';
+  try {
+    const r = await rpc('/api/receipt-memo', {path: proof, item: tr.querySelector('.item').value, period: $('#r_period').value});
+    if(ppl && meal && !ppl.value) ppl.value = r.people || guessPeople(num(tr.querySelector('.amt').value), r.memo || '');
+    if(r.memo && !memo.value.trim()) memo.value = meal && ppl.value ? withPeople(r.memo, Number(ppl.value)) : r.memo;
+  } catch(e){ if(ppl && meal && !ppl.value) ppl.value = guessPeople(num(tr.querySelector('.amt').value), memo.value); }   // AI 없음·실패 → 인원만 금액으로, 적요는 직접
+  finally { memo.placeholder = '날짜·내용 (예: 9/28 1인 석식)'; }
+}
 const readExp = tbody => [...tbody.querySelectorAll('tr')].map(tr => {
-  const [sel, amt, memo] = tr.querySelectorAll('select,input');
+  const sel = tr.querySelector('.item'), amt = tr.querySelector('.amt'), memo = tr.querySelector('.memo'), pay = tr.querySelector('.pay');
   const e = {item: sel.value, amount: num(amt.value), memo: memo.value.trim()};
+  if(pay) e.pay = pay.value;
+  const ppl = tr.querySelector('.ppl'); if(ppl && sel.value === 'meal' && ppl.value) e.people = Number(ppl.value);
   if(tr.dataset.proofs) e.proofs = JSON.parse(tr.dataset.proofs);
+  if(amt.value.trim() === '') e.empty = true;
   return e;
-}).filter(e => e.amount > 0);
+}).filter(e => !e.empty);   // 금액을 비운 줄만 뺀다. 0원은 사용자가 넣은 값이라 그대로 올림
 
 /* ---------- 신청서 ---------- */
 function applyData(){
@@ -115,7 +147,7 @@ function refreshApply(){
   const fare = mode==='corporate' ? 0 : num($('#a_fare').value);
   const margin = mode!=='corporate' && fare ? (META.config.rates.fareMargin || 0) : 0;   // 자차·대중교통 교통비 여유분
   const sum = readExp($('#a_exp tbody')).reduce((s,e)=>s+e.amount,0) + fare + margin;
-  $('#a_total').textContent = won(sum) + (mode!=='corporate' && !fare ? ' + 교통비' : margin ? ` (교통비 여유 ${won(margin)} 포함)` : '');
+  $('#a_total').textContent = won(sum) + (mode!=='corporate' && !$('#a_fare').value ? ' + 교통비' : margin ? ` (교통비 여유 ${won(margin)} 포함)` : '');
   clearTimeout(titleTimer);
   titleTimer = setTimeout(async () => {
     const r = await rpc('/api/title', {reason: $('#a_reason').value});
@@ -139,8 +171,17 @@ $('#btnFill').onclick = async () => {
   try { fillApply((await rpc('/api/parse', {text: $('#aiPaste').value})).data); }
   catch(e){ $('#aiErr').textContent = e.message; }
 };
+/** 네이버 지도에서 찾은 도착지로 출장지 칸 채우기: 검색어(예: KAI) 그대로면 '정식 이름 (주소)', 주소가 없으면 뒤에 (주소) */
+function setDestinationFromPlace(place){
+  if(!place || !place.address) return;
+  const dest = $('#a_destination'), cur = dest.value.trim(), term = ($('#a_to').value.trim() || cur);
+  if(/\d/.test(cur) && /(시|군|구|로|길)\s/.test(cur)) return;   // 이미 주소가 들어 있음
+  dest.value = !cur || cur === term ? `${place.name} (${place.address})` : `${cur} (${place.address})`;
+  dest.classList.remove('need'); refreshApply();
+}
 function setFare(r, label = ''){
   if(!r || !r.total) return;
+  setDestinationFromPlace(r.place);
   $('#a_fare').value = r.total.toLocaleString('ko-KR'); fareShot = r.screenshot||'';
   $('#a_fare_desc').innerHTML = '<b></b> <span></span> <a href="#">캡처 보기</a>';
   $('#a_fare_desc b').textContent = r.describe; $('#a_fare_desc span').textContent = label;
@@ -165,21 +206,26 @@ async function recalcExpenses(){
   const start = $('#a_start').value, end = $('#a_end').value || start;
   if(!start) return;
   const r = await rpc('/api/expenses', {start, end, start_time: $('#a_start_time').value, end_time: $('#a_end_time').value, reason: $('#a_reason').value.trim()});
-  $('#a_exp tbody').innerHTML = '';
-  r.expenses.forEach(e => expRow($('#a_exp tbody'), e, refreshApply));
+  // 규정으로 계산하는 숙박비·식대 줄만 새로 바꾸고, 직접 추가한 다른 경비 줄은 그대로 둔다
+  const tb = $('#a_exp tbody'), ruled = new Set(r.expenses.map(e => e.item).concat(['domestic_lodging', 'meal']));
+  [...tb.querySelectorAll('tr')].filter(tr => ruled.has(tr.querySelector('.item').value)).forEach(tr => tr.remove());
+  const keep = [...tb.querySelectorAll('tr')]; tb.innerHTML = '';
+  r.expenses.forEach(e => expRow(tb, e, refreshApply)); keep.forEach(tr => tb.appendChild(tr));
   showMealPlan(r); autoExp = true; refreshApply();
 }
 function showMealPlan(m){
   $('#a_meal_plan').textContent = m && m.summary ? `식대 내역: ${m.summary}${m.timed ? '' : '  (출발·복귀 시각을 넣으면 첫날·마지막 날 끼니를 정확히 계산해요)'}` : '';
 }
-['#a_start','#a_end','#a_start_time','#a_end_time'].forEach(id => $(id).addEventListener('change', () => { if(autoExp) recalcExpenses(); }));
+// 날짜·시각이 바뀌면 숙박비·식대를 규정대로 바로 다시 계산 (입력 중엔 잠깐 기다렸다가)
+let recalcTimer = null;
+['#a_start','#a_end','#a_start_time','#a_end_time'].forEach(id => ['input', 'change'].forEach(ev => $(id).addEventListener(ev, () => { clearTimeout(recalcTimer); recalcTimer = setTimeout(recalcExpenses, 300); })));
 $('#btnRecalc').onclick = recalcExpenses;
 function markNeed(missing){
-  const map = {'날짜': ['#a_start','#a_end'], '출발 시각': ['#a_start_time'], '복귀 시각': ['#a_end_time'], '출장지': ['#a_destination'], '사유': ['#a_reason'], '교통비': ['#a_fare'], '과제명': ['#a_project']};
+  const map = {'날짜': ['#a_start','#a_end'], '출발 시각': ['#a_start_time'], '복귀 시각': ['#a_end_time'], '출장지': ['#a_destination'], '사유': ['#a_reason'], '교통비': ['#a_fare'], '과제명': ['#a_project'], '동행목적': ['#a_companion_purpose']};
   $$('.need').forEach(el => el.classList.remove('need'));
   missing.forEach(m => (map[m]||[]).forEach(id => $(id).classList.add('need')));
 }
-$$('#a_start,#a_end,#a_start_time,#a_end_time,#a_destination,#a_reason,#a_fare,#a_project').forEach(el => ['input','change'].forEach(ev => el.addEventListener(ev, () => el.classList.remove('need'))));
+$$('#a_start,#a_end,#a_start_time,#a_end_time,#a_destination,#a_reason,#a_fare,#a_project,#a_companion_purpose').forEach(el => ['input','change'].forEach(ev => el.addEventListener(ev, () => el.classList.remove('need'))));
 /* 이전에 입력한 한 줄 문장: localStorage 에 최근 30개 */
 const HIST_MAX = 30;
 const histLoad = () => { try { return JSON.parse(localStorage.q_hist || '[]'); } catch(e){ return []; } };
@@ -221,8 +267,9 @@ $('#btnApply').onclick = async () => {
   if(!data.dates.start || !$('#a_end').value) need.push('날짜');
   if(!data.dates.start_time) need.push('출발 시각');
   if(!data.dates.end_time) need.push('복귀 시각');
-  if(data.transport.mode !== 'corporate' && !data.transport.total) need.push('교통비');
+  if(data.transport.mode !== 'corporate' && data.transport.total === undefined) need.push('교통비');   // 0원은 허용 (비운 것만 막음)
   if(data.category === '연구과제' && !data.project) need.push('과제명');
+  if(data.companions.length && !data.companion_purpose.trim()) need.push('동행목적');
   if(need.length){ markNeed(need); $('#a_err').textContent = `${need.join(', ')}을(를) 넣어 주세요.`; return; }
   try { await rpc('/api/plan', data); } catch(e){ $('#a_err').textContent = e.message; return; }
   runJob('출장신청서 입력', '/api/job/apply', {data}, () => { loadTrips(); resetApply(); gwMap = null; });   // 끝나면 폼 비움, 상태는 다음에 탭 열 때 그룹웨어에서 다시
@@ -369,6 +416,7 @@ const refreshReport = () => { $('#r_total').textContent = won(readExp($('#r_exp 
 let reportPrompt = '';
 function fillReport(d){
   setRadio('r_category', d.category||'로봇');
+  $$('input[name=r_fund]').forEach(x => x.checked = x.value === d.fund);   // 자금과목: 출장마다 사람이 고름
   for(const k of ['project','period','destination','visit_org','purpose','report']) $('#r_'+k).value = d[k]||'';
   $('#r_companions').value = (d.companions||[]).join(', ');
   $('#r_sched tbody').innerHTML = ''; (d.schedule||[]).forEach(schedRow);
@@ -385,31 +433,66 @@ async function openReport(id){
   showReport(id, await rpc('/api/draft', {id}));
 }
 async function showReport(id, r, extra = ''){
+  if(!currentTrip || currentTrip.trip_id !== r.draft.trip_id){ rqFiles = []; $('#rq_memo').value = ''; }   // 다른 출장으로 바뀌면 영수증·메모 비움
   currentTrip = r.draft; reportPrompt = r.prompt;
+  renderRqFiles();
   $('#r_heading').textContent = r.draft.reason; $('#r_trip').textContent = `신청 ID ${id}` + (r.resumed ? ' · 전에 작성하던 보고서를 불러왔어요' : '') + extra;
   $('#r_title').textContent = (await rpc('/api/title', {reason: r.draft.reason})).report;
   fillReport(r.draft);
   $('#tripList').classList.add('hidden'); $('#reportView').classList.remove('hidden');
 }
 function reportData(){
-  return {...currentTrip, category: radio('r_category'), project: $('#r_project').value.trim(),
+  return {...currentTrip, category: radio('r_category'), fund: radio('r_fund') || '', project: $('#r_project').value.trim(),
     period: $('#r_period').value.trim(), destination: $('#r_destination').value.trim(),
     visit_org: $('#r_visit_org').value.trim(), companions: list($('#r_companions').value),
     purpose: $('#r_purpose').value.trim(), report: $('#r_report').value.trim(),
     schedule: [...$('#r_sched tbody').querySelectorAll('tr')].map(tr => { const [d,p,x]=tr.querySelectorAll('input,textarea'); return {date:d.value, place:p.value, detail:x.value}; }),
     expenses: readExp($('#r_exp tbody')), attachments: reportAttachments};
 }
+/* 보고서 자동 작성: 영수증 파일들 + 한 줄 메모를 다 넣은 뒤 [자동 작성] → 메모로 보고사항·일정, 영수증은 AI 로 경비 줄 */
+let rqFiles = [];
+const RQ_EXT = /\.(png|jpe?g|gif|webp|heic|heif|bmp|tiff?|pdf)$/i;   // rules.js PROOF_EXT 와 같게
+function renderRqFiles(){
+  const box = $('#rq_files'); box.innerHTML = '';
+  rqFiles.forEach((f, i) => {
+    const c = document.createElement('span'); c.className = 'chip';
+    c.innerHTML = '<span class="nm"></span><button title="빼기">×</button>';
+    c.querySelector('.nm').textContent = f.split(/[\\/]/).pop(); c.querySelector('.nm').title = f;
+    c.querySelector('button').onclick = () => { rqFiles.splice(i, 1); renderRqFiles(); };
+    box.appendChild(c);
+  });
+  syncRQuick();
+}
+function addRqFiles(paths){
+  const bad = paths.filter(p => p && !RQ_EXT.test(p));
+  rqFiles = [...new Set([...rqFiles, ...paths.filter(p => p && RQ_EXT.test(p))])];
+  renderRqFiles();
+  if(bad.length) $('#rq_status').textContent = `이미지·PDF만 넣을 수 있어요 (뺀 파일: ${bad.map(b => b.split(/[\\/]/).pop()).join(', ')})`;
+}
+function syncRQuick(keepStatus){
+  const memo = !!$('#rq_memo').value.trim(), files = rqFiles.length > 0;
+  $('#btnRQuick').disabled = !(memo && files) || !!$('#btnRQuick').dataset.busy;
+  if(keepStatus || $('#btnRQuick').dataset.busy) return;
+  $('#rq_status').textContent = memo && files ? '' : `${!files && !memo ? '① 영수증과 ② 한 줄 메모를' : !files ? '① 영수증을' : '② 한 줄 메모를'} 넣으면 [자동 작성]을 누를 수 있어요.`;
+}
+$('#rq_memo').addEventListener('input', syncRQuick);
 $('#btnRQuick').onclick = async () => {
-  if(!currentTrip) return;
-  if(!$('#rq_memo').value.trim()){ $('#rq_memo').focus(); $('#rq_status').textContent = '출장에서 한 일을 한 줄 적어 주세요. 그걸로 보고사항과 날짜별 일정을 써요.'; return; }
-  $('#btnRQuick').disabled = true; $('#rq_status').textContent = '작성 중…';
+  if(!currentTrip || !rqFiles.length || !$('#rq_memo').value.trim()) return syncRQuick();
+  const btn = $('#btnRQuick'); btn.disabled = true; btn.dataset.busy = '1'; $('#rq_status').textContent = '보고사항 작성 중…';
   try {
     const r = await rpc('/api/report-quick', {id: currentTrip.trip_id, memo: $('#rq_memo').value});
     const cur = reportData();
     fillReport({...cur, ...r.data, expenses: cur.expenses.length ? cur.expenses : r.data.expenses, attachments: cur.attachments});   // 화면에서 고친 경비·증빙은 유지
-    $('#rq_status').textContent = (r.source === 'template' ? '템플릿으로 작성' : `${r.source}로 작성`) + (r.note ? ` · ${r.note}` : '') + ' · 확인 후 [그룹웨어에 입력하기]';
+    const how = (r.source === 'template' ? '템플릿으로 작성' : `${r.source}로 작성`) + (r.note ? ` · ${r.note}` : '');
+    $('#rq_status').textContent = how + ' · 영수증 읽는 중…';
+    const paths = rqFiles;
+    runJob(`영수증 ${paths.length}개 읽기`, '/api/job/receipts', {paths, period: receiptPeriod()}, res => {
+      applyReceipts(res.results || []);
+      rqFiles = []; renderRqFiles(); syncRQuick(true);
+      $('#rq_status').textContent = how + ` · 영수증 ${paths.length}개 반영 · 확인 후 [그룹웨어에 입력하기]`;
+    });
   } catch(e){ $('#rq_status').textContent = e.message; }
-  finally { $('#btnRQuick').disabled = false; }
+  finally { delete btn.dataset.busy; syncRQuick(true); }
 };
 $('#btnAddDay').onclick = () => schedRow();
 $('#btnAddRExp').onclick = () => expRow($('#r_exp tbody'), {}, refreshReport);
@@ -424,17 +507,12 @@ $('#btnRFill').onclick = async () => {
   try { const d = (await rpc('/api/parse', {text: $('#rPaste').value})).data; fillReport({...reportData(), ...d}); }
   catch(e){ $('#rErr').textContent = e.message; }
 };
-/* 영수증 한꺼번에: 끌어다 놓기·파일 고르기 → AI 분류 → 경비 줄로 */
+/* 영수증: 끌어다 놓기·파일 고르기 → 자동 작성 때 AI 분류 → 경비 줄로 */
 function receiptPeriod(){ const d = reportData(); return d.period || ''; }
-async function readReceiptFiles(paths){
-  paths = [...new Set(paths)].filter(Boolean);
-  if(!paths.length) return;
-  runJob(`영수증 ${paths.length}개 읽기`, '/api/job/receipts', {paths, period: receiptPeriod()}, r => applyReceipts(r.results || []));
-}
 /** 분류 결과를 경비 표에 반영: 같은 예산과목의 '증빙 없는 줄'(신청 때 예상 금액)은 영수증 줄로 바꾸고, 영수증마다 한 줄 + 증빙 1개 */
 function applyReceipts(results){
   const tb = $('#r_exp tbody');
-  const rowsOf = () => [...tb.querySelectorAll('tr')].map(tr => ({ tr, item: tr.querySelector('select').value, proofs: JSON.parse(tr.dataset.proofs || '[]') }));
+  const rowsOf = () => [...tb.querySelectorAll('tr')].map(tr => ({ tr, item: tr.querySelector('.item').value, proofs: JSON.parse(tr.dataset.proofs || '[]') }));
   const got = results.flatMap(r => (r && r.rows && r.rows.length ? r.rows.map(x => ({ ...x, path: r.path })) : r ? [{ path: r.path, item: '', amount: 0, failed: r.error || '영수증을 못 찾음' }] : []));
   const items = new Set(got.filter(g => g.item).map(g => g.item));
   rowsOf().filter(r => items.has(r.item) && !r.proofs.length).forEach(r => r.tr.remove());   // 예상 금액 줄 → 실제 영수증으로 대체
@@ -442,8 +520,9 @@ function applyReceipts(results){
   const seen = new Set();
   got.forEach(g => {
     const proofs = seen.has(g.path) ? [] : [g.path]; seen.add(g.path);
-    const memo = g.failed ? '' : [g.date && g.date.slice(5).replace('-', '/'), g.vendor, g.memo].filter(Boolean).join(' ');
-    expRow(tb, { item: g.item || 'meal', amount: g.amount || '', memo, proofs }, refreshReport);
+    const memo = g.failed ? '' : [g.date && g.date.slice(5).split('-').map(Number).join('/'), g.memo || g.vendor].filter(Boolean).join(' ');   // 거래처비고 형식 "10/2 1인 조식"
+    const people = (g.item || 'meal') === 'meal' && !g.failed ? (g.people || guessPeople(g.amount, g.memo || '')) : 0;
+    expRow(tb, { item: g.item || 'meal', amount: g.amount || '', memo: people ? withPeople(memo, people) : memo, people, proofs }, refreshReport);
     const tr = tb.lastElementChild; tr.classList.add('fromai');
     if(g.failed || !g.item || !g.amount) tr.querySelectorAll('select,input').forEach(x => x.classList.add('need'));
   });
@@ -456,22 +535,37 @@ function applyReceipts(results){
   const dz = $('#r_drop');
   ['dragenter', 'dragover'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.add('over'); }));
   ['dragleave', 'drop'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.remove('over'); }));
-  dz.addEventListener('drop', e => readReceiptFiles([...e.dataTransfer.files].map(f => window.api.pathForFile(f))));
-  $('#btnPickReceipts').onclick = async () => { const {paths} = await rpc('/api/pick-proofs', {many: true}); readReceiptFiles(paths); };
+  dz.addEventListener('drop', e => addRqFiles([...e.dataTransfer.files].map(f => window.api.pathForFile(f))));
+  $('#btnPickReceipts').onclick = async () => { const {paths} = await rpc('/api/pick-proofs', {many: true}); addRqFiles(paths || []); };
   // 창 아무 데나 떨어뜨려도 앱이 파일을 열어 버리지 않게
   ['dragover', 'drop'].forEach(ev => window.addEventListener(ev, e => { if(!e.target.closest || !e.target.closest('#r_drop')) e.preventDefault(); }));
 }
 $('#reportView').addEventListener('input', e => { if(e.target.classList) e.target.classList.remove('need'); });   // 입력 시작하면 빈 칸 표시 해제
-$('#btnReport').onclick = () => {
+$$('input[name=r_fund]').forEach(x => x.addEventListener('change', () => $('#r_fund').classList.remove('need')));
+$('#btnReport').onclick = async () => {
   $('#r_err').textContent = '';
   const d = reportData();
   if(!d.report){ $('#r_err').textContent = '담당업무 및 보고사항을 입력해 주세요.'; $('#r_report').classList.add('need'); return; }
   $$('#r_sched textarea').forEach(x => x.classList.toggle('need', !x.value.trim()));
   if(!d.schedule.length || d.schedule.some(r => !r.detail)){ $('#r_err').textContent = '출장일정의 세부 활동 내용을 날짜마다 적어 주세요.'; return; }
   if(!d.expenses.length){ $('#r_err').textContent = '경비를 한 줄 이상 넣어 주세요.'; return; }
+  if(!d.fund){ $('#r_err').textContent = '자금과목(일반경비·제조경비)을 골라 주세요.'; $('#r_fund').classList.add('need'); return; }
   $$('#r_exp tbody tr').forEach(tr => { const b = tr.querySelector('.add'); if(b) b.classList.toggle('need', !JSON.parse(tr.dataset.proofs || '[]').length); });
   const noProof = d.expenses.findIndex(e => !(e.proofs || []).length);
   if(noProof >= 0){ $('#r_err').textContent = `정산 경비 ${noProof + 1}번째 줄에 증빙(이미지·PDF)을 첨부해 주세요.`; return; }
+  // 식대 인원이 빈 줄: 금액으로 짐작해 넣고 적요의 "N인"도 맞춘 뒤 확인받는다
+  const noPpl = [...$$('#r_exp tbody tr')].filter(tr => tr.querySelector('.item').value === 'meal' && tr.querySelector('.ppl') && !tr.querySelector('.ppl').value && tr.querySelector('.memo').value.trim());
+  noPpl.forEach(tr => { const n = guessPeople(num(tr.querySelector('.amt').value), tr.querySelector('.memo').value); tr.querySelector('.ppl').value = n; tr.querySelector('.memo').value = withPeople(tr.querySelector('.memo').value, n); tr.querySelector('.ppl').classList.add('need'); });
+  const empty = [...$$('#r_exp tbody tr')].filter(tr => !tr.querySelector('.memo').value.trim());
+  if(noPpl.length && !empty.length){ $('#r_err').textContent = `식대 ${noPpl.length}줄의 인원을 금액으로 짐작해 넣었어요(주황색). 맞는지 보고 다시 눌러 주세요.`; return; }
+  if(empty.length){   // 적요(= 거래처비고) 빈 줄은 AI 가 영수증으로 채우고 확인받는다
+    $('#btnReport').disabled = true; $('#r_err').textContent = `적요가 빈 ${empty.length}줄을 영수증으로 채우는 중…`;
+    try { await Promise.all(empty.map(fillMemo)); } finally { $('#btnReport').disabled = false; }
+    const still = empty.filter(tr => !tr.querySelector('.memo').value.trim());
+    $('#r_err').textContent = still.length ? `적요를 못 채운 줄이 있어요. 날짜·내용을 적어 주세요 (예: 9/28 1인 석식).` : '적요를 영수증으로 채웠어요. 확인 후 다시 눌러 주세요.';
+    still.forEach(tr => tr.querySelector('.memo').classList.add('need'));
+    return;
+  }
   runJob('출장보고서 입력', '/api/job/report', {data: d}, () => { loadTrips(); gwMap = null; });
 };
 
@@ -545,7 +639,7 @@ async function runJob(title, path, body, onDone, opt = {}){
 }
 /** 진행 중인 작업 화면에 붙기 (새 작업 시작, 또는 새로고침 후 이어보기) */
 function watchJob(title, onDone, {quiet = false} = {}){
-  $('#jobTitle').textContent = title; $('#jobLog').textContent = ''; jobSince = 0;
+  $('#jobTitle').textContent = title; $('#jobLog').textContent = ''; jobSince = 0; $('#jobShow').classList.add('hidden');
   if(quiet){ $('#gwRefreshIcon').classList.add('on'); $('#btnGwList').disabled = true; }
   if(!quiet) $('#jobPanel').style.display = 'block';   // quiet: 물어볼 게 있거나 실패할 때만 창을 띄움
   const dimQuiet = quiet && !gwMap;   // 조용한 갱신은 보여줄 게 없을 때만 딤
@@ -556,7 +650,8 @@ function watchJob(title, onDone, {quiet = false} = {}){
     const s = await rpc('/api/job', {since: jobSince});
     if(s.logs && s.logs.length){ $('#jobLog').textContent += s.logs.join('\n') + '\n'; $('#jobLog').scrollTop = 1e9; jobSince = s.next; if(!quiet) $('#dimStep').textContent = s.logs[s.logs.length - 1].replace(/^[⚠✔—]\s*/, ''); }
     const q = s.question;
-    $('#jobShow').textContent = s.kind === 'fare' ? '네이버 지도 열기' : '그룹웨어 창 열기';
+    $('#jobShow').textContent = '작업 중인 창 열기';
+    $('#jobShow').classList.toggle('hidden', !(q || s.state === 'error'));   // 사람이 손봐야 할 때(질문·실패)만 작업 창을 보여 준다
     const what = {apply: '와니가 작성 중', report: '와니가 작성 중', fare: '와니가 교통비 조회 중', 'trip-delete': '와니가 삭제 중', 'gw-delete': '와니가 삭제 중', 'gw-list': '그룹웨어 로그인·품의 상태를 확인 중이에요', 'gw-profile': '그룹웨어에서 내 정보를 불러오는 중이에요', 'report-load': '그룹웨어에서 보고서를 불러오는 중이에요', receipts: '와니가 영수증 읽는 중', login: '그룹웨어 로그인 상태를 확인 중이에요'}[s.kind] || '와니가 처리 중';
     $('#dimWhat').textContent = what; $('.wani .pen').textContent = /삭제/.test(what) ? '🧹' : /조회|확인/.test(what) ? '🔍' : '✍️';
     $('#jobAsk').style.display = q ? 'block' : 'none';
@@ -616,6 +711,7 @@ async function checkGw(openIfNeeded = true){
   return st;
 }
 $('#gwPill').onclick = () => $('#gwPill').classList.contains('ok') ? checkGw() : openLogin();
+$('#btnGwOpen').onclick = () => rpc('/api/gw/open');   // 어느 화면에서든 그룹웨어 창 띄우기
 $('#loginForm').onsubmit = async e => {
   e.preventDefault();
   $('#lg_ok').disabled = true; $('#lg_ok').textContent = '로그인 중…'; $('#lg_err').textContent = '';

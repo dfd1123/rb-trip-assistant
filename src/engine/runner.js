@@ -10,7 +10,7 @@ const { applyPayload, reportPayload } = require('./editorFill');
 function planApply(data, cfg) {
   if (!cfg.budgetDept) throw new R.InputError('설정에서 예산 부서를 골라 주세요. (그룹웨어에 로그인하면 목록을 받아와요)');
   const a = R.parseApply(data);
-  if (R.TRANSPORT_MODES[a.transport.mode].autoFare && !a.transport.total) throw new R.InputError('교통비는 필수예요. [네이버 지도 조회]를 누르거나 직접 입력해 주세요.');
+  if (R.TRANSPORT_MODES[a.transport.mode].autoFare && a.transport.total === null) throw new R.InputError('교통비는 필수예요. [네이버 지도 조회]를 누르거나 직접 입력해 주세요.');
   return {
     title: R.applyTitle(a.reason), period: a.period,
     transport: { ...a.transport, from: a.transport.from || cfg.defaultOrigin },
@@ -52,8 +52,8 @@ async function runApply(env, data, { save = true } = {}) {
   let fare = null;
   if (a.transport.total !== null) fare = { total: a.transport.total, screenshot: a.transport.screenshot, source: 'input', describe: `왕복 ${a.transport.total.toLocaleString('ko-KR')}원` };
   else if (R.TRANSPORT_MODES[a.transport.mode].autoFare) fare = await runFare(env, { mode: a.transport.mode, to: a.transport.to, from: a.transport.from });
-  const expenses = [...a.expenses];
-  if (fare && fare.total) { expenses.unshift(R.transportExpense(a, fare.total, cfg.rates.fareMargin)); rec.fare = fare; }
+  const expenses = [...a.expenses];   // 0원 줄도 사용자가 넣은 그대로 올림
+  if (fare && (fare.total || (fare.source === 'input' && fare.total === 0))) { expenses.unshift(R.transportExpense(a, fare.total, fare.total ? cfg.rates.fareMargin : 0)); rec.fare = fare; }   // 직접 넣은 0원도 교통비 줄로 (여유분 없이)
   rec.expenses = expenses;
   store.save(id, rec);
 
@@ -79,7 +79,7 @@ function reportDraft(store, cfg, id) {
     days.push(`${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`);
   return {
     trip_id: id, reason: a.reason, name: cfg.name, companions: a.companions, category: '로봇',
-    project: a.project || '', destination: a.destination, visit_org: a.destination,
+    project: a.project || '', destination: a.destination, visit_org: a.destination.replace(/\s*\([^)]*\)\s*$/, ''),   // 방문기관 = 출장지에서 (주소) 뺀 이름
     period: `${a.start.replace(/-/g, '.')}${a.start_time ? ' ' + a.start_time : ''} - ${a.end.replace(/-/g, '.')}${a.end_time ? ' ' + a.end_time : ''}`,
     purpose: a.purpose, report: '',
     schedule: days.map(date => ({ date, place: a.destination, detail: '' })),
@@ -91,29 +91,31 @@ function reportDraft(store, cfg, id) {
   };
 }
 
-async function runReport(env, data, { save = true } = {}) {
+/** 출장보고서(정산). 새 품의를 만들지 않고, 승인된 신청 품의로 지출결의를 한다 (사용자가 알려 준 회사 절차):
+ *  품의서승인(복수) → 신청 품의 체크 → [결의서전송/취소] → 지출결의서·집행용도 → 예산 줄 결제수단·과세구분 → 채주내역(영수증마다) → [환원]
+ *  → 사람이 확인하고 [전송]. 이어지는 결의서입력 → 결재상신 → 출장보고서 본문은 다음 단계에서 자동화한다. */
+async function runReport(env, data) {
   const { cfg, store, ui, log } = env;
   const rep = R.parseReport(data);
-  const title = R.reportTitle(rep.reason);
-  log(`[보고서] ${title}`);
+  log(`[보고서] ${rep.reason}`);
   let rec = null;
   if (rep.trip_id) { try { rec = store.load(rep.trip_id); rec.report = data; store.save(rep.trip_id, rec); } catch (e) { rec = null; } }   // 작성한 내용은 먼저 저장 (중간에 꺼도 다시 열면 그대로)
+  const apply = rec && rec.gwApply;
+  if (!apply || !apply.ym || !apply.seq) throw new R.InputError('이 출장의 신청 품의를 몰라요. [내 출장보고서] 목록에서 그룹웨어 신청 품의와 연결된 출장으로 보고서를 써 주세요.');
+  const payee = cfg.name || rep.name;
+  if (!payee) throw new R.InputError('그룹웨어 이름을 몰라요. 설정에서 그룹웨어에 로그인해 내 정보를 불러와 주세요.');
+  const usedOn = (/(\d{4})[.-](\d{2})[.-](\d{2})/.exec(rep.period) || []).slice(1).join('-');   // 출장 시작일 (법인카드 자금계획일 기준)
+  const lines = rep.expenses.map(e => ({ label: e.label, pay: e.pay, amount: e.amount, supply: R.supplyAmount(e.amount, e.pay), memo: e.memo, planDate: R.fundPlanDate(e.pay, { usedOn }), proof: (e.proofs || [])[0] || '' }));
   const gw = new Amaranth({ win: env.gwWindow(), baseUrl: cfg.baseUrl, ui, log, debugDir: env.debugDir, creds: env.creds });
-  try {
-    await gw.ensureLogin();
-    if (rec && rec.gwReport) {   // 전에 올린 보고 품의가 있으면: 상신 전이면 지우고 새로, 결재 중이면 멈춤
-      const old = (await gw.listBudgetRows({ date: rec.gwReport.key.split('|').slice(0, 2) })).find(r => r.key === rec.gwReport.key);
-      if (old && old.locked) throw new Error(`이 출장의 보고 품의(순번 ${old.seq})는 이미 '${old.status}' 상태라 다시 올릴 수 없어요.`);
-      if (old) { log(`이전 보고 품의(순번 ${old.seq})를 지우고 새로 올려요.`); await gw.deleteBudgetRows([old.key]); }
-      delete rec.gwReport; store.save(rep.trip_id, rec);
-    }
-    await gw.enterBudget(cfg.budgetDept, rep.expenses, { memo: R.budgetMemo(title) });
-    const popup = await gw.openApproval(R.REPORT_FORM, title);
-    await gw.fillAndKeep(popup, { title, probe: '출장일시', payload: reportPayload(rep), attachments: rep.attachments, save });
-  } catch (e) { await abort(env, gw); throw e; }
-  if (rec) { try { const r2 = store.load(rep.trip_id); if (gw.lastBudget) r2.gwReport = gw.lastBudget; r2.reportStatus = save ? '보관됨' : '입력됨(미보관)'; r2.report = data; store.save(rep.trip_id, r2); } catch (e) { /* 기록 없음 */ } }
-  log('완료.');
-  return {};
+  await gw.ensureLogin();
+  await gw.openApprovedBudget(apply);
+  const st = await gw.settleTransfer({ purpose: R.APPLY_FORM, payee, fund: rep.fund, lines });
+  // [전송]까지 앱이 한다 (사용자 요청 2026-10-16). 채주 저장 확인이 안 됐으면 보내지 않는다
+  const resNo = st && st.ok ? await gw.transferResolution() : '';
+  if (rec) { try { const r2 = store.load(rep.trip_id); r2.report = data; r2.reportStatus = resNo ? `결의 전송됨(${resNo})` : '결의 입력(전송 전)'; if (resNo) r2.resolutionNo = resNo; store.save(rep.trip_id, r2); } catch (e) { /* 기록 없음 */ } }
+  if (!resNo) { env.showGw(); await ui.pause('[전송]을 하지 않았어요. 결의서전송 창에서 채주·첨부·환원을 확인하고 직접 [전송]한 뒤 [계속]을 눌러 주세요.'); }
+  log('결의서 전송까지 끝났어요. 결의서입력 → 결재상신 → 출장보고서 작성은 다음 단계에서 자동으로 이어져요(작업 중). 지금은 결의서입력 메뉴에서 [결재상신]을 눌러 주세요.');
+  return { resolutionNo: resNo };
 }
 
 async function runLogin(env) {
@@ -190,7 +192,8 @@ async function runListBudget(env) {
     const rows = await gw.apiBudgetRows(user, { months, days: [...days] });
     await attachApprovalDocs(gw, rows, env.log);
     env.log(`API 로 품의 ${rows.length}건 읽음 (${((Date.now() - t0) / 1000).toFixed(1)}초, 삭제 가능 ${rows.filter(r => !r.locked).length}건)`);
-    if (env.debugDir) await gw.diagApprovalList().catch(() => {});   // 한 번만(파일 없을 때): 전자결재 상신문서 목록 API 기록 (결재양식으로 출장 판별하기 위함, 10초쯤)
+    if (env.debugDir) await gw.diagApprovalList().catch(() => {});
+    if (env.debugDir) await gw.diagReportFlow().catch(() => {});   // 한 번만: 결의서전송 화면 구조 기록 (보고서 자동화 개발용, 읽기만)   // 한 번만(파일 없을 때): 전자결재 상신문서 목록 API 기록 (결재양식으로 출장 판별하기 위함, 10초쯤)
     return { rows, via: 'api', ms: Date.now() - t0 };
   } catch (e) {
     env.log(`(빠른 조회 실패: ${String(e.message).slice(0, 160)} — 화면에서 읽어요)`); apiError = String(e.message);

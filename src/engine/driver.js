@@ -81,9 +81,15 @@ const rgSelect = (r, i) => {
 const grid = hdr => all('.rg-root').find(r => vis(r) && all('.rg-header-cell', r).some(h => norm(h.textContent) === norm(hdr)));
 const headers = g => all('.rg-header-cell', g).map(h => norm(h.textContent));
 const rows = g => all('tr.rg-data-row', g);
-const cell = (g, row, hdr) => { const i = headers(g).indexOf(norm(hdr)); const r = rows(g)[row]; return r && i >= 0 ? all('td.rg-data-cell', r)[i] : null; };
-const rowVals = (g, row) => { const h = headers(g); const r = rows(g)[row]; if (!r) return null;
-  const c = all('td.rg-data-cell', r).map(td => td.textContent.trim()); return Object.fromEntries(h.map((k, i) => [k, c[i]])); };
+// 칸 찾기: 헤더 순서가 아니라 '헤더 바로 아래 위치'로 (채주내역 '계좌번호'처럼 헤더 하나가 칸 두 개를 덮으면 순서가 어긋난다)
+const cellUnder = (h, r) => { const a = h.getBoundingClientRect(), x = a.left + a.width / 2;
+  return all('td.rg-data-cell', r).find(td => { const b = td.getBoundingClientRect(); return b.width > 0 && b.left <= x && b.right >= x; }) || null; };
+// 헤더 수와 칸 수가 같으면 순서로, 다르면(덮는 헤더가 있으면) 위치로
+const cellFor = (g, r, h, i) => { const c = all('td.rg-data-cell', r); return c.length === all('.rg-header-cell', g).length ? c[i] : cellUnder(h, r); };
+const cell = (g, row, hdr) => { const r = rows(g)[row]; const hs = all('.rg-header-cell', g); const i = hs.findIndex(h => norm(h.textContent) === norm(hdr));
+  return r && i >= 0 ? cellFor(g, r, hs[i], i) || null : null; };
+const rowVals = (g, row) => { const r = rows(g)[row]; if (!r) return null; const hs = all('.rg-header-cell', g);
+  return Object.fromEntries(hs.map((h, i) => { const td = cellFor(g, r, h, i); return [norm(h.textContent), td ? td.textContent.trim() : undefined]; })); };
 `;
 
 class Page {
@@ -109,6 +115,19 @@ class Page {
   url() { return this.wc.getURL(); }
   async goto(url) { await this.wc.loadURL(url); }
 
+  /** 끌기 (스크롤바 손잡이 등): 누른 채 여러 번 나눠 움직이고 놓는다 */
+  async drag(from, to, steps = 8) {
+    this.wc.focus();
+    this.wc.sendInputEvent({ type: 'mouseMove', x: from.x, y: from.y });
+    this.wc.sendInputEvent({ type: 'mouseDown', x: from.x, y: from.y, button: 'left', clickCount: 1 });
+    for (let i = 1; i <= steps; i++) {
+      const x = Math.round(from.x + (to.x - from.x) * i / steps), y = Math.round(from.y + (to.y - from.y) * i / steps);
+      this.wc.sendInputEvent({ type: 'mouseMove', x, y, modifiers: ['leftButtonDown'] }); await sleep(30);
+    }
+    this.wc.sendInputEvent({ type: 'mouseUp', x: to.x, y: to.y, button: 'left', clickCount: 1 });
+    await sleep(100);
+  }
+
   async click(pt, { count = 1 } = {}) {
     if (!pt) throw new Error('클릭할 위치를 찾지 못했습니다.');
     const { x, y } = pt;
@@ -132,13 +151,13 @@ class Page {
   }
 
   /** 마우스 휠 (deltaY > 0 = 아래로) */
-  async wheel(pt, deltaY) {
+  async wheel(pt, deltaY, deltaX = 0) {
     // 숨긴 창에서는 실제 휠 입력이 전달되지 않아, 그 위치의 요소에 휠 이벤트를 직접 보낸다 (그리드는 JS 로 휠을 처리)
     if (this.win.isVisible()) {
       this.wc.sendInputEvent({ type: 'mouseMove', x: pt.x, y: pt.y });
-      this.wc.sendInputEvent({ type: 'mouseWheel', x: pt.x, y: pt.y, deltaX: 0, deltaY: -deltaY, canScroll: true });
+      this.wc.sendInputEvent({ type: 'mouseWheel', x: pt.x, y: pt.y, deltaX: -deltaX, deltaY: -deltaY, canScroll: true });
     } else {
-      await this.eval((x, y, d) => { const el = document.elementFromPoint(x, y); if (el) el.dispatchEvent(new WheelEvent('wheel', { deltaY: d, deltaMode: 0, clientX: x, clientY: y, bubbles: true, cancelable: true })); }, pt.x, pt.y, deltaY);
+      await this.eval((x, y, d, dx) => { const el = document.elementFromPoint(x, y); if (el) el.dispatchEvent(new WheelEvent('wheel', { deltaY: d, deltaX: dx, shiftKey: !d && !!dx, deltaMode: 0, clientX: x, clientY: y, bubbles: true, cancelable: true })); }, pt.x, pt.y, deltaY, deltaX);
     }
     await sleep(250);
   }
@@ -153,6 +172,8 @@ class Page {
   async press(keyCode, times = 1) { for (let i = 0; i < times; i++) { await this.key(keyCode); await sleep(150); } }
   async selectAll() { this.wc.focus(); this.wc.selectAll(); await sleep(120); }   // 단축키(Cmd+A)는 메뉴 없는 창에서 안 먹음
   async type(text) { await this.wc.insertText(String(text)); await sleep(100); }
+  /** 키를 하나씩 눌러 입력 (붙여넣기를 안 받는 날짜 칸 등). 숫자·영문용 */
+  async typeKeys(text) { this.wc.focus(); for (const ch of String(text)) { for (const type of ['keyDown', 'char', 'keyUp']) this.wc.sendInputEvent({ type, keyCode: ch }); await sleep(40); } await sleep(100); }
 
   /** 모든 프레임(iframe 포함) */
   frames() { return this.wc.mainFrame.framesInSubtree; }
@@ -205,6 +226,30 @@ class Page {
       if (!attached) dbg.detach();
       return [...reqs.values()];
     };
+  }
+
+  /** 클릭하면 파일 선택 창이 뜨는 곳에 파일 넣기: 선택 창을 가로채서(CDP) 그 입력칸에 바로 넣는다. 창이 안 떴으면 false
+   *  click: 선택 창을 띄우는 동작 (async) */
+  async withFileChooser(files, click, timeout = 3000) {
+    const dbg = this.wc.debugger;
+    const attached = dbg.isAttached();
+    if (!attached) dbg.attach('1.3');
+    let hit = null;
+    const onMsg = (_e, method, params) => { if (method === 'Page.fileChooserOpened') hit = params; };
+    dbg.on('message', onMsg);
+    try {
+      await dbg.sendCommand('Page.enable');
+      await dbg.sendCommand('Page.setInterceptFileChooserDialog', { enabled: true });
+      await click();
+      const end = Date.now() + timeout;
+      while (!hit && Date.now() < end) await sleep(100);
+      if (hit && hit.backendNodeId) await dbg.sendCommand('DOM.setFileInputFiles', { files, backendNodeId: hit.backendNodeId });
+      return !!hit;
+    } finally {
+      dbg.removeListener('message', onMsg);
+      try { await dbg.sendCommand('Page.setInterceptFileChooserDialog', { enabled: false }); } catch (e) { /* */ }
+      if (!attached) dbg.detach();
+    }
   }
 
   /** <input type=file> 에 파일 넣기 (CDP) */

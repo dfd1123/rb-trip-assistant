@@ -135,6 +135,7 @@ function parseApply(data) {
   const expenses = parseExpenses(data.expenses, 'expenses', reason);
   if (expenses.some(e => e.item === 'domestic_transport') && TRANSPORT_MODES[mode].autoFare)
     throw new InputError('국내교통비는 교통비 칸(네이버 지도 조회)으로 넣어 주세요. 경비 목록에서는 빼 주세요.');
+  if (asList(data.companions).length && !String(data.companion_purpose || '').trim()) throw new InputError('동행자가 있으면 동행목적도 적어 주세요.');
   return {
     reason, destination: String(req(data, 'destination', where)).trim(), start, end, start_time: startTime, end_time: endTime,
     period: `${start.replace(/-/g, '.')} - ${end.replace(/-/g, '.')}`,
@@ -170,9 +171,56 @@ function parseReport(data) {
     const bad = proofs.find(p => !PROOF_EXT.test(p));
     if (bad) throw new InputError(`증빙은 이미지나 PDF만 돼요: ${bad.split(/[\\/]/).pop()}`);
     out.expenses[i].proofs = proofs;
+    out.expenses[i].pay = e.pay === 'card' ? 'card' : 'personal';
   });
+  out.fund = String(data.fund || '');   // 자금과목: 일반경비 / 제조경비 (출장마다 사람이 고름)
+  if (!FUNDS.includes(out.fund)) throw new InputError('자금과목(일반경비·제조경비)을 골라 주세요.');
   out.attachments = [...new Set([...out.attachments, ...out.expenses.flatMap(e => e.proofs)])];
   return out;
+}
+
+// ---------- 결의서전송(지출결의) 규칙 ----------
+const FUNDS = ['일반경비', '제조경비'];
+const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+// 공휴일 (주말 아닌 날만 의미 있음). ponytail: 2026~2027 목록만 — 해가 바뀌면 여기에 추가 (음력 명절·대체공휴일·선거일은 해마다 다름)
+const HOLIDAYS = new Set([
+  '2026-01-01', '2026-02-16', '2026-02-17', '2026-02-18', '2026-03-02', '2026-05-05', '2026-05-25', '2026-06-03', '2026-08-17',
+  '2026-09-24', '2026-09-25', '2026-09-28', '2026-10-05', '2026-10-09', '2026-12-25',
+  '2027-01-01', '2027-02-08', '2027-02-09', '2027-03-01', '2027-05-05', '2027-05-13', '2027-08-16', '2027-09-14', '2027-09-15', '2027-09-16',
+  '2027-10-04', '2027-10-11', '2027-12-27',
+]);
+const workday = d => d.getDay() !== 0 && d.getDay() !== 6 && !HOLIDAYS.has(ymd(d));
+/** 그날이 주말·공휴일이면 바로 전 평일 */
+const prevWorkday = d => { const x = new Date(d); while (!workday(x)) x.setDate(x.getDate() - 1); return x; };
+/** 자금계획일 (올리는 날 기준). 개인경비 = 정기자금일: 1~9일 → 10일, 10~19일 → 20일, 20~24일 → 25일, 25일~말일 → 다음 달 10일.
+ *  정기자금일이 주말·공휴일이면 바로 전 평일. 법인카드 = 사용한 달의 다음 달 23일 */
+function fundPlanDate(pay, { today = new Date(), usedOn = '' } = {}) {
+  if (pay === 'card') { const b = usedOn ? new Date(`${usedOn}T00:00:00`) : today; return ymd(new Date(b.getFullYear(), b.getMonth() + 1, 23)); }
+  const y = today.getFullYear(), m = today.getMonth(), d = today.getDate();
+  const pay_ = d < 10 ? new Date(y, m, 10) : d < 20 ? new Date(y, m, 20) : d < 25 ? new Date(y, m, 25) : new Date(y, m + 1, 10);
+  return ymd(prevWorkday(pay_));
+}
+/** 채주 금액은 공급가액만 넣는다(부가세·총액은 그룹웨어가 계산). 과세(법인카드)면 합계에서 부가세(합계/11, 버림)를 뺀다 */
+const supplyAmount = (total, pay) => pay === 'card' ? total - Math.floor(total / 11) : total;
+/** 품의한 금액보다 많이 청구할 수 없다: 예산 줄 한도(limit) 안에서 앞 영수증부터 채우고 넘는 만큼 깎는다. 한도를 다 쓰면 나머지 줄은 뺀다
+ *  예) 교통비 품의 60,000 · 실제 79,000 → 공급가액 60,000 */
+function capToBudget(lines, limit) {   // 한도는 합계(부가세 포함) 기준. 깎은 합계로 공급가액을 다시 계산
+  let left = Math.max(0, Number(limit) || 0);
+  return lines.map(l => { const amount = Math.min(l.amount, left); left -= amount; return { ...l, amount, supply: supplyAmount(amount, l.pay), cut: l.amount - amount }; }).filter(l => l.amount > 0);
+}
+/** 예산 줄마다 넣을 채주: 같은 예산과목 영수증을 모아 품의 한도까지 → [{ index, label, lines, cut }]. 예산에 없는 과목은 left 로
+ *  budgets: [{ 예산과목, 품의금액, 미지출액 }] (결의서전송 창 예산내역 그대로) */
+function planPayees(budgets, lines) {
+  const n = s => String(s || '').replace(/\s/g, '');
+  const num = v => Number(String(v || '').replace(/[^\d]/g, '')) || 0;
+  const plan = budgets.map((b, index) => {
+    const mine = lines.filter(l => n(l.label) === n(b['예산과목']));
+    const limit = num(b['미지출액']) || num(b['품의금액']);
+    const capped = capToBudget(mine, limit);
+    return { index, label: b['예산과목'], limit, lines: capped, dropped: mine.length - capped.length };
+  });
+  const left = lines.filter(l => !budgets.some(b => n(b['예산과목']) === n(l.label)));
+  return { plan, left };
 }
 
 /** 신청 교통비 = 네이버 지도 왕복 + 여유분(자차·대중교통, 기본 2만원). 보고서 정산은 실제 금액으로 */
@@ -192,11 +240,11 @@ function applyPrompt(today = new Date().toISOString().slice(0, 10)) {
 규칙
 - reason: 제목에 들어갈 출장 사유. 짧은 명사구. 끝에 '출장', '건'은 붙이지 마.
   (제목은 "[${APPLY_FORM}] {reason}로 인한 출장의 건" 으로 자동 생성됨)
-- destination: 국내 출장지 이름 (예: 레인보우로보틱스 판교 AI 사무소)
+- destination: 국내 출장지의 정식 이름. 약칭·영문 약자는 풀어서 (예: KAI → 한국항공우주산업, 레인보우로보틱스 판교 AI 사무소). 주소는 지어내지 마 (앱이 네이버 지도에서 붙임)
 - category: 일반 | 연구과제   (연구과제면 project 에 과제명)
 - transport.mode: car(자차) | transit(대중교통) | corporate(법인차량)
 - dates.start_time / end_time: 출발·복귀 시각 HH:MM ('저녁에 출발'→19:00, '3시 복귀'→15:00). 모르면 "" (식대 계산에 쓰임)
-- transport.to: 네이버 지도에서 검색할 도착지 (주소나 장소명)
+- transport.to: 네이버 지도에서 검색할 도착지 (정식 장소명이나 주소. 약자 말고 풀네임, 예: 한국항공우주산업)
 - 교통비는 앱이 네이버 지도로 계산하니 expenses 에 국내교통비를 넣지 마.
 - expenses.item: domestic_lodging(국내숙박비) | meal(식대)
 - 금액을 모르면 그 줄은 빼. 지어내지 마.
@@ -250,4 +298,5 @@ module.exports = {
   APPLY_FORM, REPORT_FORM, BUDGET_ITEMS, TRANSPORT_MODES, CORPORATE_CARS, APPLY_CATEGORIES, REPORT_CATEGORIES,
   InputError, ro, applyTitle, reportTitle, budgetMemo, parseCarText, parseTransitText, roundTrip,
   parseApply, parseReport, parseExpenses, transportExpense, applyPrompt, reportPrompt, extractYaml,
+  FUNDS, fundPlanDate, supplyAmount, capToBudget, planPayees,
 };

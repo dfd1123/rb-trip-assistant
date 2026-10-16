@@ -126,11 +126,16 @@ td.proof{vertical-align:top}
 #r_drop{border:2px dashed var(--line);border-radius:12px;padding:16px;margin:4px 0 14px;display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center;color:var(--muted);font-size:13px;transition:background .15s,border-color .15s}
 #r_drop b{color:var(--ink);font-size:14px}
 #r_drop.over{background:var(--accent-soft);border-color:var(--accent)}
+#rq_files .chip{display:flex;align-items:center;gap:6px;background:#fff;border:1px solid var(--line);border-radius:8px;padding:4px 6px 4px 10px;font-size:12px;max-width:260px}
+#rq_files .chip .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#rq_files .chip button{border:0;background:none;cursor:pointer;color:var(--muted);font-size:14px;padding:0 2px}
 tr.fromai td{background:#f3f8ff}
 td.proof .files{display:flex;flex-direction:column;gap:4px;margin-top:6px}
 td.proof .add.hidden + .files{margin-top:0}
 td.proof .chip{min-height:36px;box-sizing:border-box}
-td.proof .chip{display:flex;align-items:center;gap:6px;max-width:100%;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:4px 6px 4px 8px;font-size:12px}
+.memo-wrap{display:flex;gap:6px;align-items:center}.memo-wrap .memo{flex:1;min-width:0}
+.ppl-box{display:flex;align-items:center;gap:3px;font-size:12px;color:var(--muted);flex:none}.ppl-box .ppl{width:38px;text-align:center;padding-left:4px;padding-right:4px}
+td.proof .chip{display:flex;min-width:0;align-items:center;gap:6px;max-width:100%;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:4px 6px 4px 8px;font-size:12px}
 td.proof .chip .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink);cursor:pointer}
 td.proof .chip .nm:hover{color:var(--accent);text-decoration:underline}
 td.proof .chip .x{border:0;background:none;color:var(--muted);cursor:pointer;padding:0 2px;font-size:12px}
@@ -158,6 +163,7 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
     <button data-tab="settings">설정</button>
   </nav>
   <button class="gwpill" id="gwPill" title="그룹웨어 로그인 상태"><i></i><span>그룹웨어 확인 중</span></button>
+  <button class="btn small" id="btnGwOpen" title="그룹웨어를 새 창으로 열어요 (앱이 뒤에서 하는 작업과는 따로)">그룹웨어 열기</button>
   <span class="ver" id="ver" style="margin-left:0"></span>
 </div></header>
 
@@ -256,10 +262,12 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
 
   <div id="reportView" class="hidden">
   <div class="card quick">
-    <h2>한 줄 메모로 보고서</h2>
-    <p class="sub">출장에서 한 일을 대충 적으면 보고사항과 날짜별 일정을 채워요. 경비는 신청 금액이 들어가 있으니 실제와 다른 것만 고치세요.</p>
-    <div class="qrow"><textarea id="rq_memo" placeholder="예: SDK 래핑 완료, 실기에서 제어·상태조회 검증 통과. 그리퍼 토크 이슈는 다음주 재검증 예정"></textarea>
-      <button class="btn primary" id="btnRQuick">자동 작성</button></div>
+    <h2>영수증 + 한 줄 메모로 보고서</h2>
+    <p class="sub">① 영수증을 넣고 ② 출장에서 한 일을 한 줄 적은 뒤 [자동 작성]을 누르면, 영수증은 경비 줄(과목·금액·증빙)로, 메모는 보고사항과 날짜별 일정으로 채워요.</p>
+    <div id="r_drop"><b>① 영수증·증빙을 여기에 끌어다 놓기</b><span>이미지·PDF 여러 개 한꺼번에</span><button class="btn small" id="btnPickReceipts">파일 고르기</button></div>
+    <div class="chips" id="rq_files" style="margin:0 0 10px"></div>
+    <div class="qrow"><textarea id="rq_memo" placeholder="② 예: SDK 래핑 완료, 실기에서 제어·상태조회 검증 통과. 그리퍼 토크 이슈는 다음주 재검증 예정"></textarea>
+      <button class="btn primary" id="btnRQuick" disabled>자동 작성</button></div>
     <div class="qstatus" id="rq_status"></div>
   </div>
   <div class="grid">
@@ -287,9 +295,9 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
       <button class="btn small" id="btnAddDay" style="margin-top:6px">+ 일정 추가</button>
     </div>
     <div class="card">
-      <h2>정산 경비</h2><p class="sub">실제 쓴 금액으로 고쳐 주세요. 영수증을 아래에 한꺼번에 놓으면 AI 가 읽어서 채워요.</p>
-      <div id="r_drop"><b>영수증·증빙을 여기에 끌어다 놓기</b><span>이미지·PDF 여러 개 한꺼번에 — 숙박·식대·교통비를 나누고 금액을 넣어요</span><button class="btn small" id="btnPickReceipts">파일 고르기</button></div>
-      <table class="ed" id="r_exp"><thead><tr><th style="width:26%">예산과목</th><th style="width:16%">금액(원)</th><th>적요</th><th style="width:28%">증빙 <span style="color:var(--err)">*</span> <span style="font-weight:400">(이미지·PDF)</span></th><th></th></tr></thead><tbody></tbody></table>
+      <h2>정산 경비</h2><p class="sub">실제 쓴 금액으로 고쳐 주세요. 영수증은 위 [자동 작성]에 넣으면 AI 가 읽어서 채워요.</p>
+      <div class="row"><label>자금과목 <span style="color:var(--err)">*</span></label><div class="seg" id="r_fund"><label><input type="radio" name="r_fund" value="일반경비">일반경비</label><label><input type="radio" name="r_fund" value="제조경비">제조경비</label></div></div>
+      <table class="ed" id="r_exp" style="table-layout:fixed"><thead><tr><th style="width:16%">예산과목</th><th style="width:13%">금액(원)</th><th style="width:11%">결제</th><th style="width:30%">인원 · 적요 <span style="font-weight:400">(= 거래처비고)</span></th><th>증빙 <span style="color:var(--err)">*</span> <span style="font-weight:400">(이미지·PDF)</span></th><th style="width:52px"></th></tr></thead><tbody></tbody></table>
       <button class="btn small" id="btnAddRExp" style="margin-top:6px">+ 경비 추가</button>
       <div class="total"><span>정산 합계</span><span id="r_total">0원</span></div>
       <p class="sub" id="r_attach" style="margin:10px 0 0"></p>
@@ -308,7 +316,8 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
       <h2>결재 문서 제목</h2>
       <div class="title-preview" id="r_title"></div>
       <div class="err" id="r_err"></div>
-      <button class="btn primary" id="btnReport" style="width:100%">그룹웨어에 입력하기</button>
+      <button class="btn primary" id="btnReport" style="width:100%">그룹웨어에 정산 입력하기</button>
+      <p class="sub" style="margin:10px 0 0">승인된 신청 품의로 품의서승인 → 결의서전송 창에서 지출결의서·채주내역(영수증마다)·환원까지 채우고 멈춰요. <b>[전송]은 직접</b> 확인하고 누르세요.</p>
       <button class="btn" id="btnBack" style="width:100%;margin-top:8px">목록으로</button>
     </div>
   </div>
@@ -389,9 +398,9 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
   <b><span id="dimWhat">와니가 작성 중</span><span class="dots"></span></b><div class="step" id="dimStep"></div>
 </div></div>
 <div id="jobPanel">
-  <header><span class="inline"><b id="jobTitle">작업</b><span id="jobSpin"></span></span><span class="inline"><button class="btn small" id="jobShow" title="숨겨진 그룹웨어 창을 띄워서 직접 확인·수정">그룹웨어 창 열기</button><button class="btn small" id="jobCancel">취소</button><button class="btn small" id="jobClose">닫기</button></span></header>
+  <header><span class="inline"><b id="jobTitle">작업</b><span id="jobSpin"></span></span><span class="inline"><button class="btn small hidden" id="jobShow" title="뒤에서 작업 중인 창을 띄워서 직접 확인·수정">작업 중인 창 열기</button><button class="btn small" id="jobCancel">취소</button><button class="btn small" id="jobClose">닫기</button></span></header>
   <pre id="jobLog"></pre>
-  <div id="jobAsk"><p id="jobQ"></p><p class="sub" style="margin:-4px 0 8px">작업은 뒤에서 진행 중이에요. 직접 손봐야 하면 위 [… 열기] 버튼으로 창을 띄우세요.</p>
+  <div id="jobAsk"><p id="jobQ"></p><p class="sub" style="margin:-4px 0 8px">작업은 뒤에서 진행 중이에요. 직접 손봐야 하면 위 [작업 중인 창 열기]를 누르세요.</p>
     <div class="inline"><input id="jobInput" inputmode="numeric" class="hidden" placeholder="숫자 입력">
       <button class="btn" id="jobNo">아니오</button><button class="btn primary" id="jobYes">계속</button></div></div>
 </div>

@@ -88,15 +88,16 @@ async function completeWithFiles({ provider, model, key }, prompt, files) {
 
 /** 영수증·증빙 한 장(파일 하나)을 읽어 경비로 분류. 파일 하나에 영수증이 여러 장이면 여러 개.
  *  items: { key: '예산과목 이름' } → [{ item, amount, date, vendor, memo }] (영수증이 아니면 []) */
-async function readReceipt(ai, file, items, period = '') {
+async function readReceipt(ai, file, items, period = '', rates = {}) {
   const list = Object.entries(items).map(([k, v]) => `- ${k}: ${v}`).join('\n');
   const prompt = `이 파일은 회사 국내·해외 출장 정산에 붙일 영수증이나 증빙이야. 결제 내역을 읽어서 JSON 배열로만 답해.
-각 항목: {"item": 예산과목 키, "amount": 결제 금액(원, 숫자만), "date": "YYYY-MM-DD" 또는 "", "vendor": 가게·회사 이름, "memo": 무엇에 쓴 돈인지 10자 안팎}
+각 항목: {"item": 예산과목 키, "amount": 결제 금액(원, 숫자만), "date": "YYYY-MM-DD" 또는 "", "vendor": 가게·회사 이름, "people": 식대면 몇 명이 먹었는지 (숫자), 아니면 0, "memo": 무엇에 쓴 돈인지 10자 안팎. 식대는 인원과 끼니로 (예: "1인 조식", "2인 석식"), 숙박은 "숙박 1박", 교통은 "KTX 서울-부산" 식}
 예산과목 키 (이 중 하나만):
 ${list}
 규칙:
 - 숙박(호텔·모텔·숙소) → domestic_lodging, 음식점·카페·편의점 식사 → meal, 주유·통행료·택시·버스·기차·KTX·주차 → domestic_transport. 해외면 overseas_* 나 airfare.
 - 금액은 실제 결제한 총액(부가세 포함). 통화가 원이 아니면 원으로 바꾸지 말고 그 숫자를 넣고 memo 에 통화를 적어.
+- 식대 인원(people): 영수증에 인원·메뉴 수량이 보이면 그걸로, 안 보이면 금액으로 짐작해 (회사 식대 기준 1인 한 끼: 조식 ${rates.breakfast || 8000}원·중식 ${rates.lunch || 15000}원·석식 ${rates.dinner || 15000}원). memo 의 "N인"도 같은 수로.
 - 한 파일에 영수증이 여러 장이면 각각 따로. 영수증·결제 내역이 아니면 [].
 ${period ? `- 출장 기간: ${period}` : ''}`;
   const text = await completeWithFiles(ai, prompt, [file]);
@@ -104,7 +105,7 @@ ${period ? `- 출장 기간: ${period}` : ''}`;
   let arr = []; try { arr = JSON.parse(m ? m[0] : text); } catch (e) { throw new Error('AI 답을 읽지 못했어요'); }
   if (!Array.isArray(arr)) arr = [arr];
   return arr.map(r => ({ item: items[r.item] ? r.item : '', amount: Math.round(Number(String(r.amount ?? '').replace(/[^\d.]/g, '')) || 0),
-    date: String(r.date || ''), vendor: String(r.vendor || '').slice(0, 40), memo: String(r.memo || '').slice(0, 40) })).filter(r => r.amount > 0 || r.item);
+    date: String(r.date || ''), vendor: String(r.vendor || '').slice(0, 40), memo: String(r.memo || '').slice(0, 40), people: Math.max(0, Math.round(Number(r.people) || 0)) })).filter(r => r.amount > 0 || r.item);
 }
 
 const WEEK = '일월화수목금토';

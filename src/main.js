@@ -56,14 +56,14 @@ function createMain() {
 }
 
 /** 그룹웨어 창. 로그인 세션은 persist:gw 파티션(이 PC)에만 저장된다. */
-// 그룹웨어 창은 기본으로 숨긴 채(백그라운드) 작업한다. 사람이 봐야 할 때만 [그룹웨어 창 열기]로 띄운다.
+// 그룹웨어 창은 기본으로 숨긴 채(백그라운드) 작업한다. 사람이 봐야 할 때만 [작업 중인 창 열기]로 띄운다.
 // 숨겨도 입력 이벤트·화면 갱신이 멈추지 않도록 backgroundThrottling 을 끈다.
 const gwPopups = new Set();
 let quitting = false;
 // 숨긴 창: 맥은 hide() 로도 입력·포커스가 되지만, 윈도우·리눅스는 한 번도 화면에 안 그려진 창에 클릭·키 입력이 제대로 안 들어가
 // 드롭다운·코드도움 선택이 실패한다 → 화면 밖(-32000)에 띄워 둔다 (작업표시줄에도 안 보임). 보여 줄 땐 화면 가운데로.
 const PARK = process.platform !== 'darwin';
-let gwShown = false;   // 사람이 [그룹웨어 창 열기]로 보고 있는 중이면 팝업(문서 보기 등)도 바로 보이게
+let gwShown = false;   // 사람이 [작업 중인 창 열기]로 보고 있는 중이면 팝업(문서 보기 등)도 바로 보이게
 function park(w) { if (!w || w.isDestroyed()) return; if (!PARK) return w.hide(); w.setSkipTaskbar(true); w.setPosition(-32000, -32000); if (!w.isVisible()) w.showInactive(); }
 function unpark(w) { if (!w || w.isDestroyed()) return; if (PARK) { w.setSkipTaskbar(false); w.center(); } w.show(); }
 app.on('before-quit', () => { quitting = true; });
@@ -101,6 +101,19 @@ function hideGw() {
   park(gwWin);
 }
 
+/** 사람이 직접 쓰는 그룹웨어 창. 앱이 뒤에서 작업하는 창(gwWin)과는 따로 열리고 로그인 세션(persist:gw)만 같이 쓴다.
+ *  문서번호 클릭 같은 팝업은 평소처럼 보이고, 닫으면 진짜 닫힌다 */
+let viewWin = null;
+function openGwViewer(url) {
+  if (viewWin && !viewWin.isDestroyed()) { if (viewWin.isMinimized()) viewWin.restore(); viewWin.show(); viewWin.focus(); return viewWin; }
+  viewWin = new BrowserWindow({ width: 1500, height: 950, icon: ICON, title: '그룹웨어', autoHideMenuBar: true,
+    webPreferences: { partition: 'persist:gw', contextIsolation: true, sandbox: true } });
+  viewWin.webContents.setWindowOpenHandler(() => ({ action: 'allow', overrideBrowserWindowOptions: { width: 1100, height: 1000, icon: ICON, autoHideMenuBar: true } }));
+  viewWin.on('closed', () => { viewWin = null; });
+  viewWin.loadURL(url);
+  return viewWin;
+}
+
 // 네이버 지도 창도 숨긴 채 돌리고, 자동 검색이 안 될 때 작업창 [네이버 지도 열기]로만 띄운다
 let naverWin = null;
 function makeNaverWindow() {
@@ -117,7 +130,11 @@ function showNaver() { if (naverWin && !naverWin.isDestroyed()) { unpark(naverWi
 class Cancelled extends Error { constructor() { super('취소했어요.'); } }
 class Job {
   constructor(kind, title) { this.kind = kind; this.title = title || kind; this.logs = []; this.state = 'running'; this.result = null; this.error = ''; this.question = null; this._resolve = null; this._reject = null; this.cancelled = false; }
-  info(msg) { if (this.cancelled) throw new Cancelled(); this.logs.push(...String(msg).split('\n')); }
+  info(msg) {
+    if (this.cancelled) throw new Cancelled();
+    this.logs.push(...String(msg).split('\n'));
+    if (!app.isPackaged) { try { const d = path.join(__dirname, '..', 'debug'); require('fs').mkdirSync(d, { recursive: true }); require('fs').appendFileSync(path.join(d, 'job.log'), `${new Date().toISOString()} [${this.kind}] ${msg}\n`); } catch (e) { /* 개발용 기록 */ } }   // 개발 중엔 작업 기록을 파일로도 (원인 찾기용)
+  }
   _ask(type, text) {
     if (this.cancelled) return Promise.reject(new Cancelled());
     this.state = 'waiting'; this.question = { type, text };
@@ -167,7 +184,7 @@ async function readReceipts(env, ai, paths, period) {
     const size = fs.statSync(p).size;
     if (size > 15 * 1024 * 1024) return out.push({ path: p, error: '파일이 너무 커요 (15MB 이하)' });
     try {
-      const rows = await AI.readReceipt(ai, { mime, data: fs.readFileSync(p).toString('base64') }, items, period);
+      const rows = await AI.readReceipt(ai, { mime, data: fs.readFileSync(p).toString('base64') }, items, period, store.config().rates);
       env.log(`${++i}/${paths.length} ${name}: ${rows.length ? rows.map(r => `${items[r.item] || '?'} ${r.amount.toLocaleString('ko-KR')}원`).join(', ') : '영수증을 못 찾음'}`);
       out.push({ path: p, rows });
     } catch (e) { env.log(`${++i}/${paths.length} ${name}: 실패 (${e.message})`); out.push({ path: p, error: e.message }); }
@@ -365,8 +382,20 @@ async function route(p, body = {}) {
       return { ok: true };
     }
     case '/api/gw/show': if (job && job.kind === 'fare' && showNaver()) return { ok: true }; showGw(); return { ok: true };
+    case '/api/gw/open': openGwViewer(cfg.baseUrl); return { ok: true };   // 상단 [그룹웨어 열기]: 사람이 쓰는 별도 창 (작업 창과 로그인만 공유)
     case '/api/gw/hide': hideGw(); return { ok: true };
     case '/api/job/gw-list': return startJob('gw-list', env => runner.runListBudget(env), body.title);
+    case '/api/receipt-memo': {   // 경비 줄 하나의 증빙 → 적요("9/28 1인 석식"). 적요는 그대로 채주 거래처비고가 된다
+      const ai = aiSettings(cfg); if (!ai) return { memo: '' };
+      const f = String(body.path || ''), ext = path.extname(f).slice(1).toLowerCase(), mime = PROOF_MIME[ext];
+      if (!mime) return { memo: '' };
+      const items = Object.fromEntries(Object.entries(R.BUDGET_ITEMS).map(([k, [, label]]) => [k, label.replace('여비교통비(판)_', '')]));
+      const rows = await AI.readReceipt(ai, { mime, data: require('fs').readFileSync(f).toString('base64') }, items, String(body.period || ''), cfg.rates);
+      const r = rows.find(x => x.item === body.item) || rows[0];
+      if (!r) return { memo: '' };
+      const md = r.date ? r.date.slice(5).split('-').map(Number).join('/') : '';
+      return { memo: [md, r.memo || r.vendor].filter(Boolean).join(' '), people: r.people || 0 };
+    }
     case '/api/job/receipts': {   // 영수증·증빙 여러 개 → AI 가 예산과목·금액·날짜 분류
       const ai = aiSettings(cfg);
       if (!ai) throw new Error('영수증 자동 분류는 AI 가 있어야 해요. 설정 › AI 문장 작성에서 Gemini 를 골라 주세요.');
@@ -394,7 +423,7 @@ async function route(p, body = {}) {
     case '/api/job/login': return startJob('login', env => runner.runLogin(env), body.title);
     case '/api/job/fare': return startJob('fare', env => runner.runFare({ ...env, force: Boolean(body.force) }, body), body.title);
     case '/api/job/apply': runner.planApply(body.data, cfg); return startJob('apply', env => runner.runApply(env, body.data, { save: false }), body.title);     // 보관·상신은 사람이
-    case '/api/job/report': R.parseReport(body.data); return startJob('report', env => runner.runReport(env, body.data, { save: false }), body.title);
+    case '/api/job/report': R.parseReport(body.data); return startJob('report', env => runner.runReport(env, body.data), body.title);
     case '/api/job/cancel': if (job) job.cancel(); return { ok: true };
     case '/api/job': return job ? job.snapshot(Number(body.since || 0)) : { state: 'none' };
     case '/api/job/answer': if (job) job.answer(body.value); return { ok: true };
