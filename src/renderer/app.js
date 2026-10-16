@@ -15,6 +15,28 @@ const radio = name => (document.querySelector(`input[name=${name}]:checked`)||{}
 const setRadio = (name, v) => { const el = document.querySelector(`input[name=${name}][value="${v}"]`); if(el) el.checked = true; };
 const list = s => String(s||'').split(',').map(x=>x.trim()).filter(Boolean);
 
+/* ---------- 시각 입력: 브라우저 기본 시계 팝업은 [확인]이 없어 불편 → 시·분 선택 상자로 (값은 그대로 'HH:MM') ---------- */
+function timeSelect(inp){
+  const wrap = document.createElement('span'); wrap.className = 'tsel';
+  const h = document.createElement('select'), m = document.createElement('select');
+  h.innerHTML = '<option value="">시</option>' + [...Array(24)].map((_, i) => `<option>${String(i).padStart(2, '0')}</option>`).join('');
+  m.innerHTML = '<option value="">분</option>' + [...Array(12)].map((_, i) => `<option>${String(i * 5).padStart(2, '0')}</option>`).join('');   // 5분 단위
+  h.title = m.title = inp.title || '';
+  inp.type = 'hidden'; inp.after(wrap); wrap.append(h, document.createTextNode(':'), m);
+  const desc = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+  const sync = v => { const [hh, mm] = String(v || '').split(':'); h.value = hh || ''; if(mm && ![...m.options].some(o => o.value === mm)) m.add(new Option(mm, mm)); m.value = mm || ''; };
+  Object.defineProperty(inp, 'value', { get(){ return desc.get.call(inp); }, set(v){ desc.set.call(inp, v); sync(v); } });   // 코드에서 값을 넣어도 선택 상자에 보이게
+  const push = () => { if(h.value && !m.value) m.value = '00'; desc.set.call(inp, h.value ? `${h.value}:${m.value}` : ''); ['input', 'change'].forEach(ev => inp.dispatchEvent(new Event(ev, {bubbles: true}))); };
+  h.onchange = m.onchange = push;
+  sync(desc.get.call(inp));
+}
+$$('input[type=time]').forEach(timeSelect);
+
+/* 개발 중: 엔진 코드가 바뀌면 화면 위에 띠만 띄움 (앱은 스스로 다시 켜지지 않음) */
+if(window.api.onDevStale) window.api.onDevStale(() => { if($('#devStale')) return; const b = document.createElement('div'); b.id = 'devStale';
+  b.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:9999;background:#f59e0b;color:#111;font-size:13px;padding:6px 12px;text-align:center';
+  b.textContent = '엔진 코드가 바뀌었어요. 적용하려면 앱을 다시 켜 주세요 (yarn dev).'; document.body.appendChild(b); });
+
 /* ---------- 탭 ---------- */
 $$('nav button').forEach(b => b.onclick = () => {
   $$('nav button').forEach(x => x.classList.toggle('on', x===b));
@@ -48,7 +70,7 @@ function expRow(tbody, e={}, onchange){
     let proofs = (e.proofs || []).slice(0, 1);   // 경비 한 줄에 증빙 1개
     const draw = () => {
       const box = tr.querySelector('.files'); box.innerHTML = '';
-      if(!proofs.length){ const s = document.createElement('div'); s.className = 'empty'; s.textContent = '증빙 필수 · 영수증 사진이나 PDF'; box.appendChild(s); }
+      if(!proofs.length){ const s = document.createElement('div'); s.className = 'empty'; s.textContent = '영수증 사진이나 PDF (없으면 비워 둠)'; box.appendChild(s); }
       proofs.forEach((p, i) => {
         const chip = document.createElement('div'); chip.className = 'chip';
         const nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = (/\.pdf$/i.test(p) ? '📄 ' : '🖼️ ') + p.split(/[\\/]/).pop(); nm.title = p + ' (눌러서 열기)'; nm.onclick = () => rpc('/api/open', {path: p});
@@ -56,7 +78,7 @@ function expRow(tbody, e={}, onchange){
         chip.append(nm, x); box.appendChild(chip);
       });
       tr.dataset.proofs = JSON.stringify(proofs);
-      const add = tr.querySelector('.add'); add.classList.toggle('hidden', proofs.length > 0); add.classList.toggle('need', !proofs.length && num(amt.value) > 0);
+      const add = tr.querySelector('.add'); add.classList.toggle('hidden', proofs.length > 0); add.classList.remove('need');
     };
     tr.querySelector('.add').onclick = async () => { const {paths} = await rpc('/api/pick-proofs'); if(paths.length){ proofs = [paths[0]]; draw(); fillMemo(tr); } };
     draw();
@@ -64,10 +86,15 @@ function expRow(tbody, e={}, onchange){
   sel.value = e.item || (tid==='a_exp' ? 'domestic_lodging' : 'domestic_transport');
   amt.value = (e.amount === 0 || e.amount) && e.amount !== '' ? Number(e.amount).toLocaleString('ko-KR') : '';   // 0원도 그대로 보임
   memo.value = e.memo || '';
-  amt.oninput = () => { amt.value = amt.value ? num(amt.value).toLocaleString('ko-KR') : ''; if(tid==='a_exp') autoExp = false; onchange(); if(tr.querySelector('.add')) tr.querySelector('.add').classList.toggle('need', num(amt.value) > 0 && !JSON.parse(tr.dataset.proofs || '[]').length); };
+  amt.oninput = () => { amt.value = amt.value ? num(amt.value).toLocaleString('ko-KR') : ''; if(tid==='a_exp') autoExp = false; onchange(); };
   sel.onchange = memo.oninput = onchange;
   tr.querySelector('.del').onclick = () => { tr.remove(); onchange(); };
   tbody.appendChild(tr); onchange();
+}
+/** 증빙 없이 진행할 때 두 번 확인 (정산할 게 없거나 영수증이 없는 경우) */
+function confirmNoProof(what = '영수증·증빙'){
+  if(!confirm(`${what} 없이 진행할까요?`)) return false;
+  return confirm(`정말 ${what}을(를) 안 넣을 건가요?\n증빙이 없으면 결재 승인이 안 날 수 있어요.`);
 }
 /** 적요에 인원 넣기: "9/28 1인 석식" → "9/28 2인 석식" (없으면 날짜 뒤에) */
 const withPeople = (m, n) => /\d+\s*인/.test(m) ? m.replace(/\d+\s*인/, `${n}인`) : m.replace(/^(\d{1,2}\/\d{1,2})?\s*/, (_, d) => `${d ? d + ' ' : ''}${n}인 `).trim();
@@ -302,7 +329,12 @@ async function loadTrips(){
   }
   const stOf = k => ((gwMap[k] || {}).status || '');
   const isRejected = r => { const t = byApply[r.key]; return REJECTED.test(stOf(r.key)) || !!(t && t.gwReport && REJECTED.test(stOf(t.gwReport.key))); };
-  const allDone = r => { const t = byApply[r.key]; return !!(t && t.gwReport && /완료/.test(stOf(r.key)) && /완료/.test(stOf(t.gwReport.key))); };   // 신청·보고 결재 둘 다 끝남
+  // 정산(결의서전송)됨 = 그룹웨어 품의의 결의금액 > 0 또는 이 PC 기록의 결의번호. 예전 방식의 '보고 품의'는 이때 무시한다
+  const settled = r => { const t = byApply[r.key]; return ((gwMap[r.key] || {}).sent || 0) > 0 || !!(t && t.resolutionNo); };
+  const nz = x => String(x || '').replace(/\s/g, '');
+  const reportDoc = r => { const t = byApply[r.key]; return t ? gwReportDocs.find(d => nz(d.title) === nz(t.reportDocTitle)) : null; };   // 올라간 출장보고서 결재 문서
+  const reportOpened = r => { const t = byApply[r.key]; return !!reportDoc(r) || !!(t && /작성 창 열림|상신/.test(t.reportStatus || '')); };   // 출장보고서 결재 창까지 띄움 → 나머지(결재라인·상신)는 사람
+  const allDone = r => { const t = byApply[r.key]; const d = reportDoc(r); if(d) return /완료/.test(d.status) && /완료/.test(stOf(r.key)); return !!(t && t.gwReport && /완료/.test(stOf(r.key)) && /완료/.test(stOf(t.gwReport.key))); };   // 신청·보고 결재 둘 다 끝남
   let rows = gwAll.filter(r => (r.trip ? r.trip === 'apply' : /출장/.test(r.memo || '')) && !byReport[r.key])   // 결재양식이 '출장신청…'인 품의 (상신 전엔 적요로)
     .sort((a, b) => (b.ym + b.day.padStart(2, '0') + b.seq.padStart(5, '0')).localeCompare(a.ym + a.day.padStart(2, '0') + a.seq.padStart(5, '0')))
     .sort((a, b) => Number(isRejected(b)) - Number(isRejected(a)));   // 반려된 출장이 맨 위
@@ -319,11 +351,15 @@ async function loadTrips(){
     const reportSt = t && t.gwReport ? stOf(t.gwReport.key) : '';
     const reportRejected = REJECTED.test(reportSt), reportDone = /완료/.test(reportSt);
     // 신청 반려 → 고쳐서 [다시 신청]. 보고 반려 → [보고서 다시 올리기](전에 쓴 내용 그대로 열림, 이전 보고 품의는 지우고 새로)
-    const repLabel = reportRejected ? '보고서 고쳐서 다시 올리기' : t && t.report ? '보고서 이어서 작성' : '보고서 작성';
+    const rdoc = reportDoc(r);   // 출장보고서 결재가 올라갔으면 그 상태를 보여 주고, 반려가 아니면 버튼은 안 보임
+    const rdocRejected = !!rdoc && REJECTED.test(rdoc.status);
+    const isSettled = settled(r) || !!rdoc;
+    // 정산 결의를 이미 전송했으면 경비를 다시 쓰지 않는다 → 다음 할 일은 출장보고서 결재 창 올리기(결의서입력 → 결재상신)
+    const repLabel = isSettled ? '출장보고서 결재 올리기' : reportRejected ? '보고서 고쳐서 다시 올리기' : t && t.report ? '보고서 이어서 작성' : '보고서 작성';
     if(applyRejected || reportRejected) el.classList.add('rejected');
-    el.innerHTML = `<div><b></b>${gwPill('신청', links[0])}${t && (t.gwReport || t.report) ? gwPill('보고', t.gwReport) : ''}
+    el.innerHTML = `<div><b></b>${gwPill('신청', links[0])}${rdoc ? `<span class="pill ${/완료/.test(rdoc.status) ? 'ok' : rdocRejected ? 'bad' : ''}">보고 ${rdoc.status || '-'} · ${rdoc.docNo}</span>` : isSettled ? `<span class="pill ok">정산 결의 전송됨${t && t.resolutionNo ? ' · ' + t.resolutionNo : ''}</span>` : t && (t.gwReport || t.report) ? gwPill('보고', t.gwReport) : ''}
       <div class="sub" style="margin:2px 0 0"></div>${applyRejected ? '<div class="err" style="margin-top:4px">신청이 반려됐어요. 반려 사유를 그룹웨어에서 확인하고 [다시 신청]으로 고쳐 올리세요. 반려된 품의는 [삭제]로 지울 수 있어요.</div>' : reportRejected ? '<div class="err" style="margin-top:4px">보고서가 반려됐어요. 반려 사유를 확인하고 고쳐서 다시 올리세요.</div>' : ''}</div>
-      <div class="inline"><button class="btn small danger del">삭제</button>${t ? `<button class="btn again ${applyRejected ? 'primary' : ''}">다시 신청</button>` : ''}${approved && !reportDone ? `<button class="btn primary rep">${repLabel}</button>` : ''}</div>`;
+      <div class="inline"><button class="btn small danger del">삭제</button>${t ? `<button class="btn again ${applyRejected ? 'primary' : ''}">다시 신청</button>` : ''}${approved && !reportDone && (!rdoc || rdocRejected) && !(isSettled && reportOpened(r) && !rdocRejected) ? `<button class="btn primary rep">${rdocRejected ? '보고서 고쳐서 다시 올리기' : repLabel}</button>` : ''}</div>`;
     el.querySelector('b').textContent = (r.docTitle || r.memo || '').replace(/^\[[^\]]*\]\s*/, '');
     el.querySelector('.sub').textContent = t ? `${t.start} ~ ${t.end} · ${r.total}원` : `${r.ym} ${r.day}일 품의 · ${r.total}원${r.docNo ? ' · ' + r.docNo : ''}`;
     if(t) el.querySelector('.again').onclick = () => repeatTrip(t.id, applyRejected);
@@ -355,8 +391,15 @@ function deleteTrip(t, links){
   if(!links.length) return rpc('/api/trip/forget', {id: t.id}).then(loadTrips);
   runJob('출장 삭제', '/api/job/trip-delete', {id: t.id}, () => { loadTrips(); autoGwCheck(true); });
 }
-function setGw(rows){ gwAll = rows || []; gwMap = Object.fromEntries(gwAll.map(r => [r.key, r])); try { localStorage.gw_rows = JSON.stringify(gwAll); } catch(e){ /* 저장 공간 없음 */ } }
-try { if(localStorage.gw_rows) setGw(JSON.parse(localStorage.gw_rows)); } catch(e){ /* 캐시 없음 */ }   // 지난 결과를 먼저 보여주고 뒤에서 갱신
+/** 개발 중에만: 목록을 API 로 읽었는지 화면에서 읽었는지 표시 */
+function showVia(r){ const el = $('#gwVia'); if(!el || !(META.config && META.dev)) return; el.classList.remove('hidden');
+  el.textContent = r.via === 'api' ? `API · ${(r.ms / 1000).toFixed(1)}초` : `화면 읽기 · ${(r.ms / 1000).toFixed(1)}초${r.apiError ? ' · API 실패: ' + r.apiError.slice(0, 60) : ''}`;
+  el.className = 'pill ' + (r.via === 'api' ? 'ok' : 'bad'); }
+let refundChecked = false;   // 환원 점검은 앱 켜고 한 번만, 목록을 보여 준 뒤 뒤에서
+function refundCheckOnce(){ if(refundChecked) return; refundChecked = true; setTimeout(() => runJob('정산 환원 점검', '/api/job/refund-check', {}, null, {quiet: true}), 500); }
+let gwReportDocs = [];   // 출장보고서 결재 문서 (결의서입력 → 결재상신으로 올린 것)
+function setGw(rows, docs){ gwAll = rows || []; gwMap = Object.fromEntries(gwAll.map(r => [r.key, r])); if(docs) gwReportDocs = docs; try { localStorage.gw_rows = JSON.stringify(gwAll); localStorage.gw_rdocs = JSON.stringify(gwReportDocs); } catch(e){ /* 저장 공간 없음 */ } }
+try { if(localStorage.gw_rows) setGw(JSON.parse(localStorage.gw_rows), JSON.parse(localStorage.gw_rdocs || '[]')); } catch(e){ /* 캐시 없음 */ }   // 지난 결과를 먼저 보여주고 뒤에서 갱신
 function renderOrphans(trips, shown = new Set()){
   if(!gwMap){ $('#gwOrphans').classList.add('hidden'); return; }
   const linked = new Set(trips.flatMap(t => [t.gwApply, t.gwReport].filter(Boolean).map(l => l.key)));
@@ -385,9 +428,27 @@ async function autoGwCheck(force){   // 탭을 열 때 그룹웨어 상태를 �
   const cur = await rpc('/api/job').catch(() => null);
   if(cur && (cur.state === 'running' || cur.state === 'waiting')) return;
   gwAutoAt = Date.now();
-  runJob('그룹웨어 상태 확인', '/api/job/gw-list', {}, r => { setGw(r.rows); loadTrips(); }, {quiet: true});
+  runJob('그룹웨어 상태 확인', '/api/job/gw-list', gwRange(), r => { setGw(r.rows, r.reportDocs); showVia(r); loadTrips(); refundCheckOnce(); }, {quiet: true});
 }
-$('#btnGwList').onclick = () => runJob('그룹웨어 상태 확인', '/api/job/gw-list', {}, r => { setGw(r.rows); loadTrips(); }, {quiet: true});
+$('#btnGwList').onclick = () => runJob('그룹웨어 상태 확인', '/api/job/gw-list', gwRange(), r => { setGw(r.rows, r.reportDocs); showVia(r); loadTrips(); refundCheckOnce(); }, {quiet: true});
+/* 조회 기간(날짜): 기본 오늘부터 3개월 전까지, 최대 1년. 바꾸면 바로 다시 읽고, 선택은 이 PC에 기억 */
+const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+function gwRange(){
+  const today = new Date(), def = new Date(today); def.setMonth(def.getMonth() - 3);
+  let from = $('#gwFrom').value || ymd(def), to = $('#gwTo').value || ymd(today);
+  if(from > to) [from, to] = [to, from];
+  const lim = new Date(`${to}T00:00:00`); lim.setFullYear(lim.getFullYear() - 1);
+  if(from < ymd(lim)) from = ymd(lim);   // 최대 1년
+  $('#gwFrom').value = from; $('#gwTo').value = to;
+  try { localStorage.gw_from = from; localStorage.gw_to = to; } catch(e){ /* */ }
+  // 빠른 버튼 표시: 끝이 오늘이고 시작이 정확히 n개월 전이면 그 버튼을 켬
+  $$('#gwRange .quickr .btn').forEach(b => { const d = new Date(today); d.setMonth(d.getMonth() - Number(b.dataset.m)); b.classList.toggle('on', to === ymd(today) && from === ymd(d)); });
+  return {from, to};
+}
+$$('#gwRange .quickr .btn').forEach(b => b.onclick = () => { const today = new Date(), d = new Date(today); d.setMonth(d.getMonth() - Number(b.dataset.m)); $('#gwFrom').value = ymd(d); $('#gwTo').value = ymd(today); gwRange(); $('#btnGwList').click(); });
+try { if(localStorage.gw_from && localStorage.gw_to){ $('#gwFrom').value = localStorage.gw_from; $('#gwTo').value = localStorage.gw_to; } } catch(e){ /* */ }
+gwRange();
+['#gwFrom', '#gwTo'].forEach(id => $(id).onchange = () => { gwRange(); $('#btnGwList').click(); });
 function deleteGwRows(pick){
   if(!pick.length) return;
   const keys = pick.map(r => r.key);
@@ -471,13 +532,14 @@ function addRqFiles(paths){
 }
 function syncRQuick(keepStatus){
   const memo = !!$('#rq_memo').value.trim(), files = rqFiles.length > 0;
-  $('#btnRQuick').disabled = !(memo && files) || !!$('#btnRQuick').dataset.busy;
+  $('#btnRQuick').disabled = !memo || !!$('#btnRQuick').dataset.busy;   // 영수증은 없어도 됨 (누를 때 두 번 확인)
   if(keepStatus || $('#btnRQuick').dataset.busy) return;
-  $('#rq_status').textContent = memo && files ? '' : `${!files && !memo ? '① 영수증과 ② 한 줄 메모를' : !files ? '① 영수증을' : '② 한 줄 메모를'} 넣으면 [자동 작성]을 누를 수 있어요.`;
+  $('#rq_status').textContent = memo ? (files ? '' : '영수증 없이도 작성할 수 있어요 (정산할 게 없으면).') : '② 한 줄 메모를 넣으면 [자동 작성]을 누를 수 있어요.';
 }
 $('#rq_memo').addEventListener('input', syncRQuick);
 $('#btnRQuick').onclick = async () => {
-  if(!currentTrip || !rqFiles.length || !$('#rq_memo').value.trim()) return syncRQuick();
+  if(!currentTrip || !$('#rq_memo').value.trim()) return syncRQuick();
+  if(!rqFiles.length && !confirmNoProof()) return;
   const btn = $('#btnRQuick'); btn.disabled = true; btn.dataset.busy = '1'; $('#rq_status').textContent = '보고사항 작성 중…';
   try {
     const r = await rpc('/api/report-quick', {id: currentTrip.trip_id, memo: $('#rq_memo').value});
@@ -486,6 +548,7 @@ $('#btnRQuick').onclick = async () => {
     const how = (r.source === 'template' ? '템플릿으로 작성' : `${r.source}로 작성`) + (r.note ? ` · ${r.note}` : '');
     $('#rq_status').textContent = how + ' · 영수증 읽는 중…';
     const paths = rqFiles;
+    if(!paths.length){ $('#rq_status').textContent = how + ' · 영수증 없이 작성 · 확인 후 [그룹웨어에 정산 입력하기]'; return; }
     runJob(`영수증 ${paths.length}개 읽기`, '/api/job/receipts', {paths, period: receiptPeriod()}, res => {
       applyReceipts(res.results || []);
       rqFiles = []; renderRqFiles(); syncRQuick(true);
@@ -548,11 +611,10 @@ $('#btnReport').onclick = async () => {
   if(!d.report){ $('#r_err').textContent = '담당업무 및 보고사항을 입력해 주세요.'; $('#r_report').classList.add('need'); return; }
   $$('#r_sched textarea').forEach(x => x.classList.toggle('need', !x.value.trim()));
   if(!d.schedule.length || d.schedule.some(r => !r.detail)){ $('#r_err').textContent = '출장일정의 세부 활동 내용을 날짜마다 적어 주세요.'; return; }
-  if(!d.expenses.length){ $('#r_err').textContent = '경비를 한 줄 이상 넣어 주세요.'; return; }
   if(!d.fund){ $('#r_err').textContent = '자금과목(일반경비·제조경비)을 골라 주세요.'; $('#r_fund').classList.add('need'); return; }
-  $$('#r_exp tbody tr').forEach(tr => { const b = tr.querySelector('.add'); if(b) b.classList.toggle('need', !JSON.parse(tr.dataset.proofs || '[]').length); });
-  const noProof = d.expenses.findIndex(e => !(e.proofs || []).length);
-  if(noProof >= 0){ $('#r_err').textContent = `정산 경비 ${noProof + 1}번째 줄에 증빙(이미지·PDF)을 첨부해 주세요.`; return; }
+  const noProof = d.expenses.filter(e => !(e.proofs || []).length).length;
+  if(noProof && !confirmNoProof(`정산 경비 ${noProof}줄의 증빙`)) return;
+  if(!d.expenses.length && !confirm('정산할 경비가 없어요. 신청한 금액을 전부 환원하고 보고서만 올릴까요?')) return;
   // 식대 인원이 빈 줄: 금액으로 짐작해 넣고 적요의 "N인"도 맞춘 뒤 확인받는다
   const noPpl = [...$$('#r_exp tbody tr')].filter(tr => tr.querySelector('.item').value === 'meal' && tr.querySelector('.ppl') && !tr.querySelector('.ppl').value && tr.querySelector('.memo').value.trim());
   noPpl.forEach(tr => { const n = guessPeople(num(tr.querySelector('.amt').value), tr.querySelector('.memo').value); tr.querySelector('.ppl').value = n; tr.querySelector('.memo').value = withPeople(tr.querySelector('.memo').value, n); tr.querySelector('.ppl').classList.add('need'); });
@@ -652,7 +714,7 @@ function watchJob(title, onDone, {quiet = false} = {}){
     const q = s.question;
     $('#jobShow').textContent = '작업 중인 창 열기';
     $('#jobShow').classList.toggle('hidden', !(q || s.state === 'error'));   // 사람이 손봐야 할 때(질문·실패)만 작업 창을 보여 준다
-    const what = {apply: '와니가 작성 중', report: '와니가 작성 중', fare: '와니가 교통비 조회 중', 'trip-delete': '와니가 삭제 중', 'gw-delete': '와니가 삭제 중', 'gw-list': '그룹웨어 로그인·품의 상태를 확인 중이에요', 'gw-profile': '그룹웨어에서 내 정보를 불러오는 중이에요', 'report-load': '그룹웨어에서 보고서를 불러오는 중이에요', receipts: '와니가 영수증 읽는 중', login: '그룹웨어 로그인 상태를 확인 중이에요'}[s.kind] || '와니가 처리 중';
+    const what = {apply: '와니가 작성 중', report: '와니가 작성 중', fare: '와니가 교통비 조회 중', 'trip-delete': '와니가 삭제 중', 'gw-delete': '와니가 삭제 중', 'gw-list': '그룹웨어 로그인·품의 상태를 확인 중이에요', 'gw-profile': '그룹웨어에서 내 정보를 불러오는 중이에요', 'report-load': '그룹웨어에서 보고서를 불러오는 중이에요', 'refund-check': '정산 환원을 확인하는 중이에요', receipts: '와니가 영수증 읽는 중', login: '그룹웨어 로그인 상태를 확인 중이에요'}[s.kind] || '와니가 처리 중';
     $('#dimWhat').textContent = what; $('.wani .pen').textContent = /삭제/.test(what) ? '🧹' : /조회|확인/.test(what) ? '🔍' : '✍️';
     $('#jobAsk').style.display = q ? 'block' : 'none';
     $('#jobSpin').classList.toggle('on', !q && s.state === 'running');   // 사람 입력 기다릴 땐 멈춤

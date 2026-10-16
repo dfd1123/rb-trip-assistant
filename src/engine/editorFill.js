@@ -34,7 +34,8 @@ const fillForm = (payload) => {
     let p = td.querySelector('p');
     if (!p) { p = doc.createElement('p'); td.appendChild(p); }
     const span = p.querySelector('span');
-    const style = (span && span.getAttribute('style')) || 'font-size:10pt;';
+    // 안내 문구 스타일(빨간 기울임 "정부과제의 경우 과제명 기입 필수")은 물려받지 않는다
+    const style = ((span && span.getAttribute('style')) || 'font-size:10pt;').replace(/color:[^;]*;?|font-style:[^;]*;?/g, '') || 'font-size:10pt;';
     p.innerHTML = `<span style="${style}">${lines.map(esc).join('<br />') || '<br />'}</span>`;
     Array.from(td.querySelectorAll('p')).slice(1).forEach(x => x.remove());
   };

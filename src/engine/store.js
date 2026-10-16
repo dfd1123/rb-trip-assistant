@@ -94,7 +94,7 @@ class Store {
     return fs.readdirSync(this.tripsDir).sort().reverse().flatMap(id => {
       try {
         const r = this.load(id);
-        return [{ id, reason: r.apply.reason, start: r.apply.start, end: r.apply.end, status: r.status || '', report: r.reportStatus || '', gwApply: r.gwApply || null, gwReport: r.gwReport || null }];
+        return [{ id, reason: r.apply.reason, start: r.apply.start, end: r.apply.end, status: r.status || '', report: r.reportStatus || '', reportStatus: r.reportStatus || '', resolutionNo: r.resolutionNo || '', refundChecked: r.refundChecked || '', gwApply: r.gwApply || null, gwReport: r.gwReport || null }];
       } catch (e) { return []; }
     });
   }

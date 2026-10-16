@@ -108,13 +108,24 @@ async function runReport(env, data) {
   const lines = rep.expenses.map(e => ({ label: e.label, pay: e.pay, amount: e.amount, supply: R.supplyAmount(e.amount, e.pay), memo: e.memo, planDate: R.fundPlanDate(e.pay, { usedOn }), proof: (e.proofs || [])[0] || '' }));
   const gw = new Amaranth({ win: env.gwWindow(), baseUrl: cfg.baseUrl, ui, log, debugDir: env.debugDir, creds: env.creds });
   await gw.ensureLogin();
-  await gw.openApprovedBudget(apply);
-  const st = await gw.settleTransfer({ purpose: R.APPLY_FORM, payee, fund: rep.fund, lines });
-  // [전송]까지 앱이 한다 (사용자 요청 2026-10-16). 채주 저장 확인이 안 됐으면 보내지 않는다
-  const resNo = st && st.ok ? await gw.transferResolution() : '';
-  if (rec) { try { const r2 = store.load(rep.trip_id); r2.report = data; r2.reportStatus = resNo ? `결의 전송됨(${resNo})` : '결의 입력(전송 전)'; if (resNo) r2.resolutionNo = resNo; store.save(rep.trip_id, r2); } catch (e) { /* 기록 없음 */ } }
-  if (!resNo) { env.showGw(); await ui.pause('[전송]을 하지 않았어요. 결의서전송 창에서 채주·첨부·환원을 확인하고 직접 [전송]한 뒤 [계속]을 눌러 주세요.'); }
-  log('결의서 전송까지 끝났어요. 결의서입력 → 결재상신 → 출장보고서 작성은 다음 단계에서 자동으로 이어져요(작업 중). 지금은 결의서입력 메뉴에서 [결재상신]을 눌러 주세요.');
+  // 1~2단계: 결의서전송 (이미 전송한 출장이면 건너뜀 — 다시 돌릴 때)
+  // 이미 전송했어도 결의서전송 창은 한 번 연다: 그 안에서 전송 여부를 보고, 환원이 빠져 있으면 다시 [환원]만 한다 (기록에 기대지 않음)
+  let resNo = '';
+  {
+    await gw.openApprovedBudget(apply);
+    const st = await gw.settleTransfer({ purpose: R.APPLY_FORM, payee, fund: rep.fund, lines });
+    // [전송]까지 앱이 한다 (사용자 요청 2026-10-16). 채주 저장 확인이 안 됐으면 보내지 않는다
+    resNo = st && st.resNo ? st.resNo : st && st.ok ? await gw.transferResolution() : '';
+    if (rec) { try { const r2 = store.load(rep.trip_id); r2.report = data; r2.reportStatus = resNo ? `결의 전송됨(${resNo})` : '결의 입력(전송 전)'; if (resNo) r2.resolutionNo = resNo; store.save(rep.trip_id, r2); } catch (e) { /* 기록 없음 */ } }
+    if (!resNo) { env.showGw(); await ui.pause('[전송]을 하지 않았어요. 결의서전송 창에서 채주·첨부·환원을 확인하고 직접 [전송]한 뒤 여기서 [계속]을 눌러 주세요. 결의서입력부터는 다음에 [그룹웨어에 정산 입력하기]를 다시 누르면 이어서 해요.'); return {}; }
+  }
+  // 3~4단계: 결의서입력 → [결재상신] → 결재양식 '출장보고서 및 경비정산 지출결의서' → 출장보고서 본문. [상신]은 사람이
+  const title = R.reportTitle(rep.reason);
+  await gw.openResolution(resNo);
+  const popup = await gw.openApproval(R.REPORT_FORM, title, { category: '결의서입력' });
+  await gw.fillAndKeep(popup, { title, probe: '출장일시', payload: reportPayload(rep), attachments: [], save: false });   // 영수증은 채주 첨부로 이미 결재 문서에 딸려 온다 → 다시 안 올림
+  if (rec) { try { const r2 = store.load(rep.trip_id); r2.reportStatus = '보고서 작성 창 열림(상신 전)'; store.save(rep.trip_id, r2); } catch (e) { /* */ } }
+  log('출장보고서 작성 창을 띄웠어요. 결재라인 확인하고 [상신]은 직접 눌러 주세요.');
   return { resolutionNo: resNo };
 }
 
@@ -126,19 +137,21 @@ async function runLogin(env) {
 }
 
 /** 품의 행에 전자결재 문서(결재양식·제목·결재상태)를 문서번호로 붙이고, 양식으로 출장 신청/보고를 표시한다. 상신 전(문서번호 없음)은 적요로 짐작 */
-async function attachApprovalDocs(gw, rows, log) {
+async function attachApprovalDocs(gw, rows, log, range = null) {
   const ymd = d => `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
-  const to = new Date(), from = new Date(to.getFullYear(), to.getMonth() - 3, 1);
+  const r = range || listRange('', '');
   let docs = [];
-  try { docs = await gw.apiApprovalDocs(ymd(from), ymd(to)); } catch (e) { log(`(결재문서 목록 못 읽음: ${String(e.message).slice(0, 120)} — 적요로 판단해요)`); }
+  try { docs = await gw.apiApprovalDocs(r.from.replace(/-/g, ''), r.to.replace(/-/g, '')); } catch (e) { log(`(결재문서 목록 못 읽음: ${String(e.message).slice(0, 120)} — 적요로 판단해요)`); }
   const byNo = Object.fromEntries(docs.filter(d => d.docNo).map(d => [d.docNo, d]));
   for (const r of rows) {
     const d = r.docNo && byNo[r.docNo];
     if (d) { r.form = d.form; r.docTitle = d.title; r.docStatus = d.status; r.docId = d.docId; r.formId = d.formId; r.trip = /출장\s*신청/.test(d.form) ? 'apply' : /출장\s*보고/.test(d.form) ? 'report' : ''; }
     else r.trip = /출장\s*보고/.test(r.memo || '') ? 'report' : /출장/.test(r.memo || '') ? 'apply' : '';
   }
-  return docs.length;
+  return docs;
 }
+/** 결의서입력에서 올린 출장보고서 결재 문서 (양식 '출장보고서 및 경비정산 지출결의서') — 목록에서 보고 진행 상태를 보여 주는 데 씀 */
+const reportDocsOf = docs => (docs || []).filter(d => d.form === R.REPORT_FORM).map(({ docNo, title, status, date }) => ({ docNo, title, status, date }));
 
 /** 이 PC에 보고서 내용이 없는데 그룹웨어에 보고 품의(상신 전)가 있으면: 그 품의의 예산 줄을 경비로 되살린다.
  *  담당업무·세부 활동 내용은 작성 창에서 [보관]하지 않았으면 그룹웨어에 남지 않아 되살릴 수 없다 */
@@ -178,34 +191,72 @@ async function runProfile(env, { force = false } = {}) {
   return { name: patch.name || cfg.name, budgetDept: patch.budgetDept || cfg.budgetDept, budgetDepts: depts };
 }
 
-async function runListBudget(env) {
+/** 조회 기간 정리: from~to (YYYY-MM-DD). 비면 오늘부터 3개월 전, 1년을 넘으면 to 기준 1년으로 */
+function listRange(from, to) {
+  const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const ok = v => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
+  const today = new Date(); const def = new Date(today); def.setMonth(def.getMonth() - 3);
+  to = ok(to) ? to : ymd(today); from = ok(from) ? from : ymd(def);
+  if (from > to) [from, to] = [to, from];
+  const lim = new Date(`${to}T00:00:00`); lim.setFullYear(lim.getFullYear() - 1);
+  if (from < ymd(lim)) from = ymd(lim);
+  const months = []; for (let d = new Date(`${to.slice(0, 7)}-01T00:00:00`); ymd(d).slice(0, 7) >= from.slice(0, 7); d.setMonth(d.getMonth() - 1)) months.push(ymd(d).slice(0, 7));
+  return { from, to, months };
+}
+
+async function runListBudget(env, { from = '', to = '' } = {}) {
   const gw = new Amaranth({ win: env.gwWindow(), baseUrl: env.cfg.baseUrl, ui: env.ui, log: env.log, debugDir: env.debugDir, creds: env.creds });
-  // 1) API 로 바로 (화면 없이 수백 ms). 최근 3개월은 월 단위로, 앱 기록에 있는 날들 + 오늘은 날짜별로(월 단위가 안 될 때 대비)
+  // API 로 바로 (화면 없이 수백 ms). 기간의 달들은 월 단위로, 앱 기록에 있는 날들 + 오늘은 날짜별로(월 단위가 안 될 때 대비)
+  const range = listRange(from, to); ({ from, to } = range); const months = range.months;
   const today = new Date(); const days = new Set([`${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}|${today.getDate()}`]);
-  const months = [0, 1, 2].map(i => { const d = new Date(today.getFullYear(), today.getMonth() - i, 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; });
   for (const t of env.store.list()) for (const l of [t.gwApply, t.gwReport]) if (l && l.ym && l.day) days.add(`${l.ym}|${Number(l.day)}`);
-  let user = env.cfg.gwUser || null, apiError = '';
+  let user = env.cfg.gwUser || null;
   const t0 = Date.now();
+  const readUser = async () => {   // 회계단위·부서·사원 코드: 화면 세션에서, 없으면 품의서입력 머리 칸에서 한 번 읽어 저장 (목록은 항상 API)
+    let u = await gw.apiUser();
+    if (!u) { await gw.ensureLogin(); const pr = await gw.readProfile(); if (pr.coCd && pr.deptCd && pr.empCd) u = { coCd: pr.coCd, deptCd: pr.deptCd, empCd: pr.empCd }; }
+    if (u) env.store.saveConfig({ gwUser: u });
+    return u;
+  };
   try {
-    if (!user) { user = await gw.apiUser(); if (user) env.store.saveConfig({ gwUser: user }); }
-    if (!user) throw new Error('사용자 정보를 아직 못 읽음');
-    const rows = await gw.apiBudgetRows(user, { months, days: [...days] });
-    await attachApprovalDocs(gw, rows, env.log);
+    if (!user) user = await readUser();
+    if (!user) throw new Error('사용자 정보(회계단위·부서·사원 코드)를 못 읽었어요');
+    let rows;
+    const inRange = r => { const d = `${r.ym}-${String(r.day).padStart(2, '0')}`; return d >= from && d <= to; };
+    try { rows = (await gw.apiBudgetRows(user, { months, days: [...days] })).filter(inRange); }
+    catch (e) {   // 세션 만료 등 → 로그인하고 한 번 더
+      env.log(`(API 조회 실패: ${String(e.message).slice(0, 100)} — 로그인 확인 후 다시)`);
+      await gw.ensureLogin(); user = await readUser(); if (!user) throw e;
+      rows = (await gw.apiBudgetRows(user, { months, days: [...days] })).filter(inRange);
+    }
+    const docs = await attachApprovalDocs(gw, rows, env.log, { from, to });
     env.log(`API 로 품의 ${rows.length}건 읽음 (${((Date.now() - t0) / 1000).toFixed(1)}초, 삭제 가능 ${rows.filter(r => !r.locked).length}건)`);
     if (env.debugDir) await gw.diagApprovalList().catch(() => {});
-    if (env.debugDir) await gw.diagReportFlow().catch(() => {});   // 한 번만: 결의서전송 화면 구조 기록 (보고서 자동화 개발용, 읽기만)   // 한 번만(파일 없을 때): 전자결재 상신문서 목록 API 기록 (결재양식으로 출장 판별하기 위함, 10초쯤)
-    return { rows, via: 'api', ms: Date.now() - t0 };
+    if (env.debugDir) await gw.diagReportFlow().catch(() => {});
+    if (env.debugDir) await gw.diagResolutionInput().catch(() => {});   // 한 번만: 결의서입력 화면 구조 기록 (보고서 3단계 개발용, 읽기만)   // 한 번만: 결의서전송 화면 구조 기록 (보고서 자동화 개발용, 읽기만)   // 한 번만(파일 없을 때): 전자결재 상신문서 목록 API 기록 (결재양식으로 출장 판별하기 위함, 10초쯤)
+    return { rows, reportDocs: reportDocsOf(docs), via: 'api', ms: Date.now() - t0 };
   } catch (e) {
-    env.log(`(빠른 조회 실패: ${String(e.message).slice(0, 160)} — 화면에서 읽어요)`); apiError = String(e.message);
     try { require('fs').mkdirSync(env.debugDir, { recursive: true }); require('fs').appendFileSync(require('path').join(env.debugDir, 'api-error.log'), `${new Date().toISOString()} ${e.message}\n`); } catch (e2) { /* */ }
+    throw new Error(`품의 목록을 API 로 못 읽었어요: ${String(e.message).slice(0, 160)}`);   // 화면 읽기로 후퇴하지 않는다 (느리고 불안정)
   }
-  // 2) 화면에서 읽기 (첫 실행·세션 만료)
+}
+
+/** 뒤에서 조용히: 정산 결의를 전송한 출장의 환원이 빠지지 않았는지 결의서전송 창에서 확인하고, 빠졌으면 [환원]만 다시 (출장마다 한 번, 세 번 실패하면 그만) */
+async function runRefundCheck(env) {
+  const todo = env.store.list().filter(t => t.resolutionNo && !t.refundChecked && t.gwApply);
+  if (!todo.length) return { checked: 0 };
+  const gw = new Amaranth({ win: env.gwWindow(), baseUrl: env.cfg.baseUrl, ui: env.ui, log: env.log, debugDir: env.debugDir, creds: env.creds });
   await gw.ensureLogin();
-  const rows = await gw.listBudgetRows();
-  await attachApprovalDocs(gw, rows, env.log).catch(() => {});
-  if (!user) { user = await gw.apiUser(); if (user) env.store.saveConfig({ gwUser: user }); }   // 다음부턴 API 로
-  env.log(`화면에서 품의 ${rows.length}건 읽음 (${((Date.now() - t0) / 1000).toFixed(1)}초, 삭제 가능 ${rows.filter(r => !r.locked).length}건)`);
-  return { rows, via: 'screen', ms: Date.now() - t0, apiError };
+  let n = 0;
+  for (const t of todo) {
+    const rec = env.store.load(t.id);
+    if ((rec.refundCheckTries || 0) >= 3) continue;
+    env.log(`정산 점검: ${t.reason || t.title} (결의 ${t.resolutionNo}) 환원 확인`);
+    try { if (await gw.repairRefund(t.gwApply)) { rec.refundChecked = new Date().toISOString(); n++; } }
+    catch (e) { rec.refundCheckTries = (rec.refundCheckTries || 0) + 1; env.log(`(환원 점검 실패: ${e.message} — 다음에 다시 확인해요)`); }
+    env.store.save(t.id, rec);
+  }
+  return { checked: n };
 }
 
 async function runDeleteBudget(env, keys) {
@@ -238,4 +289,4 @@ async function runDeleteTrip(env, id) {
   return { rows };
 }
 
-module.exports = { runProfile, runLoadReport, planApply, runFare, runApply, reportDraft, runReport, runLogin, runListBudget, runDeleteBudget, runDeleteTrip };
+module.exports = { listRange, runRefundCheck, runProfile, runLoadReport, planApply, runFare, runApply, reportDraft, runReport, runLogin, runListBudget, runDeleteBudget, runDeleteTrip };

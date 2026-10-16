@@ -125,6 +125,14 @@ button:focus{outline:none} button:focus-visible{outline:2px solid var(--accent-s
 td.proof{vertical-align:top}
 #r_drop{border:2px dashed var(--line);border-radius:12px;padding:16px;margin:4px 0 14px;display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center;color:var(--muted);font-size:13px;transition:background .15s,border-color .15s}
 #r_drop b{color:var(--ink);font-size:14px}
+.pill.hidden{display:none}
+#gwRange{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:12px 0 4px;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--bg);font-size:12px;color:var(--muted)}
+#gwRange .lbl{font-weight:600;color:var(--ink);margin-right:2px}
+#gwRange .quickr{display:inline-flex;gap:4px}#gwRange .quickr .btn{padding:4px 10px}#gwRange .quickr .btn.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+#gwRange .dates{display:inline-flex;align-items:center;gap:6px;margin-left:4px}#gwRange .tilde{color:var(--muted)}
+#gwRange input{font-size:12px;padding:4px 8px;border:1px solid var(--line);border-radius:8px;background:#fff;width:128px;height:28px;box-sizing:border-box}
+.tsel{display:flex;align-items:center;gap:4px}.tsel select{flex:1;min-width:0}
+input.need + .tsel select{outline:2px solid #f59e0b;border-color:#f59e0b}
 #r_drop.over{background:var(--accent-soft);border-color:var(--accent)}
 #rq_files .chip{display:flex;align-items:center;gap:6px;background:#fff;border:1px solid var(--line);border-radius:8px;padding:4px 6px 4px 10px;font-size:12px;max-width:260px}
 #rq_files .chip .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -175,7 +183,7 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
 <section id="tab-apply">
 <div class="card quick">
   <div class="h2row"><h2>한 줄로 신청</h2><button class="btn small" id="btnNewApply" title="입력 중인 신청서 내용을 모두 비움">새로 작성</button></div>
-  <p class="sub">언제 · 어디 · 무슨 일인지만 쓰면 사유, 출장목적, 숙박비(1박 7만), 식대(1일 3.8만), 교통비(네이버 지도 왕복)까지 채워요.</p>
+  <p class="sub">언제 · 어디 · 무슨 일인지만 쓰세요! 알아서 작성해드릴게요!</p>
   <div class="qrow"><textarea id="q_memo" placeholder="예: 다음주 화~목 판교 RBY1 Muscat 연동 검증, 자차, 홍길동이랑 같이"></textarea>
     <button class="btn primary" id="btnQuick">자동 작성</button></div>
   <div class="chips"><select id="q_hist" class="btn small" title="이전에 입력한 문장 (최근 30개)"><option value="">이전 문장…</option></select></div>
@@ -249,9 +257,10 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
 <!-- ================= 내 출장 / 보고서 ================= -->
 <section id="tab-trips" class="hidden">
   <div class="card list" id="tripList">
-    <div class="inline" style="justify-content:space-between;align-items:flex-start"><div><h2 style="margin:0">신청한 출장</h2>
+    <div class="inline" style="justify-content:space-between;align-items:flex-start;gap:12px"><div><h2 style="margin:0">신청한 출장 <span id="gwVia" class="pill hidden" title="개발용: 목록을 어떻게 읽었는지"></span></h2>
       <p class="sub" style="margin:2px 0 0">그룹웨어에 올라간 출장 품의와 결재 상태예요. 상신 전이거나 반려된 건은 [삭제]로 그룹웨어 품의까지 지울 수 있어요. 신청·보고 결재가 모두 끝난 출장은 아래로 숨겨요.</p></div>
-      <span class="inline"><button class="btn small" id="btnGwList" title="그룹웨어에서 다시 읽기"><span id="gwRefreshIcon" style="display:inline-block">↻</span> 새로고침</button></span></div>
+      <button class="btn small" id="btnGwList" title="그룹웨어에서 다시 읽기" style="flex:none"><span id="gwRefreshIcon" style="display:inline-block">↻</span> 새로고침</button></div>
+    <div id="gwRange" title="조회 기간 (기본 최근 3개월, 최대 1년)"><span class="lbl">조회 기간</span><span class="quickr"><button class="btn small" data-m="1">1개월</button><button class="btn small" data-m="3">3개월</button><button class="btn small" data-m="6">6개월</button></span><span class="dates"><input type="date" id="gwFrom"><span class="tilde">~</span><input type="date" id="gwTo"></span></div>
     <div id="trips" style="margin-top:8px"></div>
     <div id="gwOrphans" class="hidden" style="margin-top:18px">
       <div class="inline" style="justify-content:space-between"><div><b>앱 기록에 없는 품의</b><p class="sub" style="margin:2px 0 0">출장 품의인데 위 목록의 출장과 연결되지 않은 건이에요 (예: 신청 기록이 없는 보고서 품의).</p></div>
@@ -264,7 +273,7 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
   <div class="card quick">
     <h2>영수증 + 한 줄 메모로 보고서</h2>
     <p class="sub">① 영수증을 넣고 ② 출장에서 한 일을 한 줄 적은 뒤 [자동 작성]을 누르면, 영수증은 경비 줄(과목·금액·증빙)로, 메모는 보고사항과 날짜별 일정으로 채워요.</p>
-    <div id="r_drop"><b>① 영수증·증빙을 여기에 끌어다 놓기</b><span>이미지·PDF 여러 개 한꺼번에</span><button class="btn small" id="btnPickReceipts">파일 고르기</button></div>
+    <div id="r_drop"><b>① 영수증·증빙을 여기에 끌어다 놓기 (선택)</b><span>이미지·PDF 여러 개 한꺼번에 — 정산할 게 없으면 비워 두세요</span><button class="btn small" id="btnPickReceipts">파일 고르기</button></div>
     <div class="chips" id="rq_files" style="margin:0 0 10px"></div>
     <div class="qrow"><textarea id="rq_memo" placeholder="② 예: SDK 래핑 완료, 실기에서 제어·상태조회 검증 통과. 그리퍼 토크 이슈는 다음주 재검증 예정"></textarea>
       <button class="btn primary" id="btnRQuick" disabled>자동 작성</button></div>
@@ -297,7 +306,7 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
     <div class="card">
       <h2>정산 경비</h2><p class="sub">실제 쓴 금액으로 고쳐 주세요. 영수증은 위 [자동 작성]에 넣으면 AI 가 읽어서 채워요.</p>
       <div class="row"><label>자금과목 <span style="color:var(--err)">*</span></label><div class="seg" id="r_fund"><label><input type="radio" name="r_fund" value="일반경비">일반경비</label><label><input type="radio" name="r_fund" value="제조경비">제조경비</label></div></div>
-      <table class="ed" id="r_exp" style="table-layout:fixed"><thead><tr><th style="width:16%">예산과목</th><th style="width:13%">금액(원)</th><th style="width:11%">결제</th><th style="width:30%">인원 · 적요 <span style="font-weight:400">(= 거래처비고)</span></th><th>증빙 <span style="color:var(--err)">*</span> <span style="font-weight:400">(이미지·PDF)</span></th><th style="width:52px"></th></tr></thead><tbody></tbody></table>
+      <table class="ed" id="r_exp" style="table-layout:fixed"><thead><tr><th style="width:16%">예산과목</th><th style="width:13%">금액(원)</th><th style="width:11%">결제</th><th style="width:30%">인원 · 적요 <span style="font-weight:400">(= 거래처비고)</span></th><th>증빙 <span style="font-weight:400">(이미지·PDF)</span></th><th style="width:52px"></th></tr></thead><tbody></tbody></table>
       <button class="btn small" id="btnAddRExp" style="margin-top:6px">+ 경비 추가</button>
       <div class="total"><span>정산 합계</span><span id="r_total">0원</span></div>
       <p class="sub" id="r_attach" style="margin:10px 0 0"></p>

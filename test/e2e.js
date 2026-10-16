@@ -55,6 +55,12 @@ app.whenReady().then(async () => {
       assert.equal(await g.autoLogin('tester', 'wrong'), false);
       await gw.webContents.executeJavaScript("location.reload()"); await new Promise(r => setTimeout(r, 1500));
       console.log('  자동 로그인 실패 케이스 OK');
+      // 사용자 시나리오: 아이디를 'ftester'로 잘못 쳐서 실패(비밀번호 화면에 그 아이디가 고정돼 남음) → 'tester'로 고쳐 다시 로그인 → 성공해야 함
+      assert.equal(await g.autoLogin('ftester', 'pw1234'), false);
+      assert.ok(await gw.webContents.executeJavaScript("!!document.querySelector('#uid_fixed') && document.querySelector('#uid_fixed').value === 'ftester'"), '틀린 아이디가 고정된 비밀번호 화면이어야 함');
+      assert.equal(await g.autoLogin('tester', 'pw1234'), true, '아이디를 고쳐 다시 로그인하면 성공해야 함');
+      await gw.webContents.executeJavaScript("localStorage.removeItem('auth'); location.hash='#/login'; location.reload()"); await new Promise(r => setTimeout(r, 1500));
+      console.log('  아이디 고쳐서 다시 로그인 OK');
     }
     const t0 = Date.now();
     const { id } = await runner.runApply(env, data);
@@ -104,6 +110,25 @@ app.whenReady().then(async () => {
     assert.equal(rp.fund, '일반경비');
     assert.equal(rp.attachments.length, draft.expenses.length, '증빙이 전부 첨부 대상');
     console.log('E2E 보고서(초안) OK');
+
+    // ---- 출장보고서 및 경비정산 지출결의서 본문 채우기 (실제 양식 HTML) ----
+    {
+      const { FILL_JS, reportPayload } = require('../src/engine/editorFill');
+      const w = new BrowserWindow({ show: false });
+      await w.loadFile(path.join(__dirname, 'fixtures', 'report_settle_body.html'));
+      const rp6 = { ...rp, category: '로봇', project: 'RBY1 과제', companions: ['홍길동'], visit_org: 'KAI',
+        schedule: Array.from({ length: 6 }, (_, i) => ({ date: `9/${27 + i}`, place: '판교', detail: `활동 ${i + 1}` })) };   // 일정 6일 > 양식 5줄 → 줄 추가
+      const res = await w.webContents.executeJavaScript(`(${FILL_JS})(${JSON.stringify(reportPayload(rp6))})`);
+      assert.deepEqual(res.missing, [], '못 채운 칸: ' + res.missing.join(', '));
+      const html = await w.webContents.executeJavaScript('document.body.innerHTML');
+      for (const needle of ['김종완', '홍길동', 'RBY1 과제', 'KAI', 'SDK 래핑 완료<br>실기 검증 3건 통과', '활동 6', '9/32'])
+        assert.ok(html.includes(needle), `본문에 '${needle}' 없음`);
+      assert.ok(!/font-style:\s*italic[^>]*>RBY1 과제/.test(html), '과제명이 안내 문구 스타일(빨간 기울임)로 들어감');
+      assert.equal((html.match(/checked="checked"/g) || []).length, 1, '출장구분 로봇만 체크');
+      assert.ok(html.includes('20261016-60'), '결의 표(자동)는 그대로');
+      w.destroy();
+      console.log('E2E 정산 보고서 본문 OK');
+    }
 
     // 올린 품의 목록·삭제: 결재 진행 중(순번 44)은 잠김, 나머지만 삭제
     const { rows } = await runner.runListBudget(env);

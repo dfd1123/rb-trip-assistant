@@ -10,13 +10,19 @@ if (process.platform === 'linux' && process.env.APPIMAGE) {
   try { if (require('fs').readFileSync('/proc/sys/kernel/apparmor_restrict_unprivileged_userns', 'utf8').trim() === '1') app.commandLine.appendSwitch('no-sandbox'); } catch (e) { /* 제한 없음 */ }
 }
 const path = require('path');
-const R = require('./engine/rules');
-const runner = require('./engine/runner');
+let R = require('./engine/rules');
+let runner = require('./engine/runner');
 const { Store } = require('./engine/store');
-const Q = require('./engine/quick');
-const AI = require('./engine/ai');
+let Q = require('./engine/quick');
+let AI = require('./engine/ai');
 const updater = require('./updater');
-const GW = require('./engine/gw');
+let GW = require('./engine/gw');
+/** 개발 중: 엔진 코드가 바뀌면 앱을 다시 켜지 않고 모듈만 다시 읽는다 (작업이 없을 때만) */
+function reloadEngine() {
+  for (const k of Object.keys(require.cache)) if (k.startsWith(path.join(__dirname, 'engine') + path.sep) && k.endsWith('.js')) delete require.cache[k];
+  R = require('./engine/rules'); runner = require('./engine/runner'); Q = require('./engine/quick'); AI = require('./engine/ai'); GW = require('./engine/gw');
+  console.log('[dev] 엔진 코드 다시 읽음');
+}
 
 const ICON = path.join(__dirname, '..', 'assets', 'icon-512.png');
 app.setName('와니의 결재 도우미');   // 개발 모드에서도 메뉴·알림에 앱 이름
@@ -202,7 +208,8 @@ function gwCreds() {
   try { return { id: c.gwId, pw: safeStorage.decryptString(Buffer.from(c.gwPwEnc, 'base64')) }; } catch (e) { return null; }
 }
 const jobBusy = () => job && (job.state === 'running' || job.state === 'waiting');
-const gwFor = (show, extra = {}) => new GW.Amaranth({ win: gwWindow(show), baseUrl: store.config().baseUrl, ui: { info() {}, async assist() {} }, log: () => {}, creds: gwCreds, ...extra });
+const devLog = m => { if (!app.isPackaged) { try { const d = path.join(__dirname, '..', 'debug'); require('fs').mkdirSync(d, { recursive: true }); require('fs').appendFileSync(path.join(d, 'job.log'), `${new Date().toISOString()} [gw] ${m}\n`); } catch (e) { /* */ } } };
+const gwFor = (show, extra = {}) => new GW.Amaranth({ win: gwWindow(show), baseUrl: store.config().baseUrl, ui: { info() {}, async assist() {} }, log: devLog, debugDir: app.isPackaged ? null : path.join(__dirname, '..', 'debug'), creds: gwCreds, ...extra });   // 로그인 확인·로그인 창: 개발 중엔 기록·진단 파일 남김
 
 async function gwStatus() {
   const saved = Boolean(store.config().gwId && store.config().gwPwEnc);
@@ -217,7 +224,8 @@ async function gwStatus() {
 async function gwLogin({ id, pw, save }) {
   id = String(id || '').trim(); pw = String(pw || '');
   if (!id || !pw) throw new Error('아이디와 비밀번호를 입력해 주세요.');
-  if (jobBusy()) throw new Error('작업이 진행 중이에요. 끝난 뒤 다시 해 주세요.');
+  // 작업이 '로그인을 기다리며 멈춰 있는' 상태(질문 대기)면 막지 않는다: 여기서 로그인하면 그 작업이 로그인을 감지하고 알아서 이어간다
+  if (jobBusy() && job.state !== 'waiting') throw new Error('작업이 진행 중이에요. 끝난 뒤 다시 해 주세요.');
   const gw = gwFor(false);
   if (await gw.loginNeeded()) {
     if (!(await gw.autoLogin(id, pw))) return { loggedIn: false, error: '로그인에 실패했어요. 아이디·비밀번호를 확인하거나 [그룹웨어 창에서 직접 로그인]을 써 주세요.' };
@@ -306,7 +314,9 @@ function watchForDev() {
   const started = Date.now();
   let timer = null, pending = false;
   const changedSinceStart = file => { try { return fs.statSync(file).mtimeMs > started; } catch (e) { return false; } };
-  const restart = () => { if (jobBusy()) { if (!pending) { pending = true; console.log('[dev] 작업 중이라 끝나면 재시작'); } return setTimeout(restart, 2000); } app.relaunch(); app.exit(0); };
+  // 엔진: 앱을 다시 켜지 않고 모듈만 다시 읽는다 (작업 중이면 끝난 뒤 조용히). main/preload/updater: 한가하면 바로 다시 켜고, 작업 중이면 띠만 띄움
+  const reload = () => { if (jobBusy()) { if (!pending) { pending = true; console.log('[dev] 작업 중 — 끝나면 엔진 다시 읽음'); } return setTimeout(reload, 1000); } pending = false; try { reloadEngine(); } catch (e) { console.error('[dev] 엔진 다시 읽기 실패:', e.message); } };
+  const restart = () => { if (jobBusy()) { console.log('[dev] main 코드가 바뀌었어요 — 작업 중이라 띠만 띄움'); if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('dev-stale'); return; } app.relaunch(); app.exit(0); };
   const watch = (target, recursive, action) => {
     try {
       fs.watch(target, { recursive }, (_ev, f) => {
@@ -318,9 +328,9 @@ function watchForDev() {
     } catch (e) { console.warn('watch 실패:', target, e.message); }
   };
   watch(path.join(__dirname, 'renderer'), true, () => { if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.reloadIgnoringCache(); });
-  watch(path.join(__dirname, 'engine'), true, restart);
+  watch(path.join(__dirname, 'engine'), true, reload);
   for (const f of ['main.js', 'preload.js', 'updater.js']) watch(path.join(__dirname, f), false, restart);
-  console.log('[dev] 파일 변경 감시 중 (renderer → 새로고침, engine/main → 재시작, 작업 중엔 미룸)');
+  console.log('[dev] 파일 변경 감시 중 (renderer → 새로고침, engine → 모듈 다시 읽기, main → 재시작)');
 }
 
 // ---------- 화면 API ----------
@@ -329,7 +339,7 @@ async function route(p, body = {}) {
   switch (p) {
     case '/api/meta':
       return { config: publicConfig(cfg), configured: store.hasConfig(), items: Object.fromEntries(Object.entries(R.BUDGET_ITEMS).map(([k, v]) => [k, v[1]])),
-        version: app.getVersion(), providers: Object.fromEntries(Object.entries(AI.PROVIDERS).map(([k, v]) => [k, v])) };
+        version: app.getVersion(), dev: !app.isPackaged, providers: Object.fromEntries(Object.entries(AI.PROVIDERS).map(([k, v]) => [k, v])) };
     case '/api/config': {
       const patch = { ...body };
       if ('aiKey' in patch) { const k = String(patch.aiKey || '').trim(); delete patch.aiKey; if (k) patch.aiKeyEnc = encryptKey(k); }
@@ -350,7 +360,7 @@ async function route(p, body = {}) {
     case '/api/parse': return { data: R.extractYaml(body.text || '') };
     case '/api/title': { const r = String(body.reason || '').trim(); return { apply: r ? R.applyTitle(r) : '', report: r ? R.reportTitle(r) : '' }; }
     case '/api/plan': return runner.planApply(body, cfg);
-    case '/api/trips': return { trips: store.list().map(t => ({ ...t, reportMemo: R.budgetMemo(R.reportTitle(t.reason || '')) })) };   // reportMemo: 보고 품의 적요 (연결이 끊긴 보고 품의를 찾는 데 씀)
+    case '/api/trips': return { trips: store.list().map(t => ({ ...t, reportMemo: R.budgetMemo(R.reportTitle(t.reason || '')), reportDocTitle: R.reportTitle(t.reason || '') })) };   // reportDocTitle: 출장보고서 결재 문서 제목 (목록에서 보고 상태 찾기)   // reportMemo: 보고 품의 적요 (연결이 끊긴 보고 품의를 찾는 데 씀)
     case '/api/draft': {   // 전에 작성한 보고서가 있으면 그대로, 없으면 신청 내용으로 초안
       const base = runner.reportDraft(store, cfg, body.id); const saved = store.load(body.id).report;
       const d = saved ? { ...base, ...saved, trip_id: body.id } : base;
@@ -384,7 +394,7 @@ async function route(p, body = {}) {
     case '/api/gw/show': if (job && job.kind === 'fare' && showNaver()) return { ok: true }; showGw(); return { ok: true };
     case '/api/gw/open': openGwViewer(cfg.baseUrl); return { ok: true };   // 상단 [그룹웨어 열기]: 사람이 쓰는 별도 창 (작업 창과 로그인만 공유)
     case '/api/gw/hide': hideGw(); return { ok: true };
-    case '/api/job/gw-list': return startJob('gw-list', env => runner.runListBudget(env), body.title);
+    case '/api/job/gw-list': return startJob('gw-list', env => runner.runListBudget(env, { from: String(body.from || ''), to: String(body.to || '') }), body.title);   // 조회 기간(YYYY-MM-DD), 기본 최근 3개월·최대 1년
     case '/api/receipt-memo': {   // 경비 줄 하나의 증빙 → 적요("9/28 1인 석식"). 적요는 그대로 채주 거래처비고가 된다
       const ai = aiSettings(cfg); if (!ai) return { memo: '' };
       const f = String(body.path || ''), ext = path.extname(f).slice(1).toLowerCase(), mime = PROOF_MIME[ext];
@@ -401,6 +411,7 @@ async function route(p, body = {}) {
       if (!ai) throw new Error('영수증 자동 분류는 AI 가 있어야 해요. 설정 › AI 문장 작성에서 Gemini 를 골라 주세요.');
       return startJob('receipts', env => readReceipts(env, ai, (body.paths || []).map(String), String(body.period || '')), body.title);
     }
+    case '/api/job/refund-check': return startJob('refund-check', env => runner.runRefundCheck(env), body.title);
     case '/api/job/gw-profile': return startJob('gw-profile', env => runner.runProfile(env, { force: !!body.force }), body.title);
     case '/api/job/report-load': return startJob('report-load', env => runner.runLoadReport(env, String(body.id)), body.title);
     case '/api/job/trip-delete': return startJob('trip-delete', env => runner.runDeleteTrip(env, body.id), body.title);
@@ -412,7 +423,7 @@ async function route(p, body = {}) {
       if (r.docId) { try { const { Amaranth } = require('./engine/gw'); const gw = new Amaranth({ win: gwWindow(false), baseUrl: cfg.baseUrl, ui: null, log: () => {}, debugDir: null, creds: gwCreds }); f = await gw.apiApplyDocFields(r.docId, r.formId); } catch (e) { note = e.message; } }
       const prev = store.list().find(t => t.gwApply && t.gwApply.key === r.key);   // 이미 들여온 기록이면 그 자리에 덮어쓴다 (본문 다시 읽기)
       const id = prev ? prev.id : store.newId((f && f.start) || pday, reason);
-      const keep = prev ? (({ report, gwReport, reportStatus }) => ({ report, gwReport, reportStatus }))(store.load(id)) : {};   // 작성 중이던 보고서·보고 품의 연결은 유지
+      const keep = prev ? (({ report, gwReport, reportStatus, resolutionNo }) => ({ report, gwReport, reportStatus, resolutionNo }))(store.load(id)) : {};   // 작성 중이던 보고서·보고 품의 연결·전송한 결의번호는 유지
       store.save(id, { ...keep, id, created: new Date().toISOString(), title: R.applyTitle(reason), status: '그룹웨어', gwApply: { key: r.key, ym: r.ym, day: String(r.day), seq: String(r.seq) },
         apply: { reason, destination: (f && f.destination) || '', start: (f && f.start) || pday, end: (f && f.end) || pday, start_time: (f && f.start_time) || '', end_time: (f && f.end_time) || '',
           category: (f && f.category) || '일반', project: (f && f.project) || '', transport: { mode: (f && f.transport) || 'car', to: '', from: '', total: null },

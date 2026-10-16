@@ -19,7 +19,18 @@ td{border:1px solid #ddd;height:28px;min-width:90px;padding:0 4px;position:relat
 input.rg-editor{position:absolute;left:0;top:0;width:100%;height:100%;box-sizing:border-box}
 </style></head><body><div id="app"></div><script>
 const $=s=>document.querySelector(s);
+// 가짜 API: 실제 아마란스처럼 로그인하면 oAuthToken·signKey 쿠키와 사용자 정보가 생기고, 품의 목록은 fetch 로 받는다 (앱은 목록을 API 로만 읽음)
+const ST={'작성':'2','상신대기':'2','진행중':'0','결재진행':'0','결재완료':'1','반려':'3'};
+const toApi=r=>({getDtYymm:(r.품의연월||'').replace('-',''),getDtDd:r.품의일,getSq:r.순번,getFg:r.품의구분==='지출'?'1':'2',rmkDc:r.적요||'',unitSumam:Number(String(r.총금액||'0').replace(/,/g,'')),approState:ST[r.결재상태]||'2',approStateNm:r.결재상태||'',noDoc:'',sendUnitAm:0,refundUnitAm:0,remainUnitAm:0});
+const realFetch=window.fetch.bind(window);
+window.fetch=async(url,opt)=>{ const u=String(url);
+  if(u.endsWith('/nonprofit/NCA0018/0BN00001')){ const b=JSON.parse((opt&&opt.body)||'{}'); const ym=String(b.getDtYearMonth||'').slice(0,6);
+    const top=JSON.parse(localStorage.top||'[]').filter(r=>r.순번&&(r.품의연월||'').replace('-','')===ym&&(!b.getDt||String(+r.품의일)===String(+b.getDtDate)));
+    return new Response(JSON.stringify({resultCode:0,resultData:top.map(toApi)}),{status:200,headers:{'Content-Type':'application/json'}}); }
+  if(u.endsWith('/eap/eap107A04')) return new Response(JSON.stringify({resultCode:200,resultData:{list:{list:[],totalCount:0}}}),{status:200,headers:{'Content-Type':'application/json'}});
+  return realFetch(url,opt); };
 function route(){
+  if(localStorage.auth){ document.cookie='oAuthToken=mock-token; path=/'; document.cookie='signKey=mock-key; path=/'; sessionStorage.userInfo=JSON.stringify({coCd:'1000',deptCd:'MBU1000',empCd:'250303'}); }
   if(!localStorage.auth){ if(location.hash!=='#/login') location.hash='#/login'; return loginPage(); }
   if(location.hash.startsWith('#/HP/NPC1023/NCA0018')) return budget();
   $('#app').innerHTML='<h1>일정 HOME</h1>';
@@ -27,10 +38,12 @@ function route(){
 // 로그인: 아이디 → [다음] → 비밀번호 (두 단계). 테스트 계정 tester / pw1234
 function loginPage(){
   $('#app').innerHTML='<h1>로그인</h1><div id="lg"><input type="text" id="uid" placeholder="아이디"> <button id="next">다음</button></div><p id="lgerr"></p>';
+  // 실제 아마란스처럼: 2단계는 아이디가 고정(disabled 입력칸)되고, 틀리면 그 화면에 그대로 남는다. [다른계정으로 로그인]으로 1단계로
   $('#next').onclick=()=>{ const id=$('#uid').value; if(!id) return;
-    $('#lg').innerHTML='<span>'+id+'</span> <input type="password" id="upw" placeholder="비밀번호">';
-    $('#upw').addEventListener('keydown',e=>{ if(e.key!=='Enter') return;
-      if(id==='tester'&&e.target.value==='pw1234'){ localStorage.auth=1; location.hash='#/main'; } else $('#lgerr').textContent='비밀번호가 틀렸습니다'; }); };
+    $('#lg').innerHTML='<input type="text" id="uid_fixed" disabled value="'+id+'"> <input type="password" id="upw" placeholder="비밀번호"> <button id="lgbtn">로그인</button><br><a href="#" id="other">다른계정으로 로그인</a>';
+    const go=()=>{ if(id==='tester'&&$('#upw').value==='pw1234'){ localStorage.auth=1; location.hash='#/main'; } else $('#lgerr').textContent='! 아이디/비밀번호가 일치하지 않습니다.'; };
+    $('#upw').addEventListener('keydown',e=>{ if(e.key==='Enter') go(); }); $('#lgbtn').onclick=go;
+    $('#other').onclick=e=>{ e.preventDefault(); loginPage(); $('#uid').value=id; }; };
   $('#uid').addEventListener('keydown',e=>{ if(e.key==='Enter') $('#next').click(); });
 }
 window.addEventListener('hashchange', route);

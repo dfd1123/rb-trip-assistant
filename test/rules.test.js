@@ -19,7 +19,7 @@ test('로/으로', () => {
 
 test('제목 형식', () => {
   assert.equal(R.applyTitle('SIMTOS 전시회 참관'), '[출장신청 및 출장경비 사전품의] SIMTOS 전시회 참관으로 인한 출장의 건');
-  assert.equal(R.reportTitle('고객사 미팅'), '[출장보고서 및 정산 품의서] 고객사 미팅으로 인한 출장 보고의 건');
+  assert.equal(R.reportTitle('고객사 미팅'), '[출장보고서 및 경비정산 지출결의서] 고객사 미팅 출장 보고의 건');
 });
 
 test('네이버 지도 금액 읽기 / 왕복', () => {
@@ -57,8 +57,8 @@ test('보고서: 정부과제는 과제명 필수', () => {
   assert.throws(() => R.parseReport({ ...base, category: '정부과제' }), /과제명/);
   assert.equal(R.parseReport({ ...base, category: '로봇' }).category, '로봇');
   assert.throws(() => R.parseReport({ ...base, schedule: [{ date: '10/20', place: 'x', detail: '' }] }), /세부 활동/);   // 세부 활동 내용 필수
-  assert.throws(() => R.parseReport({ ...base, expenses: [] }), /경비/);                                              // 경비 필수
-  assert.throws(() => R.parseReport({ ...base, expenses: [{ item: 'meal', amount: 1000 }] }), /증빙/);                 // 줄마다 증빙 필수
+  assert.equal(R.parseReport({ ...base, expenses: [] }).expenses.length, 0);                                            // 정산할 경비가 없어도 됨 (전액 환원)
+  assert.equal(R.parseReport({ ...base, expenses: [{ item: 'meal', amount: 1000 }] }).expenses[0].proofs.length, 0);   // 증빙 없이도 됨 (화면에서 두 번 확인)
   assert.throws(() => R.parseReport({ ...base, expenses: [{ item: 'meal', amount: 1000, proofs: ['/tmp/a.docx'] }] }), /이미지나 PDF/);
   assert.deepEqual(R.parseReport({ ...base, category: '로봇' }).attachments, ['/tmp/영수증.jpg']);                    // 증빙은 보고서 첨부로
 });
@@ -201,7 +201,7 @@ test('신청 직전 교통비 필수 (자차·대중교통)', () => {
 
 test('품의 적요', () => {
   assert.equal(R.budgetMemo(R.applyTitle('RBY1 정비')), 'RBY1 정비로 인한 출장');
-  assert.equal(R.budgetMemo(R.reportTitle('FCC인증')), 'FCC인증으로 인한 출장 보고');
+  assert.equal(R.budgetMemo(R.reportTitle('FCC인증')), 'FCC인증 출장 보고');
 });
 
 test('한 줄: "9시부터 가서 … 복귀"', () => {

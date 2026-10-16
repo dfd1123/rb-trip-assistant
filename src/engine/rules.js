@@ -4,7 +4,7 @@
 const yaml = require('js-yaml');
 
 const APPLY_FORM = '출장신청 및 출장경비 사전품의';
-const REPORT_FORM = '출장보고서 및 정산 품의서';
+const REPORT_FORM = '출장보고서 및 경비정산 지출결의서';   // 결의서입력 → 결재상신 양식 (예전 '출장보고서 및 정산 품의서'는 안 씀)
 
 // 예산과목 (사업코드도움에서 코드로 검색)
 const BUDGET_ITEMS = {
@@ -48,7 +48,7 @@ function finalConsonant(word) {
 /** '로/으로' : 받침 없음·ㄹ받침 → 로, 그 외 → 으로 */
 const ro = w => `${w}${finalConsonant(w) === 'o' ? '으로' : '로'}`;
 const applyTitle = reason => `[${APPLY_FORM}] ${ro(String(reason).trim())} 인한 출장의 건`;
-const reportTitle = reason => `[${REPORT_FORM}] ${ro(String(reason).trim())} 인한 출장 보고의 건`;
+const reportTitle = reason => `[${REPORT_FORM}] ${String(reason).trim()} 출장 보고의 건`;   // 예: [출장보고서 및 경비정산 지출결의서] KAI 기술 지원 출장 보고의 건
 
 // ---------- 교통비 (네이버 지도) ----------
 const toNum = s => Number(String(s).replace(/,/g, ''));
@@ -162,11 +162,9 @@ function parseReport(data) {
     attachments: (data.attachments || []).map(String),
   };
   if (!out.schedule.length || out.schedule.some(r => !r.detail)) throw new InputError('출장일정의 세부 활동 내용은 날짜마다 필수예요.');
-  if (!out.expenses.length) throw new InputError('경비를 한 줄 이상 넣어 주세요.');
-  // 정산 경비는 줄마다 증빙(이미지·PDF) 1개 이상. 증빙은 전부 보고서 첨부로 올린다
+  // 정산할 경비가 없을 수도 있다(전액 환원). 증빙도 없을 수 있다 — 화면에서 두 번 확인받고 넘어온다. 줄마다 증빙은 0~1개, 이미지·PDF만
   (data.expenses || []).forEach((e, i) => {
     const proofs = (e.proofs || []).map(String).filter(Boolean);
-    if (!proofs.length) throw new InputError(`정산 경비 ${i + 1}번째 줄(${shortLabel(out.expenses[i].item)})에 증빙 파일을 첨부해 주세요.`);
     if (proofs.length > 1) throw new InputError(`정산 경비 ${i + 1}번째 줄에는 증빙을 1개만 붙여 주세요.`);
     const bad = proofs.find(p => !PROOF_EXT.test(p));
     if (bad) throw new InputError(`증빙은 이미지나 PDF만 돼요: ${bad.split(/[\\/]/).pop()}`);
