@@ -229,3 +229,12 @@ test('예산 부서 없으면 신청 막기', () => {
   const base = { reason: 'x', destination: 'y', dates: { start: '2026-10-20', end: '2026-10-20', start_time: '09:00', end_time: '18:00' }, purpose: 'p', transport: { mode: 'corporate' } };
   assert.throws(() => planApply(base, {}), /예산 부서/);
 });
+
+test('신청 교통비 여유분: 자차·대중교통만 +2만원', () => {
+  const t = mode => ({ transport: { mode } });
+  assert.equal(R.transportExpense(t('car'), 54528, 20000).amount, 74528);
+  assert.match(R.transportExpense(t('car'), 54528, 20000).memo, /여유 20,000원/);
+  assert.equal(R.transportExpense(t('transit'), 37000, 20000).amount, 57000);
+  assert.equal(R.transportExpense(t('corporate'), 0, 20000).amount, 0);
+  assert.equal(R.transportExpense(t('car'), 54528).amount, 54528);
+});

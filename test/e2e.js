@@ -63,10 +63,10 @@ app.whenReady().then(async () => {
     const s = JSON.parse(st);
     const mineTop = s.top.find(r => r.순번 === '45');
     assert.equal(mineTop.품의구분, '지출');
-    assert.equal(mineTop.총금액, '324,814');
+    assert.equal(mineTop.총금액, '344,814');   // 교통비 74,814 + 여유분 20,000
     assert.equal(mineTop.적요, '판교 AI 사무소 RBY1-Muscat 연동 검증으로 인한 출장');
     assert.deepEqual(s.bot.slice(0, 3).map(r => [r.부서, r.예산과목, r.품의금액]), [
-      ['매니퓰레이터 사업부', '여비교통비(판)_국내교통비', '74,814'],
+      ['매니퓰레이터 사업부', '여비교통비(판)_국내교통비', '94,814'],
       ['매니퓰레이터 사업부', '여비교통비(판)_국내숙박비', '160,000'],
       ['매니퓰레이터 사업부', '여비교통비(판)_식대', '90,000'],
     ]);

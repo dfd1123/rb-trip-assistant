@@ -1,5 +1,5 @@
 'use strict';
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('api', {
   /** route: '/api/...', body: object → data (실패 시 throw) */
@@ -8,4 +8,6 @@ contextBridge.exposeInMainWorld('api', {
     if (!r.ok) throw new Error(r.error);
     return r.data;
   },
+  /** 끌어다 놓은 File → 실제 파일 경로 */
+  pathForFile: f => webUtils.getPathForFile(f),
 });

@@ -107,7 +107,7 @@ class Amaranth {
     if (!(await this.loginNeeded())) return;
     const c = this.creds();
     if (c && await this.autoLogin(c.id, c.pw)) return;
-    this.win.show(); this.win.focus();
+    this.win.setSkipTaskbar(false); this.win.center(); this.win.show(); this.win.focus();   // 윈도우·리눅스는 화면 밖에 둔 창이라 가운데로
     this.log('그룹웨어에 로그인되어 있지 않아요. 열린 아마란스 창에서 로그인해 주세요. 로그인하면 자동으로 이어서 진행합니다. (설정 → 그룹웨어 계정에 저장해 두면 다음부터 자동 로그인)');
     const end = Date.now() + timeoutMs;
     while (await this.isLoginPage()) {
@@ -789,7 +789,7 @@ class Amaranth {
       catch (e) { await ui.assist(`첨부 실패(${e.message}). 다음 파일을 직접 끌어다 놓아 주세요: ${files.join(', ')}`); }
     }
 
-    if (!save) { popup.show(); popup.focus(); this.log('본문까지 채웠어요. 열린 작성 창에서 확인하고 [보관]·[상신]은 직접 눌러 주세요.'); return; }
+    if (!save) { popup.setSkipTaskbar(false); popup.center(); popup.show(); popup.focus(); this.log('본문까지 채웠어요. 열린 작성 창에서 확인하고 [보관]·[상신]은 직접 눌러 주세요.'); return; }
     await pp.eval(() => { window.__confirm = window.confirm; window.confirm = () => true; window.alert = () => {}; return true; });   // 보관 확인창 자동 승인
     await pp.clickWhere(() => all('.topBtn').find(b => norm(b.textContent) === '보관'));
     await sleep(800);
@@ -798,7 +798,7 @@ class Amaranth {
     this.log('보관(임시저장) 완료. 열린 작성 창에서 결재선을 확인하고 [상신]은 직접 눌러 주세요.');
     // [상신]은 절대 자동으로 누르지 않는다 — 결재선이 기본값이면 그 자리에서 제출돼 버린다 (회수 필요)
     await pp.eval(() => { window.confirm = window.__confirm; return true; });   // 확인창 다시 사람에게
-    popup.show(); popup.focus();
+    popup.setSkipTaskbar(false); popup.center(); popup.show(); popup.focus();
   }
 }
 

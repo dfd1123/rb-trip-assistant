@@ -134,7 +134,15 @@
         "Name": "와니의 결재 도우미"
       }
     },
-    "forceCodeSigning": false
+    "forceCodeSigning": false,
+    "deb": {
+      "afterInstall": "build/linux/after-install.sh",
+      "afterRemove": "build/linux/after-remove.sh"
+    },
+    "rpm": {
+      "afterInstall": "build/linux/after-install.sh",
+      "afterRemove": "build/linux/after-remove.sh"
+    }
   },
   "homepage": "https://www.rainbow-robotics.com",
   "repository": {

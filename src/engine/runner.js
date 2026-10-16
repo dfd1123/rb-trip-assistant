@@ -53,7 +53,7 @@ async function runApply(env, data, { save = true } = {}) {
   if (a.transport.total !== null) fare = { total: a.transport.total, screenshot: a.transport.screenshot, source: 'input', describe: `왕복 ${a.transport.total.toLocaleString('ko-KR')}원` };
   else if (R.TRANSPORT_MODES[a.transport.mode].autoFare) fare = await runFare(env, { mode: a.transport.mode, to: a.transport.to, from: a.transport.from });
   const expenses = [...a.expenses];
-  if (fare && fare.total) { expenses.unshift(R.transportExpense(a, fare.total)); rec.fare = fare; }
+  if (fare && fare.total) { expenses.unshift(R.transportExpense(a, fare.total, cfg.rates.fareMargin)); rec.fare = fare; }
   rec.expenses = expenses;
   store.save(id, rec);
 
@@ -83,8 +83,10 @@ function reportDraft(store, cfg, id) {
     period: `${a.start.replace(/-/g, '.')}${a.start_time ? ' ' + a.start_time : ''} - ${a.end.replace(/-/g, '.')}${a.end_time ? ' ' + a.end_time : ''}`,
     purpose: a.purpose, report: '',
     schedule: days.map(date => ({ date, place: a.destination, detail: '' })),
-    expenses: (r.expenses || a.expenses).map(({ item, amount, memo }) => ({ item, amount, memo,
-      proofs: item === 'domestic_transport' && r.fare && r.fare.screenshot ? [r.fare.screenshot] : [] })),   // 교통비 증빙 = 네이버 지도 캡처
+    // 교통비는 신청 때 더한 여유분 없이 실제(네이버 지도) 금액으로, 증빙은 지도 캡처
+    expenses: (r.expenses || a.expenses).map(({ item, amount, memo }) => item === 'domestic_transport' && r.fare && r.fare.total
+      ? { item, amount: r.fare.total, memo: memo.replace(/ \+ 여유 [\d,]+원/, ''), proofs: r.fare.screenshot ? [r.fare.screenshot] : [] }
+      : { item, amount, memo, proofs: [] }),
     attachments: [],
   };
 }

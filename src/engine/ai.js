@@ -55,6 +55,58 @@ async function complete({ provider, model, key }, prompt) {
   throw last;
 }
 
+/** 파일(이미지·PDF)과 함께 묻기. files: [{ mime, data(base64) }] — Gemini·Claude 는 이미지·PDF, OpenAI 는 이미지만 */
+async function completeWithFiles({ provider, model, key }, prompt, files) {
+  const p = PROVIDERS[provider];
+  if (!p || !key) throw new Error('AI 키가 설정되지 않았습니다.');
+  model = model || p.model;
+  if (provider === 'anthropic') {
+    const blocks = files.map(f => f.mime === 'application/pdf'
+      ? { type: 'document', source: { type: 'base64', media_type: f.mime, data: f.data } }
+      : { type: 'image', source: { type: 'base64', media_type: f.mime, data: f.data } });
+    const j = await post('https://api.anthropic.com/v1/messages', { 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+      { model, max_tokens: 2000, messages: [{ role: 'user', content: [...blocks, { type: 'text', text: prompt }] }] }, 90000);
+    return (j.content || []).map(c => c.text || '').join('');
+  }
+  if (provider === 'openai') {
+    if (files.some(f => f.mime === 'application/pdf')) throw new Error('OpenAI 로는 PDF 영수증을 읽지 못해요. 설정에서 Gemini 를 써 주세요.');
+    const j = await post('https://api.openai.com/v1/chat/completions', { authorization: `Bearer ${key}` },
+      { model, messages: [{ role: 'user', content: [{ type: 'text', text: prompt }, ...files.map(f => ({ type: 'image_url', image_url: { url: `data:${f.mime};base64,${f.data}` } }))] }] }, 90000);
+    return j.choices[0].message.content;
+  }
+  const models = [model, ...(p.fallback || []).filter(m => m !== model)];
+  let last;
+  for (const m of models) {
+    try {
+      const j = await post(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(m)}:generateContent`, { 'x-goog-api-key': key },
+        { contents: [{ parts: [...files.map(f => ({ inline_data: { mime_type: f.mime, data: f.data } })), { text: prompt }] }], generationConfig: { responseMimeType: 'application/json' } }, 90000);
+      return j.candidates[0].content.parts.map(x => x.text || '').join('');
+    } catch (e) { last = e; if (!/\(503\)|\(429\)|aborted/.test(e.message)) throw e; }
+  }
+  throw last;
+}
+
+/** 영수증·증빙 한 장(파일 하나)을 읽어 경비로 분류. 파일 하나에 영수증이 여러 장이면 여러 개.
+ *  items: { key: '예산과목 이름' } → [{ item, amount, date, vendor, memo }] (영수증이 아니면 []) */
+async function readReceipt(ai, file, items, period = '') {
+  const list = Object.entries(items).map(([k, v]) => `- ${k}: ${v}`).join('\n');
+  const prompt = `이 파일은 회사 국내·해외 출장 정산에 붙일 영수증이나 증빙이야. 결제 내역을 읽어서 JSON 배열로만 답해.
+각 항목: {"item": 예산과목 키, "amount": 결제 금액(원, 숫자만), "date": "YYYY-MM-DD" 또는 "", "vendor": 가게·회사 이름, "memo": 무엇에 쓴 돈인지 10자 안팎}
+예산과목 키 (이 중 하나만):
+${list}
+규칙:
+- 숙박(호텔·모텔·숙소) → domestic_lodging, 음식점·카페·편의점 식사 → meal, 주유·통행료·택시·버스·기차·KTX·주차 → domestic_transport. 해외면 overseas_* 나 airfare.
+- 금액은 실제 결제한 총액(부가세 포함). 통화가 원이 아니면 원으로 바꾸지 말고 그 숫자를 넣고 memo 에 통화를 적어.
+- 한 파일에 영수증이 여러 장이면 각각 따로. 영수증·결제 내역이 아니면 [].
+${period ? `- 출장 기간: ${period}` : ''}`;
+  const text = await completeWithFiles(ai, prompt, [file]);
+  const m = /\[[\s\S]*\]/.exec(text);
+  let arr = []; try { arr = JSON.parse(m ? m[0] : text); } catch (e) { throw new Error('AI 답을 읽지 못했어요'); }
+  if (!Array.isArray(arr)) arr = [arr];
+  return arr.map(r => ({ item: items[r.item] ? r.item : '', amount: Math.round(Number(String(r.amount ?? '').replace(/[^\d.]/g, '')) || 0),
+    date: String(r.date || ''), vendor: String(r.vendor || '').slice(0, 40), memo: String(r.memo || '').slice(0, 40) })).filter(r => r.amount > 0 || r.item);
+}
+
 const WEEK = '일월화수목금토';
 function todayLine(today = new Date()) {
   const p = n => String(n).padStart(2, '0');
@@ -74,4 +126,4 @@ async function draftReport(ai, draft, memo) {
   return R.extractYaml(await complete(ai, R.reportPrompt(rest) + memo));
 }
 
-module.exports = { PROVIDERS, complete, draftApply, draftReport };
+module.exports = { PROVIDERS, complete, completeWithFiles, readReceipt, draftApply, draftReport };

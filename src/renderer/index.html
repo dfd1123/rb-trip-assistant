@@ -123,6 +123,10 @@ table.ed td{padding:3px 4px;vertical-align:top}
 button:focus{outline:none} button:focus-visible{outline:2px solid var(--accent-soft);outline-offset:1px}   /* macOS 강조색(주황 등) 포커스 링이 '필수' 표시와 헷갈리지 않게 */
 /* 정산 증빙 */
 td.proof{vertical-align:top}
+#r_drop{border:2px dashed var(--line);border-radius:12px;padding:16px;margin:4px 0 14px;display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center;color:var(--muted);font-size:13px;transition:background .15s,border-color .15s}
+#r_drop b{color:var(--ink);font-size:14px}
+#r_drop.over{background:var(--accent-soft);border-color:var(--accent)}
+tr.fromai td{background:#f3f8ff}
 td.proof .files{display:flex;flex-direction:column;gap:4px;margin-top:6px}
 td.proof .add.hidden + .files{margin-top:0}
 td.proof .chip{min-height:36px;box-sizing:border-box}
@@ -283,7 +287,8 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
       <button class="btn small" id="btnAddDay" style="margin-top:6px">+ 일정 추가</button>
     </div>
     <div class="card">
-      <h2>정산 경비</h2><p class="sub">실제 쓴 금액으로 고쳐 주세요.</p>
+      <h2>정산 경비</h2><p class="sub">실제 쓴 금액으로 고쳐 주세요. 영수증을 아래에 한꺼번에 놓으면 AI 가 읽어서 채워요.</p>
+      <div id="r_drop"><b>영수증·증빙을 여기에 끌어다 놓기</b><span>이미지·PDF 여러 개 한꺼번에 — 숙박·식대·교통비를 나누고 금액을 넣어요</span><button class="btn small" id="btnPickReceipts">파일 고르기</button></div>
       <table class="ed" id="r_exp"><thead><tr><th style="width:26%">예산과목</th><th style="width:16%">금액(원)</th><th>적요</th><th style="width:28%">증빙 <span style="color:var(--err)">*</span> <span style="font-weight:400">(이미지·PDF)</span></th><th></th></tr></thead><tbody></tbody></table>
       <button class="btn small" id="btnAddRExp" style="margin-top:6px">+ 경비 추가</button>
       <div class="total"><span>정산 합계</span><span id="r_total">0원</span></div>
@@ -356,12 +361,14 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
     <p class="sub">신청서 경비를 자동으로 계산할 때 쓰는 금액이에요.</p>
     <ul class="sub" style="margin:4px 0 12px;padding-left:18px;line-height:1.7">
       <li><b>숙박비</b> = 1박 금액 × 잔 날 수. 예) 10/20~10/22 출장이면 2박</li>
+      <li><b>교통비</b> = 네이버 지도 왕복 + 여유분 (자차·대중교통 신청 때만, 보고서는 실제 금액)</li>
       <li><b>식대</b> = 먹은 끼니만 더해요. 중간 날은 아침·점심·저녁 다 넣어요.</li>
       <li><b>첫날</b>은 그 끼니 시간이 시작되기 전에 출발했을 때만 넣어요. 예) 9시 출발이면 아침(7~8시)은 빼고 점심·저녁</li>
       <li><b>마지막 날</b>은 그 끼니 시간이 끝난 뒤에 돌아왔을 때만 넣어요. 예) 18시 복귀면 아침·점심만, 저녁(18~19시)은 빼고</li>
     </ul>
     <div class="rates">
       <div><label>숙박 1박</label><input id="s_lodging" inputmode="numeric"></div>
+      <div><label>교통비 여유분</label><input id="s_fare_margin" inputmode="numeric" title="자차·대중교통 신청 때 네이버 지도 왕복 금액에 더해요"></div>
       <div><label>아침</label><input id="s_breakfast" inputmode="numeric"></div>
       <div><label>점심</label><input id="s_lunch" inputmode="numeric"></div>
       <div><label>저녁</label><input id="s_dinner" inputmode="numeric"></div>

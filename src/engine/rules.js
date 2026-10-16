@@ -175,9 +175,12 @@ function parseReport(data) {
   return out;
 }
 
-function transportExpense(a, total) {
-  const memo = a.transport.mode === 'car' ? `출장 유류비 및 통행료 (왕복)` : `출장 대중교통비 (왕복)`;
-  return { item: 'domestic_transport', amount: total, memo, code: BUDGET_ITEMS.domestic_transport[0], label: BUDGET_ITEMS.domestic_transport[1] };
+/** 신청 교통비 = 네이버 지도 왕복 + 여유분(자차·대중교통, 기본 2만원). 보고서 정산은 실제 금액으로 */
+function transportExpense(a, total, margin = 0) {
+  const extra = (a.transport.mode === 'car' || a.transport.mode === 'transit') ? Math.max(0, Number(margin) || 0) : 0;
+  const base = a.transport.mode === 'car' ? '출장 유류비 및 통행료 (왕복' : '출장 대중교통비 (왕복';
+  const memo = `${base}${extra ? ` + 여유 ${extra.toLocaleString('ko-KR')}원` : ''})`;
+  return { item: 'domestic_transport', amount: total + extra, memo, code: BUDGET_ITEMS.domestic_transport[0], label: BUDGET_ITEMS.domestic_transport[1] };
 }
 
 // ---------- AI 프롬프트 ----------

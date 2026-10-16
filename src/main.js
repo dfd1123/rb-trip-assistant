@@ -4,6 +4,11 @@
 
 const { app, BrowserWindow, ipcMain, clipboard, shell, safeStorage, dialog, session } = require('electron');
 try { process.loadEnvFile(require('path').join(__dirname, '..', '.env')); } catch (e) { /* 개발용 .env 없음 (배포본엔 없음) */ }
+// 우분투 24.04 이상 AppImage: AppArmor 가 user namespace 를 막고 AppImage 는 SUID 샌드박스도 못 쓰니 샌드박스 없이 켠다
+// (deb·rpm 은 설치 스크립트가 AppArmor 프로필을 넣어 샌드박스를 그대로 쓴다)
+if (process.platform === 'linux' && process.env.APPIMAGE) {
+  try { if (require('fs').readFileSync('/proc/sys/kernel/apparmor_restrict_unprivileged_userns', 'utf8').trim() === '1') app.commandLine.appendSwitch('no-sandbox'); } catch (e) { /* 제한 없음 */ }
+}
 const path = require('path');
 const R = require('./engine/rules');
 const runner = require('./engine/runner');
@@ -55,6 +60,12 @@ function createMain() {
 // 숨겨도 입력 이벤트·화면 갱신이 멈추지 않도록 backgroundThrottling 을 끈다.
 const gwPopups = new Set();
 let quitting = false;
+// 숨긴 창: 맥은 hide() 로도 입력·포커스가 되지만, 윈도우·리눅스는 한 번도 화면에 안 그려진 창에 클릭·키 입력이 제대로 안 들어가
+// 드롭다운·코드도움 선택이 실패한다 → 화면 밖(-32000)에 띄워 둔다 (작업표시줄에도 안 보임). 보여 줄 땐 화면 가운데로.
+const PARK = process.platform !== 'darwin';
+let gwShown = false;   // 사람이 [그룹웨어 창 열기]로 보고 있는 중이면 팝업(문서 보기 등)도 바로 보이게
+function park(w) { if (!w || w.isDestroyed()) return; if (!PARK) return w.hide(); w.setSkipTaskbar(true); w.setPosition(-32000, -32000); if (!w.isVisible()) w.showInactive(); }
+function unpark(w) { if (!w || w.isDestroyed()) return; if (PARK) { w.setSkipTaskbar(false); w.center(); } w.show(); }
 app.on('before-quit', () => { quitting = true; });
 function gwWindow(show = false) {
   if (gwWin && !gwWin.isDestroyed()) { if (show) showGw(); return gwWin; }
@@ -69,22 +80,25 @@ function gwWindow(show = false) {
   }));
   gwWin.webContents.on('did-create-window', w => {
     gwPopups.add(w); w.on('closed', () => gwPopups.delete(w));
-    w.on('close', e => { if (!quitting && jobBusy()) { e.preventDefault(); w.hide(); } });   // 작업 중 닫으면 숨기기만
+    if (gwShown) { unpark(w); w.focus(); } else park(w);   // 직접 보는 중에 연 팝업(문서번호 클릭 등)은 보이게, 작업 중 연 건 숨김
+    w.on('close', e => { if (!quitting && jobBusy()) { e.preventDefault(); park(w); } });   // 작업 중 닫으면 숨기기만
   });
-  gwWin.on('close', e => { if (!quitting) { e.preventDefault(); gwWin.hide(); } });            // 닫기 = 숨기기 (로그인·작업 상태 유지)
+  gwWin.on('close', e => { if (!quitting) { e.preventDefault(); gwShown = false; park(gwWin); } });   // 닫기 = 숨기기 (로그인·작업 상태 유지)
+  park(gwWin);
   if (show) showGw();
   return gwWin;
 }
 function showGw() {
   if (!gwWin || gwWin.isDestroyed()) gwWindow(false);
-  gwWin.show();
+  gwShown = true; unpark(gwWin);
   const pops = [...gwPopups].filter(w => !w.isDestroyed());
-  for (const w of pops) w.show();
+  for (const w of pops) unpark(w);
   (pops.pop() || gwWin).focus();
 }
 function hideGw() {
-  for (const w of gwPopups) if (!w.isDestroyed()) w.hide();
-  if (gwWin && !gwWin.isDestroyed()) gwWin.hide();
+  gwShown = false;
+  for (const w of gwPopups) park(w);
+  park(gwWin);
 }
 
 // 네이버 지도 창도 숨긴 채 돌리고, 자동 검색이 안 될 때 작업창 [네이버 지도 열기]로만 띄운다
@@ -94,9 +108,10 @@ function makeNaverWindow() {
     show: false, width: 1300, height: 900, icon: ICON, title: '네이버 지도 — 교통비 조회', autoHideMenuBar: true,
     webPreferences: { partition: 'persist:naver', contextIsolation: true, sandbox: true, backgroundThrottling: false },
   });
+  park(naverWin);
   return naverWin;
 }
-function showNaver() { if (naverWin && !naverWin.isDestroyed()) { naverWin.show(); naverWin.focus(); return true; } return false; }
+function showNaver() { if (naverWin && !naverWin.isDestroyed()) { unpark(naverWin); naverWin.focus(); return true; } return false; }
 
 // ---------- 작업 1건 (사람 확인 포함) ----------
 class Cancelled extends Error { constructor() { super('취소했어요.'); } }
@@ -136,6 +151,29 @@ function startJob(kind, fn, title) {
     finally { if (j.state !== 'done' && mainWin && !mainWin.isDestroyed()) mainWin.focus(); }   // 성공 시엔 작성 팝업이 앞
   })();
   return { ok: true };
+}
+
+// ---------- 영수증 자동 분류 ----------
+const PROOF_MIME = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', heic: 'image/heic', heif: 'image/heif', pdf: 'application/pdf' };
+async function readReceipts(env, ai, paths, period) {
+  const fs = require('fs');
+  const items = Object.fromEntries(Object.entries(R.BUDGET_ITEMS).map(([k, [, label]]) => [k, label.replace('여비교통비(판)_', '')]));
+  const out = [];
+  let i = 0;
+  const one = async p => {
+    const name = path.basename(p), ext = path.extname(p).slice(1).toLowerCase();
+    const mime = PROOF_MIME[ext];
+    if (!mime) return out.push({ path: p, error: '이미지나 PDF가 아니에요 (BMP·TIFF 는 PNG·JPG 로 바꿔 주세요)' });
+    const size = fs.statSync(p).size;
+    if (size > 15 * 1024 * 1024) return out.push({ path: p, error: '파일이 너무 커요 (15MB 이하)' });
+    try {
+      const rows = await AI.readReceipt(ai, { mime, data: fs.readFileSync(p).toString('base64') }, items, period);
+      env.log(`${++i}/${paths.length} ${name}: ${rows.length ? rows.map(r => `${items[r.item] || '?'} ${r.amount.toLocaleString('ko-KR')}원`).join(', ') : '영수증을 못 찾음'}`);
+      out.push({ path: p, rows });
+    } catch (e) { env.log(`${++i}/${paths.length} ${name}: 실패 (${e.message})`); out.push({ path: p, error: e.message }); }
+  };
+  for (let k = 0; k < paths.length; k += 3) await Promise.all(paths.slice(k, k + 3).map(one));   // 3개씩 동시에
+  return { results: paths.map(p => out.find(o => o.path === p)) };
 }
 
 // ---------- 그룹웨어 계정 (비밀번호는 OS 보안 저장소로 암호화해서만 저장) ----------
@@ -308,7 +346,7 @@ async function route(p, body = {}) {
     case '/api/copy': clipboard.writeText(String(body.text || '')); return { ok: true };
     case '/api/open': if (body.path) shell.openPath(body.path); return { ok: true };
     case '/api/pick-proofs': {   // 정산 증빙: 이미지·PDF 1개
-      const r = await dialog.showOpenDialog(mainWin, { title: '증빙 자료 선택 (이미지·PDF 1개)', properties: ['openFile'],
+      const r = await dialog.showOpenDialog(mainWin, { title: body.many ? '영수증·증빙 선택 (여러 개)' : '증빙 자료 선택 (이미지·PDF 1개)', properties: body.many ? ['openFile', 'multiSelections'] : ['openFile'],
         filters: [{ name: '이미지·PDF', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'heic', 'heif', 'bmp', 'tif', 'tiff', 'pdf'] }] });
       return { paths: r.canceled ? [] : r.filePaths };
     }
@@ -329,6 +367,11 @@ async function route(p, body = {}) {
     case '/api/gw/show': if (job && job.kind === 'fare' && showNaver()) return { ok: true }; showGw(); return { ok: true };
     case '/api/gw/hide': hideGw(); return { ok: true };
     case '/api/job/gw-list': return startJob('gw-list', env => runner.runListBudget(env), body.title);
+    case '/api/job/receipts': {   // 영수증·증빙 여러 개 → AI 가 예산과목·금액·날짜 분류
+      const ai = aiSettings(cfg);
+      if (!ai) throw new Error('영수증 자동 분류는 AI 가 있어야 해요. 설정 › AI 문장 작성에서 Gemini 를 골라 주세요.');
+      return startJob('receipts', env => readReceipts(env, ai, (body.paths || []).map(String), String(body.period || '')), body.title);
+    }
     case '/api/job/gw-profile': return startJob('gw-profile', env => runner.runProfile(env, { force: !!body.force }), body.title);
     case '/api/job/report-load': return startJob('report-load', env => runner.runLoadReport(env, String(body.id)), body.title);
     case '/api/job/trip-delete': return startJob('trip-delete', env => runner.runDeleteTrip(env, body.id), body.title);
