@@ -125,11 +125,12 @@ const FIND_JS = hasLabel.toString();
 
 function applyPayload(a) {
   const t = a.transport;
+  const overseas = a.scope === '해외';
   const fields = [
-    { label: '국내', text: a.destination },
+    ...(overseas ? [{ label: '해외', check: [a.overseas.grade] }] : [{ label: '국내', text: a.destination }]),   // 해외: 가·나 등급 체크 (국가·도시는 출장목적에)
     { label: '출장일', text: a.period },
     { label: '구분', check: [a.category] },
-    { label: '교통편', check: t.check },
+    ...(overseas ? [] : [{ label: '교통편', check: t.check }]),
     { label: '동행자', text: a.companions.join(', ') },
     { label: '동행목적', text: a.companion_purpose },
     { label: ['출장목적(상세기입)', '출장목적'], text: a.purpose },

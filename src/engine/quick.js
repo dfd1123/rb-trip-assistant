@@ -163,21 +163,27 @@ function nightsDays(start, end) {
   const d = Math.round((new Date(end + 'T00:00:00') - new Date(start + 'T00:00:00')) / 86400000) + 1;
   return { days: d, nights: Math.max(0, d - 1) };
 }
-/** 날짜별 끼니. 첫날은 출발 시각, 마지막 날은 복귀 시각 기준. 시각이 없으면 그날 세 끼 전부. */
-function mealPlan({ start, end, startTime = '', endTime = '', mealTimes = DEFAULT_MEAL_TIMES }) {
+/** 날짜별 끼니 — 출장여비지급규정 별첨 1 (국내출장 지급기준표, 2026.05.12)
+ *  당일 출장: 중식. 오전 7시 이전 출발이면 조식, 복귀가 20시를 넘으면 석식. 13시 이후 출발이면 중식 없음(본사 중식 제공)
+ *  1박 이상: 첫날 중식·석식(13시 이후 출발이면 중식 없음) / 중간 날 조식·중식·석식 / 마지막 날 조식·중식(복귀가 20시를 넘으면 석식도)
+ *  시각이 없으면 시각 조건 없이 위 기본만 */
+const RULE_T = { breakfastBefore: 7 * 60, lunchDepartLimit: 13 * 60, lunchReturnAfter: 12 * 60, dinnerReturnAfter: 20 * 60 };
+function mealPlan({ start, end, startTime = '', endTime = '' }) {
   const { days } = nightsDays(start, end);
   const dep = toMin(startTime), ret = toMin(endTime);
+  const noLunchByDep = dep !== null && dep >= RULE_T.lunchDepartLimit;
   const plan = [];
   for (let i = 0; i < days; i++) {
-    const d = addDays(new Date(start + 'T00:00:00'), i);
-    const day = { date: iso(d), meals: [] };
-    for (const [k] of MEALS) {
-      const [from, to] = (mealTimes[k] || DEFAULT_MEAL_TIMES[k]).map(toMin);
-      const okStart = i > 0 || dep === null || dep <= from;
-      const okEnd = i < days - 1 || ret === null || ret >= to;
-      if (okStart && okEnd) day.meals.push(k);
-    }
-    plan.push(day);
+    const d = addDays(new Date(start + 'T00:00:00'), i), first = i === 0, last = i === days - 1;
+    const m = new Set();
+    if (days === 1) {
+      if (dep !== null && dep < RULE_T.breakfastBefore) m.add('breakfast');
+      if (!noLunchByDep && !(ret !== null && ret < RULE_T.lunchReturnAfter)) m.add('lunch');
+      if (ret !== null && ret > RULE_T.dinnerReturnAfter) m.add('dinner');
+    } else if (first) { if (!noLunchByDep) m.add('lunch'); m.add('dinner'); }
+    else if (last) { m.add('breakfast'); if (!(ret !== null && ret < RULE_T.lunchReturnAfter)) m.add('lunch'); if (ret !== null && ret > RULE_T.dinnerReturnAfter) m.add('dinner'); }
+    else { m.add('breakfast'); m.add('lunch'); m.add('dinner'); }
+    plan.push({ date: iso(d), meals: MEALS.map(([k]) => k).filter(k => m.has(k)) });
   }
   return plan;
 }
@@ -187,10 +193,11 @@ function mealSummary(plan) {
 }
 
 /** 숙박 1박 7만 × (일수−1), 식대는 시각 기준 끼니별 단가 합 */
-function computeExpenses({ start, end, startTime = '', endTime = '', reason, rates = DEFAULT_RATES, mealTimes = DEFAULT_MEAL_TIMES }) {
+function computeExpenses({ start, end, startTime = '', endTime = '', reason, rates = DEFAULT_RATES, rank = 'staff' }) {
   rates = { ...DEFAULT_RATES, ...(rates || {}) };
+  if (rank === 'exec') rates = { ...rates, lodgingPerNight: rates.lodgingExec || 350000 };   // 임원 숙박 한도 35만 (규정 별첨 1)
   const { nights } = nightsDays(start, end);
-  const plan = mealPlan({ start, end, startTime, endTime, mealTimes });
+  const plan = mealPlan({ start, end, startTime, endTime });
   const mealTotal = plan.reduce((s, p) => s + p.meals.reduce((a, m) => a + rates[m], 0), 0);
   const counts = MEALS.map(([k, ko]) => [ko, plan.filter(p => p.meals.includes(k)).length]).filter(([, n]) => n);
   const out = [];
@@ -276,7 +283,7 @@ function quickApply(memo, ctx = {}) {
     transport: { mode: m, to, from: ctx.origin || '', ...(m === 'corporate' && mode.corporate_car ? { corporate_car: mode.corporate_car } : {}) },
     companions, companion_purpose: companions.length ? `${reason} 공동 수행` : '',
     purpose: destination && reason ? templatePurpose({ destination, reason, companions }) : '',
-    expenses: dates.start && reason ? computeExpenses({ start: dates.start, end: dates.end, startTime: times.startTime, endTime: times.endTime, reason, rates: ctx.rates, mealTimes: ctx.mealTimes }).expenses : [],
+    expenses: dates.start && reason ? computeExpenses({ start: dates.start, end: dates.end, startTime: times.startTime, endTime: times.endTime, reason, rates: ctx.rates, rank: ctx.rank }).expenses : [],
   };
   return { data, missing };
 }

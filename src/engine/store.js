@@ -7,11 +7,11 @@ const path = require('path');
 const DEFAULT_CONFIG = {
   baseUrl: 'https://gw.rainbow-robotics.com',
   name: '',
-  budgetDept: '',           // 그룹웨어 로그인 후 품의부서로 채움 (설정에서 사업코드 목록 중 선택)
+  budgetDept: '',   // 그룹웨어 로그인 후 품의부서로 채움 (설정에서 사업코드 목록 중 선택)
+  rank: 'staff',   // 출장 규정 직급: staff = 부장 이하, exec = 임원 (숙박 한도·해외 일비가 다름)
   budgetDepts: [],          // 그룹웨어 사업코드도움 목록
   defaultOrigin: '세종특별자치시 집현동 1095',   // 교통비 조회 출발지 기본값 (설정에서 바꿀 수 있음)
-  rates: { lodgingPerNight: 70000, breakfast: 8000, lunch: 15000, dinner: 15000, fareMargin: 20000 },   // 국내 출장 규정 (fareMargin: 자차·대중교통 신청 교통비에 더하는 여유분)
-  mealTimes: { breakfast: ['07:00', '08:00'], lunch: ['12:00', '13:00'], dinner: ['18:00', '19:00'] },   // 첫날 출발이 시작 전 / 마지막 날 복귀가 끝 이후면 포함
+  rates: { lodgingPerNight: 70000, breakfast: 8000, lunch: 15000, dinner: 15000, fareMargin: 20000, uberUsdPerDay: 70, lodgingExec: 350000 },   // uberUsdPerDay: 해외 현지교통(우버) 1일 예상 USD   // 국내 출장 규정 (fareMargin: 자차·대중교통 신청 교통비에 더하는 여유분)
   aiProvider: '',          // '' | anthropic | openai | gemini
   aiModel: '',
   aiKeyEnc: '',            // OS 보안 저장소로 암호화된 개인 API 키
@@ -35,7 +35,7 @@ class Store {
   get configPath() { return path.join(this.dir, 'config.json'); }
   hasConfig() { return fs.existsSync(this.configPath); }
   config() {
-    try { const c = JSON.parse(fs.readFileSync(this.configPath, 'utf8')); return { ...DEFAULT_CONFIG, ...c, rates: { ...DEFAULT_CONFIG.rates, ...(c.rates || {}) }, mealTimes: { ...DEFAULT_CONFIG.mealTimes, ...(c.mealTimes || {}) } }; }
+    try { const c = JSON.parse(fs.readFileSync(this.configPath, 'utf8')); return { ...DEFAULT_CONFIG, ...c, rates: { ...DEFAULT_CONFIG.rates, ...(c.rates || {}) } }; }
     catch (e) { return { ...DEFAULT_CONFIG }; }
   }
   saveConfig(patch) {

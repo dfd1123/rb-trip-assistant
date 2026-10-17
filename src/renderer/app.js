@@ -54,10 +54,18 @@ function expRow(tbody, e={}, onchange){
   const opts = Object.entries(META.items).filter(([k]) => tid!=='a_exp' || k!=='domestic_transport')
     .map(([k,v]) => `<option value="${k}">${v.replace('여비교통비(판)_','')}</option>`).join('');
   const proofCell = tid === 'r_exp' ? '<td class="proof"><button class="btn small add">+ 증빙 첨부</button><div class="files"></div></td>' : '';
-  const payCell = tid === 'r_exp' ? '<td><select class="pay"><option value="personal">개인</option><option value="card">법인카드</option></select></td>' : '';   // 결제: 법인카드면 공급가액 = 합계 − 부가세, 법인카드는 자금계획일이 익월 23일
+  const payCell = tid === 'r_exp' ? '<td><select class="pay"><option value="personal">개인</option><option value="card">법인카드</option></select><label class="novat hidden" title="항공권·주유비 등 부가세 공제가 안 되는 건: 부가세 0, 공급가액 = 결제 금액"><input type="checkbox" class="nv"> 면세</label></td>' : '';   // 결제: 법인카드면 공급가액 = 합계 − 부가세, 법인카드는 자금계획일이 익월 23일
   tr.innerHTML = `<td><select class="item">${opts}</select></td><td><input class="amt" inputmode="numeric"></td>${payCell}<td>${tid === 'r_exp' ? '<div class="memo-wrap"><span class="ppl-box"><input class="ppl" inputmode="numeric" title="몇 명이 먹었는지 (설정의 식대 기준과 가격으로 짐작해 넣어요)">명</span><input class="memo" placeholder="날짜·내용 (예: 9/28 1인 석식)"></div>' : '<input class="memo" placeholder="비우면 자동">'}</td>${proofCell}<td><button class="btn small del">✕</button></td>`;
   const sel = tr.querySelector('.item'), amt = tr.querySelector('.amt'), memo = tr.querySelector('.memo'), pay = tr.querySelector('.pay');
-  if(pay){ pay.value = e.pay || 'personal'; pay.onchange = onchange; }
+  if(pay){ pay.value = e.pay || 'personal';
+    // 법인카드면 '면세(부가세 불공제)' 체크: 항공권·주유비 등은 기본으로 켬. 개인카드는 공급가액만이라 해당 없음
+    const nvBox = tr.querySelector('.novat'), nv = tr.querySelector('.nv');
+    const guess = () => sel.value === 'airfare' || /항공|주유|유류|기름|휘발유|경유|LPG|면세|불공제/i.test(memo.value);
+    nv.checked = e.noVat === true || e.noVat === false ? e.noVat : guess(); nv.dataset.auto = e.noVat === undefined ? '1' : '';
+    const showNv = () => nvBox.classList.toggle('hidden', pay.value !== 'card');
+    nv.onchange = () => { nv.dataset.auto = ''; onchange(); };
+    memo.addEventListener('input', () => { if(nv.dataset.auto) nv.checked = guess(); });
+    pay.onchange = () => { showNv(); onchange(); }; showNv(); }
   const ppl = tr.querySelector('.ppl');
   if(ppl){   // 식대 인원: 적요의 "N인"과 같이 움직인다. 비어 있으면 금액으로 짐작
     const box = tr.querySelector('.ppl-box');
@@ -118,7 +126,7 @@ async function fillMemo(tr){
 const readExp = tbody => [...tbody.querySelectorAll('tr')].map(tr => {
   const sel = tr.querySelector('.item'), amt = tr.querySelector('.amt'), memo = tr.querySelector('.memo'), pay = tr.querySelector('.pay');
   const e = {item: sel.value, amount: num(amt.value), memo: memo.value.trim()};
-  if(pay) e.pay = pay.value;
+  if(pay){ e.pay = pay.value; if(pay.value === 'card') e.noVat = tr.querySelector('.nv').checked; }
   const ppl = tr.querySelector('.ppl'); if(ppl && sel.value === 'meal' && ppl.value) e.people = Number(ppl.value);
   if(tr.dataset.proofs) e.proofs = JSON.parse(tr.dataset.proofs);
   if(amt.value.trim() === '') e.empty = true;
@@ -127,15 +135,17 @@ const readExp = tbody => [...tbody.querySelectorAll('tr')].map(tr => {
 
 /* ---------- 신청서 ---------- */
 function applyData(){
-  const mode = radio('a_mode');
+  const ovs = isOverseas();
+  const mode = ovs ? 'overseas' : radio('a_mode');
   const t = {mode};
   if(mode==='corporate'){ if($('#a_corporate_car').value) t.corporate_car = $('#a_corporate_car').value; }
-  else { t.to = $('#a_to').value.trim() || $('#a_destination').value.trim(); t.from = $('#a_from').value.trim(); }
+  else if(mode !== 'overseas'){ t.to = $('#a_to').value.trim() || $('#a_destination').value.trim(); t.from = $('#a_from').value.trim(); }
   if($('#a_fare').value) t.total = num($('#a_fare').value);
   if(fareShot) t.screenshot = fareShot;
   return {
     reason: $('#a_reason').value.trim(), destination: $('#a_destination').value.trim(),
     dates: {start: $('#a_start').value, end: $('#a_end').value || $('#a_start').value, start_time: $('#a_start_time').value, end_time: $('#a_end_time').value},
+    scope: ovs ? '해외' : '국내', grade: ovs ? (radio('a_grade') || '') : '', rate: ovs ? Number(String($('#a_rate').value).replace(/,/g, '')) || 0 : 0, rate_date: ovs ? rateInfo.date : '', rate_shot: ovs ? rateInfo.screenshot : '',
     category: radio('a_category'), project: $('#a_project').value.trim(),
     transport: t, companions: list($('#a_companions').value),
     companion_purpose: $('#a_companion_purpose').value.trim(),
@@ -147,7 +157,7 @@ function fillApply(d){
   const dt = d.dates || {start: d.start, end: d.end, start_time: d.start_time, end_time: d.end_time};
   $('#a_start').value = dt.start||''; $('#a_end').value = dt.end||''; $('#a_start_time').value = dt.start_time||''; $('#a_end_time').value = dt.end_time||'';
   setRadio('a_category', d.category||'일반'); $('#a_project').value = d.project||'';
-  const t = d.transport||{}; setRadio('a_mode', t.mode||'car');
+  const t = d.transport||{}; $$('input[name=a_mode]').forEach(x => x.checked = false); if(t.mode) setRadio('a_mode', t.mode);   // 교통편은 정해졌을 때만 (안 정했으면 비워 둠)
   $('#a_to').value = t.to||''; if(t.from) $('#a_from').value = t.from;
   $('#a_fare').value = t.total ? Number(t.total).toLocaleString('ko-KR') : ''; fareShot = t.screenshot || ''; $('#a_fare_desc').textContent = '';
   if(t.corporate_car) $('#a_corporate_car').value = t.corporate_car;
@@ -155,26 +165,37 @@ function fillApply(d){
   $('#a_companion_purpose').value = d.companion_purpose||''; $('#a_purpose').value = d.purpose||'';
   $('#a_exp tbody').innerHTML = '';
   (d.expenses||[]).filter(e=>e.item!=='domestic_transport').forEach(e => expRow($('#a_exp tbody'), e, refreshApply));
+  // 해외출장: 국가 등급·환율 → 규정대로 경비 줄
+  const ov = d.scope === '해외' || t.mode === 'overseas';
+  setRadio('a_scope', ov ? '해외' : '국내');
+  $$('input[name=a_grade]').forEach(x => x.checked = false); if(d.grade) setRadio('a_grade', d.grade);
+  if(d.rate) setRate({ rate: d.rate, date: d.rate_date, screenshot: d.rate_shot });
   refreshApply();
+  if(ov){ if(!$('#a_uber').value) $('#a_uber').value = (META.config.rates && META.config.rates.uberUsdPerDay) || ''; recalcOverseas(); }
 }
 /** 신청서 전체 비우기 ([새로 작성], 그룹웨어 입력이 끝났을 때) */
 function resetApply(){
   fillApply({}); autoExp = true; fareShot = '';
   $('#q_memo').value = ''; $('#q_status').textContent = ''; $('#a_err').textContent = '';
+  ['#a_air', '#a_hotel', '#a_roam', '#a_ins'].forEach(id => $(id).value = ''); setRadio('a_scope', '국내'); refreshApply();
   markNeed([]); showMealPlan(null);
 }
 $('#btnNewApply').onclick = () => { resetApply(); $('#q_memo').focus(); };
 let titleTimer;
 function refreshApply(){
-  const mode = radio('a_mode');
+  const ovs = isOverseas();
+  $('#a_ovCard').classList.toggle('hidden', !ovs);
+  [$('#a_mode_seg').closest('.row'), $('#btnRecalc')].forEach(el => el && el.classList.toggle('hidden', ovs));
+  if(ovs){ $('#a_route').classList.add('hidden'); $('#a_car_row').classList.add('hidden'); }
+  const mode = ovs ? 'overseas' : radio('a_mode');
   $('#a_project').classList.toggle('hidden', radio('a_category')!=='연구과제');
   $('#a_cp_row').classList.toggle('hidden', !list($('#a_companions').value).length);
-  $('#a_route').classList.toggle('hidden', mode==='corporate');
-  $('#a_car_row').classList.toggle('hidden', mode!=='corporate');
-  const fare = mode==='corporate' ? 0 : num($('#a_fare').value);
-  const margin = mode!=='corporate' && fare ? (META.config.rates.fareMargin || 0) : 0;   // 자차·대중교통 교통비 여유분
+  if(!ovs){ $('#a_route').classList.toggle('hidden', !mode || mode==='corporate');   // 교통편을 고르기 전엔 교통비 칸 숨김
+    $('#a_car_row').classList.toggle('hidden', mode!=='corporate'); }
+  const fare = mode==='corporate' || ovs ? 0 : num($('#a_fare').value);
+  const margin = mode!=='corporate' && !ovs && fare ? (META.config.rates.fareMargin || 0) : 0;   // 자차·대중교통 교통비 여유분
   const sum = readExp($('#a_exp tbody')).reduce((s,e)=>s+e.amount,0) + fare + margin;
-  $('#a_total').textContent = won(sum) + (mode!=='corporate' && !$('#a_fare').value ? ' + 교통비' : margin ? ` (교통비 여유 ${won(margin)} 포함)` : '');
+  $('#a_total').textContent = won(sum) + (!ovs && mode!=='corporate' && !$('#a_fare').value ? ' + 교통비' : margin ? ` (교통비 여유 ${won(margin)} 포함)` : '');
   clearTimeout(titleTimer);
   titleTimer = setTimeout(async () => {
     const r = await rpc('/api/title', {reason: $('#a_reason').value});
@@ -230,6 +251,7 @@ $$('input[name=a_mode]').forEach(r => r.addEventListener('change', () => {
 /* ---------- 한 줄 자동 작성 ---------- */
 let autoExp = true;
 async function recalcExpenses(){
+  if(isOverseas()) return recalcOverseas();   // 해외는 규정이 달라서 따로
   const start = $('#a_start').value, end = $('#a_end').value || start;
   if(!start) return;
   const r = await rpc('/api/expenses', {start, end, start_time: $('#a_start_time').value, end_time: $('#a_end_time').value, reason: $('#a_reason').value.trim()});
@@ -240,6 +262,47 @@ async function recalcExpenses(){
   r.expenses.forEach(e => expRow(tb, e, refreshApply)); keep.forEach(tr => tb.appendChild(tr));
   showMealPlan(r); autoExp = true; refreshApply();
 }
+/* ---------- 해외출장 ---------- */
+const isOverseas = () => radio('a_scope') === '해외';
+const OV_ITEMS = new Set(['airfare', 'overseas_per_diem', 'overseas_lodging', 'overseas_transport', 'travel_etc']);
+let rateInfo = { date: '', screenshot: '' };
+function setRate(r){
+  if(r.rate) $('#a_rate').value = Number(r.rate).toLocaleString('en-US', { maximumFractionDigits: 2 });
+  rateInfo = { date: r.date || '', screenshot: r.screenshot || '' };
+  const d = $('#a_rate_desc'); d.innerHTML = '';
+  if(r.rate){ d.append(`서울외국환중개 매매기준율 · 계산은 ${Math.round(r.rate).toLocaleString('en-US')}원${r.screenshot ? ` · ${r.date} 캡처` : ' · 화면 캡처 필요'}`); if(r.screenshot){ const a = document.createElement('a'); a.href = '#'; a.textContent = ' 캡처 보기 (결재 문서에 첨부)'; a.onclick = e => { e.preventDefault(); rpc('/api/open', {path: r.screenshot}); }; d.append(a); } }
+}
+// 환율: 서울외국환중개는 자동 수집 금지 → 화면만 열어 주고, 값은 사람이 적고, 캡처는 사람이 누를 때
+function lookupRate(){ rpc('/api/fx/open').then(() => { $('#a_rate').focus(); $('#a_rate_desc').textContent = '열린 창에서 미국 달러(USD) 매매기준율을 환율 칸에 적고 [화면 캡처]를 눌러 주세요.'; }).catch(e => alertErr(e.message)); }
+async function captureRate(){
+  try { const r = await rpc('/api/fx/capture'); setRate({ rate: Number(String($('#a_rate').value).replace(/,/g, '')) || 0, date: r.date, screenshot: r.screenshot }); recalcOverseas(); }
+  catch(e){ alertErr(e.message); }
+}
+let ovTimer;
+async function recalcOverseas(){
+  if(!isOverseas()) return;
+  const start = $('#a_start').value, end = $('#a_end').value || start, grade = radio('a_grade'), rate = Number(String($('#a_rate').value).replace(/,/g, ''));
+  if(!start || !grade || !(rate > 0)) { refreshApply(); return; }
+  const v = id => $(id).value.trim() === '' ? '' : $(id).value;
+  const r = await rpc('/api/overseas-expenses', { start, end, grade, rate, airfare: v('#a_air'), lodging: v('#a_hotel'), uber: v('#a_uber'), roaming: v('#a_roam'), insurance: v('#a_ins') });
+  const tb = $('#a_exp tbody');
+  [...tb.querySelectorAll('tr')].filter(tr => OV_ITEMS.has(tr.querySelector('.item').value) || ['domestic_lodging', 'meal'].includes(tr.querySelector('.item').value)).forEach(tr => tr.remove());   // 규정으로 계산하는 줄만 새로
+  const keep = [...tb.querySelectorAll('tr')]; tb.innerHTML = '';
+  r.expenses.forEach(e => expRow(tb, e, refreshApply)); keep.forEach(tr => tb.appendChild(tr));
+  $('#a_meal_plan').textContent = `해외 ${r.nights}박 ${r.days}일 · ${grade} 등급 일비 $${grade === '가' ? 90 : 50}/일${$('#a_hotel').value.trim() ? '' : ` · 숙박은 한도 $${grade === '가' ? 200 : 150}/박으로 계산 (견적이 있으면 숙박 칸에 넣으세요)`}`;
+  refreshApply();
+}
+['#a_air', '#a_hotel', '#a_uber', '#a_roam', '#a_ins', '#a_rate'].forEach(id => $(id).addEventListener('input', () => { if(['#a_air', '#a_hotel', '#a_roam', '#a_ins'].includes(id)){ const x = $(id); x.value = x.value ? num(x.value).toLocaleString('ko-KR') : ''; } clearTimeout(ovTimer); ovTimer = setTimeout(recalcOverseas, 300); }));
+$$('input[name=a_grade]').forEach(r => r.addEventListener('change', () => { $('#a_grade_seg').classList.remove('need'); recalcOverseas(); }));
+$$('input[name=a_scope]').forEach(r => r.addEventListener('change', () => {
+  $('#a_exp tbody').innerHTML = ''; $('#a_meal_plan').textContent = '';
+  if(isOverseas()){ if(!$('#a_uber').value) $('#a_uber').value = (META.config.rates && META.config.rates.uberUsdPerDay) || ''; if(!radio('a_grade')){ const g = /미국|유럽|캐나다|싱가포르|영국|프랑스|독일|이탈리아|스페인|네덜란드|스위스/.test($('#a_destination').value) ? '가' : ''; if(g) setRadio('a_grade', g); } recalcOverseas(); }
+  else recalcExpenses();
+  refreshApply();
+}));
+$('#btnRate').onclick = lookupRate;
+$('#btnRateShot').onclick = captureRate;
+$('#a_rate').addEventListener('change', () => setRate({ rate: Number(String($('#a_rate').value).replace(/,/g, '')) || 0, date: rateInfo.date, screenshot: rateInfo.screenshot }));
 function showMealPlan(m){
   $('#a_meal_plan').textContent = m && m.summary ? `식대 내역: ${m.summary}${m.timed ? '' : '  (출발·복귀 시각을 넣으면 첫날·마지막 날 끼니를 정확히 계산해요)'}` : '';
 }
@@ -248,7 +311,7 @@ let recalcTimer = null;
 ['#a_start','#a_end','#a_start_time','#a_end_time'].forEach(id => ['input', 'change'].forEach(ev => $(id).addEventListener(ev, () => { clearTimeout(recalcTimer); recalcTimer = setTimeout(recalcExpenses, 300); })));
 $('#btnRecalc').onclick = recalcExpenses;
 function markNeed(missing){
-  const map = {'날짜': ['#a_start','#a_end'], '출발 시각': ['#a_start_time'], '복귀 시각': ['#a_end_time'], '출장지': ['#a_destination'], '사유': ['#a_reason'], '교통비': ['#a_fare'], '과제명': ['#a_project'], '동행목적': ['#a_companion_purpose']};
+  const map = {'교통편': ['#a_mode_seg'], '국가 등급': ['#a_grade_seg'], '환율': ['#a_rate'], '환율 화면 캡처': ['#btnRateShot'], '날짜': ['#a_start','#a_end'], '출발 시각': ['#a_start_time'], '복귀 시각': ['#a_end_time'], '출장지': ['#a_destination'], '사유': ['#a_reason'], '교통비': ['#a_fare'], '과제명': ['#a_project'], '동행목적': ['#a_companion_purpose']};
   $$('.need').forEach(el => el.classList.remove('need'));
   missing.forEach(m => (map[m]||[]).forEach(id => $(id).classList.add('need')));
 }
@@ -282,11 +345,27 @@ $('#btnQuick').onclick = async () => {
       r.missing.length ? ` · 확인 필요: ${r.missing.join(', ')} (주황색 칸)` : ' · 내용 확인 후 [그룹웨어에 입력하기]를 누르세요',
       r.note ? ` · ${r.note}` : '', r.source === 'template' && !META.config.aiKeySet ? ' · 설정에서 AI 키를 넣으면 문장이 더 자연스러워져요' : '');
     if(r.fare) setFare(r.fare, '(최근 30일 내 조회값)');
-    else if(r.data.transport.mode !== 'corporate' && r.data.transport.to && !r.missing.includes('출장지')) lookupFare(false);
+    else if(r.data.transport.mode && !['corporate', 'overseas'].includes(r.data.transport.mode) && r.data.transport.to && !r.missing.includes('출장지')) lookupFare(false);   // 교통편을 안 정했으면 고를 때 계산
   } catch(e){ $('#q_status').textContent = e.message; }
   finally { $('#btnQuick').disabled = false; }
 };
 $('#q_memo').addEventListener('keydown', e => { if(e.key==='Enter' && (e.metaKey||e.ctrlKey)) $('#btnQuick').click(); });
+/* ---------- 보내기 전 확인 모달 ---------- */
+const escH = v => String(v ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function confirmSubmit({ title, html, note, yes = '보내기 ✦' }){
+  return new Promise(res => {
+    $('#cfTitle').textContent = title; $('#cfBody').innerHTML = html; $('#cfNote').innerHTML = note || ''; $('#cfYes').textContent = yes;
+    $('#cfmModal').classList.add('on'); setTimeout(() => $('#cfYes').focus(), 50);
+    const done = v => { $('#cfmModal').classList.remove('on'); ['#cfYes', '#cfNo', '#cfX'].forEach(id => $(id).onclick = null); document.removeEventListener('keydown', key); res(v); };
+    const key = e => { if(e.key === 'Escape') done(false); };
+    $('#cfYes').onclick = () => done(true); $('#cfNo').onclick = $('#cfX').onclick = () => done(false);
+    $('#cfmModal').onclick = e => { if(e.target.id === 'cfmModal') done(false); };
+    document.addEventListener('keydown', key);
+  });
+}
+const itemName = k => (META.items[k] || k).replace('여비교통비(판)_', '');
+const MODE_KO = { car: '🚗 자차', transit: '🚆 대중교통', corporate: '🚐 법인차량', overseas: '✈️ 해외' };
+
 $('#btnApply').onclick = async () => {
   $('#a_err').textContent = '';
   const data = applyData();
@@ -294,11 +373,30 @@ $('#btnApply').onclick = async () => {
   if(!data.dates.start || !$('#a_end').value) need.push('날짜');
   if(!data.dates.start_time) need.push('출발 시각');
   if(!data.dates.end_time) need.push('복귀 시각');
-  if(data.transport.mode !== 'corporate' && data.transport.total === undefined) need.push('교통비');   // 0원은 허용 (비운 것만 막음)
+  if(data.scope === '해외'){ if(!data.grade) need.push('국가 등급'); if(!(data.rate > 0)) need.push('환율'); else if(!data.rate_shot) need.push('환율 화면 캡처'); }   // 캡처 첨부 필수 (사전품의 작성 기준)
+  else if(!data.transport.mode) need.push('교통편');
+  else if(data.transport.mode !== 'corporate' && data.transport.total === undefined) need.push('교통비');   // 0원은 허용 (비운 것만 막음)
   if(data.category === '연구과제' && !data.project) need.push('과제명');
   if(data.companions.length && !data.companion_purpose.trim()) need.push('동행목적');
   if(need.length){ markNeed(need); $('#a_err').textContent = `${need.join(', ')}을(를) 넣어 주세요.`; return; }
-  try { await rpc('/api/plan', data); } catch(e){ $('#a_err').textContent = e.message; return; }
+  let plan; try { plan = await rpc('/api/plan', data); } catch(e){ $('#a_err').textContent = e.message; return; }
+  // 보낼 내용 확인
+  const t = data.transport, fare = t.mode === 'corporate' ? 0 : Number(t.total || 0), margin = t.mode !== 'corporate' && fare ? (META.config.rates.fareMargin || 0) : 0;
+  const rows = [...(fare ? [{ item: '교통비', amount: fare + margin, memo: margin ? `왕복 ${won(fare)} + 여유 ${won(margin)}` : '왕복' }] : []), ...plan.expenses.map(e => ({ item: itemName(e.item), amount: e.amount, memo: e.memo }))];
+  const sum = rows.reduce((a, r) => a + r.amount, 0);
+  const ok = await confirmSubmit({ title: '출장신청, 이대로 올릴까요?', html: `
+    <div class="cf-title">${escH(plan.title)}</div>
+    <dl class="cf-grid"><dt>출장지</dt><dd>${escH(data.destination)}</dd><dt>기간</dt><dd>${escH(data.dates.start)} ${escH(data.dates.start_time)} ~ ${escH(data.dates.end)} ${escH(data.dates.end_time)}</dd>
+      <dt>교통편</dt><dd>${MODE_KO[t.mode] || '-'}${t.mode === 'corporate' && t.corporate_car ? ' · ' + escH(t.corporate_car) : ''}${data.scope === '해외' ? ` · ${escH(data.grade)} 등급 · USD ${Math.round(data.rate).toLocaleString('en-US')}원 (서울외국환중개, ${escH(data.rate_date)} 캡처 첨부)` : ''}</dd>
+      <dt>구분</dt><dd>${escH(data.category)}${data.project ? ' · ' + escH(data.project) : ''}</dd>
+      ${data.companions.length ? `<dt>동행자</dt><dd>${escH(data.companions.join(', '))} · ${escH(data.companion_purpose)}</dd>` : ''}
+      <dt>출장목적</dt><dd>${escH(data.purpose)}</dd></dl>
+    <div class="cf-sec">경비 (품의)</div>
+    <table class="cf-tbl"><thead><tr><th>예산과목</th><th>적요</th><th style="text-align:right">금액</th></tr></thead>
+      <tbody>${rows.map(r => `<tr><td>${escH(r.item)}</td><td>${escH(r.memo || '')}</td><td class="n">${won(r.amount)}</td></tr>`).join('')}</tbody>
+      <tfoot><tr><td colspan="2">합계</td><td class="n">${won(sum)}</td></tr></tfoot></table>`,
+    note: '보내면 품의서입력 → 결재상신 → 본문까지 채우고 작성 창을 띄워요. <b>보관·상신은 직접</b> 눌러요.' });
+  if(!ok) return;
   runJob('출장신청서 입력', '/api/job/apply', {data}, () => { loadTrips(); resetApply(); gwMap = null; });   // 끝나면 폼 비움, 상태는 다음에 탭 열 때 그룹웨어에서 다시
 };
 
@@ -628,6 +726,19 @@ $('#btnReport').onclick = async () => {
     still.forEach(tr => tr.querySelector('.memo').classList.add('need'));
     return;
   }
+  // 보낼 내용 확인
+  const sumR = d.expenses.reduce((a, e) => a + e.amount, 0), PAY = { personal: '개인', card: '법인카드' };
+  const okR = await confirmSubmit({ title: '출장보고서·정산, 이대로 보낼까요?', html: `
+    <div class="cf-title">${escH($('#r_title').textContent)}</div>
+    <dl class="cf-grid"><dt>출장일시</dt><dd>${escH(d.period)}</dd><dt>출장지</dt><dd>${escH(d.destination)}${d.visit_org ? ' · ' + escH(d.visit_org) : ''}</dd>
+      <dt>출장구분</dt><dd>${escH(d.category)}${d.project ? ' · ' + escH(d.project) : ''}</dd><dt>자금과목</dt><dd>${escH(d.fund)}</dd>
+      <dt>보고사항</dt><dd>${escH(d.report)}</dd><dt>일정</dt><dd>${d.schedule.map(x => `${escH(x.date)} ${escH(x.place)} — ${escH(x.detail)}`).join('<br>')}</dd></dl>
+    <div class="cf-sec">정산 경비 (채주)</div>
+    ${d.expenses.length ? `<table class="cf-tbl"><thead><tr><th>예산과목</th><th>거래처비고</th><th>결제</th><th>증빙</th><th style="text-align:right">금액</th></tr></thead>
+      <tbody>${d.expenses.map(e => `<tr><td>${escH(itemName(e.item))}</td><td>${escH(e.memo)}</td><td>${PAY[e.pay] || '개인'}${e.pay === 'card' ? (e.noVat ? ' · 면세' : ` · 부가세 ${won(Math.floor(e.amount / 11))}`) : ''}</td><td>${(e.proofs || []).length ? '<span class="cf-ok">✓</span>' : '<span class="cf-no">없음</span>'}</td><td class="n">${won(e.amount)}</td></tr>`).join('')}</tbody>
+      <tfoot><tr><td colspan="4">합계</td><td class="n">${won(sumR)}</td></tr></tfoot></table>` : '<p class="sub">정산할 경비가 없어요 — 신청 금액 전액을 환원해요.</p>'}`,
+    note: '보내면 결의서전송(채주·첨부·환원) → <b>[전송]까지 앱이 해요</b> → 결재상신 → 본문까지 채우고 작성 창을 띄워요. <b>상신은 직접</b>. 품의 한도를 넘는 금액은 한도까지만 청구돼요.' });
+  if(!okR) return;
   runJob('출장보고서 입력', '/api/job/report', {data: d}, () => { loadTrips(); gwMap = null; });
 };
 
@@ -674,7 +785,7 @@ function loadAiSettings(){
   $('#s_key').value = ''; keyHint(); $('#s_ai').addEventListener('change', keyHint);
 
   const r = c.rates; $('#s_lodging').value = r.lodgingPerNight; $('#s_breakfast').value = r.breakfast; $('#s_lunch').value = r.lunch; $('#s_dinner').value = r.dinner; $('#s_fare_margin').value = r.fareMargin ?? 20000;
-  const mt = c.mealTimes; [['bf','breakfast'],['lu','lunch'],['di','dinner']].forEach(([a,k]) => { $(`#s_${a}_from`).value = mt[k][0]; $(`#s_${a}_to`).value = mt[k][1]; });
+  $('#s_rank').value = c.rank || 'staff';
 }
 $('#s_ai').onchange = () => { const k = $('#s_ai').value; $('#s_model').placeholder = META.providers[k] ? `기본: ${META.providers[k].model}` : '비우면 기본 모델'; };
 $('#btnAiSave').onclick = async () => {
@@ -688,9 +799,8 @@ $('#btnAiTest').onclick = async () => {
   try { const r = await rpc('/api/ai/test'); $('#s_ai_msg').textContent = `연결됨: "${r.reply}"`; } catch(e){ $('#s_ai_msg').textContent = e.message; }
 };
 $('#btnRateSave').onclick = async () => {
-  const rates = {lodgingPerNight: num($('#s_lodging').value), breakfast: num($('#s_breakfast').value), lunch: num($('#s_lunch').value), dinner: num($('#s_dinner').value), fareMargin: num($('#s_fare_margin').value)};
-  const mealTimes = Object.fromEntries([['bf','breakfast'],['lu','lunch'],['di','dinner']].map(([a,k]) => [k, [$(`#s_${a}_from`).value, $(`#s_${a}_to`).value]]));
-  await rpc('/api/config', {rates, mealTimes}); META = await rpc('/api/meta'); $('#s_rate_msg').textContent = '저장됨';
+  const rates = {...META.config.rates, lodgingPerNight: num($('#s_lodging').value), breakfast: num($('#s_breakfast').value), lunch: num($('#s_lunch').value), dinner: num($('#s_dinner').value), fareMargin: num($('#s_fare_margin').value)};
+  await rpc('/api/config', {rates, rank: $('#s_rank').value}); META = await rpc('/api/meta'); $('#s_rate_msg').textContent = '저장됨';
 };
 
 /* ---------- 작업 패널 ---------- */

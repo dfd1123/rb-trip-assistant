@@ -1216,7 +1216,7 @@ class Amaranth {
   }
 
   /** 채주 한 줄: 빈 줄에 거래처코드(이름 → Enter 로 코드·거래처명 자동) · 공급가액 · 거래처비고 · 자금과목 · 자금계획일 → Enter 로 저장 → 첨부. 이미 저장된 줄이면 첨부만 */
-  async enterPayee(n, { payee, fund, supply, memo, planDate, proof }) {
+  async enterPayee(n, { payee, fund, supply, vat = 0, pay = 'personal', memo, planDate, proof }) {
     const p = this.page, ui = this.ui, G = '거래처코드';
     this.log(`  채주 ${n}: ${memo || ''} ${supply.toLocaleString('ko-KR')}원`);
     const saved = await this.payeeRow({ payee, memo, supply });
@@ -1246,6 +1246,7 @@ class Amaranth {
       catch (e) { if (/창이 닫혔/.test(e.message)) throw e; await ui.assist(`채주 ${n}번째 줄 ${col} 입력 실패(${e.message}). '${text}'를 넣어 주세요.`); }
     };
     await put('공급가액', String(supply));
+    if (pay === 'card') await put('부가세액', String(vat));   // 법인카드: 과세면 부가세, 면세·불공제(항공권·주유비)면 0 을 직접 넣음. 개인카드는 공급가액만
     if (memo) await put('거래처비고', memo);
     await put('자금과목', fund);
     await put('자금계획일', planDate.replace(/-/g, ''), true, true);   // 숫자만 키로 하나씩(20261020)

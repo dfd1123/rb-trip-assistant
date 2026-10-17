@@ -15,12 +15,14 @@ const BUDGET_ITEMS = {
   overseas_lodging: ['8120006', '여비교통비(판)_해외숙박비'],
   airfare: ['8120007', '여비교통비(판)_항공권'],
   overseas_per_diem: ['8120008', '여비교통비(판)_해외일비'],
+  travel_etc: ['8120001', '여비교통비(판)_기타'],   // 해외 로밍(여행잡비)·여행자 보험
 };
 
 const TRANSPORT_MODES = {
   car: { check: ['자차'], autoFare: true },
   transit: { check: ['기차', '버스'], autoFare: true },
   corporate: { check: ['법인차량'], autoFare: false },
+  overseas: { check: [], autoFare: false },   // 해외출장: 국내 교통편 체크 없음 (항공·현지교통은 경비 줄로)
 };
 const CORPORATE_CARS = ['스타렉스', '스포티지(2550)', '스포티지(5717)', '스포티지(5718)', '그랜져', '캐스퍼', 'QM6', 'K5'];
 const APPLY_CATEGORIES = ['일반', '연구과제'];
@@ -133,6 +135,15 @@ function parseApply(data) {
   if (start === end && startTime && endTime && endTime < startTime) throw new InputError('복귀 시각이 출발 시각보다 빠릅니다.');
   const reason = String(req(data, 'reason', where)).trim();
   const expenses = parseExpenses(data.expenses, 'expenses', reason);
+  const scope = data.scope === '해외' || mode === 'overseas' ? '해외' : '국내';
+  let overseas = null;
+  if (scope === '해외') {
+    const grade = String(data.grade || '');
+    if (!OVERSEAS_GRADES.includes(grade)) throw new InputError('해외출장은 국가 등급(가·나)을 골라 주세요. 가 = 미국·유럽·캐나다·싱가포르, 나 = 그 외');
+    const rate = Number(data.rate || 0);
+    if (!(rate > 0)) throw new InputError('해외출장은 환율(USD)이 필요해요. [환율 조회]를 눌러 주세요.');
+    overseas = { grade, rate, rateDate: String(data.rate_date || ''), rateShot: String(data.rate_shot || '') };
+  }
   if (expenses.some(e => e.item === 'domestic_transport') && TRANSPORT_MODES[mode].autoFare)
     throw new InputError('국내교통비는 교통비 칸(네이버 지도 조회)으로 넣어 주세요. 경비 목록에서는 빼 주세요.');
   if (asList(data.companions).length && !String(data.companion_purpose || '').trim()) throw new InputError('동행자가 있으면 동행목적도 적어 주세요.');
@@ -141,8 +152,41 @@ function parseApply(data) {
     period: `${start.replace(/-/g, '.')} - ${end.replace(/-/g, '.')}`,
     category, project: String(data.project || ''), transport,
     companions: asList(data.companions), companion_purpose: String(data.companion_purpose || ''),
-    purpose: String(req(data, 'purpose', where)).trim(), expenses,
+    purpose: String(req(data, 'purpose', where)).trim(), expenses, scope, overseas,
   };
+}
+
+// ---------- 해외출장 (출장여비지급규정 별첨 2·3, 부장 이하) ----------
+const OVERSEAS_GRADES = ['가', '나'];
+/** 등급별 1일 일비(식대 포함)·1박 숙박 한도, USD. 임원은 별도라 여기선 부장 이하 기준 */
+const OVERSEAS_RATES = { 가: { perDiem: 90, lodging: 200 }, 나: { perDiem: 50, lodging: 150 } };
+/** 임원: Business, 숙박 한도 가 $280·나 $265, 식대는 실비라 일비 없음 (규정 별첨 2) */
+const OVERSEAS_RATES_EXEC = { 가: { perDiem: 0, lodging: 280 }, 나: { perDiem: 0, lodging: 265 } };
+// 가 = 미국·유럽·캐나다·싱가포르 (도시 이름으로도). ponytail: 자주 가는 곳만 — 없으면 '나'로 보고 화면에서 바꿀 수 있음
+const GRADE_A = /미국|USA|\bUS\b|뉴욕|샌프란|산호세|실리콘\s*밸리|LA\b|로스\s*앤젤레스|라스\s*베가스|시애틀|보스턴|시카고|디트로이트|오스틴|샌디에이고|워싱턴|휴스턴|댈러스|애틀랜타|피닉스|덴버|캐나다|토론토|밴쿠버|몬트리올|싱가포르|유럽|영국|런던|프랑스|파리|독일|베를린|뮌헨|프랑크푸르트|하노버|함부르크|슈투트가르트|쾰른|뒤셀도르프|이탈리아|로마|밀라노|스페인|마드리드|바르셀로나|네덜란드|암스테르담|벨기에|브뤼셀|스위스|취리히|제네바|오스트리아|빈|스웨덴|스톡홀름|노르웨이|오슬로|덴마크|코펜하겐|핀란드|헬싱키|포르투갈|리스본|아일랜드|더블린|폴란드|바르샤바|체코|프라하|헝가리|부다페스트|그리스|아테네/i;
+const OVERSEAS_HINT = /해외|국외|출국|비행기|항공권|공항|미국|일본|도쿄|오사카|중국|상하이|베이징|선전|대만|타이베이|베트남|하노이|호치민|태국|방콕|인도|싱가포르|말레이시아|인도네시아|필리핀|호주|시드니|멜버른|두바이|사우디|이스라엘|멕시코|브라질|캐나다|유럽|영국|프랑스|독일|하노버|이탈리아|스페인|네덜란드|스위스|샌프란|뉴욕|라스\s*베가스|LA\b|CES|하노버\s*메세/i;
+/** 메모·출장지로 해외 여부와 국가 등급 짐작 */
+function overseasGuess(text) {
+  const t = String(text || '');
+  if (!OVERSEAS_HINT.test(t)) return { overseas: false, grade: '' };
+  return { overseas: true, grade: GRADE_A.test(t) ? '가' : '나' };
+}
+const md = d => { const [, m, dd] = String(d).split('-'); return `${m}/${dd}`; };
+/** 해외출장 품의 경비 줄. 적요 = "04/23~04/30 김종완 1인 해외출장 일비 신청($90 x 8일 x 1,480) - 신청일 환율 기준" (사전품의 작성 예시)
+ *  환율은 원 단위로 반올림해 계산·표시 (예시와 같음). 비운 항목(null)은 빼고, 0 은 넣은 그대로 */
+function overseasExpenses({ start, end, name, people = 1, grade, rate, rank = 'staff', rates = rank === 'exec' ? OVERSEAS_RATES_EXEC : OVERSEAS_RATES, airfare = null, lodging = null, uberUsd = null, roaming = null, insurance = null }) {
+  const days = Math.round((new Date(`${end}T00:00:00`) - new Date(`${start}T00:00:00`)) / 864e5) + 1, nights = Math.max(0, days - 1);
+  const r = Math.round(Number(rate) || 0), g = rates[grade] || OVERSEAS_RATES[grade];
+  const pre = `${md(start)}~${md(end)} ${name} ${people}인 해외출장`, rf = r.toLocaleString('en-US');
+  const out = [];
+  if (airfare !== null) out.push({ item: 'airfare', amount: Number(airfare), memo: `${pre} 항공 비용` });
+  if (g.perDiem) out.push({ item: 'overseas_per_diem', amount: g.perDiem * days * r * people, memo: `${pre} 일비 신청($${g.perDiem} x ${days}일 x ${rf}${people > 1 ? ` x ${people}인` : ''}) - 신청일 환율 기준` });
+  if (lodging !== null) out.push({ item: 'overseas_lodging', amount: Number(lodging), memo: `${pre} 숙박 비용` });
+  else if (nights) out.push({ item: 'overseas_lodging', amount: g.lodging * nights * r * people, memo: `${pre} 숙박 비용(한도 $${g.lodging} x ${nights}박 x ${rf}) - 신청일 환율 기준` });
+  if (uberUsd !== null) out.push({ item: 'overseas_transport', amount: Number(uberUsd) * days * r, memo: `${pre} 우버 비용($${Number(uberUsd)} x ${days}일 x ${rf}) - 신청일 환율 기준` });
+  if (roaming !== null) out.push({ item: 'travel_etc', amount: Number(roaming), memo: `${pre} 로밍 비용` });
+  if (insurance !== null) out.push({ item: 'travel_etc', amount: Number(insurance), memo: `${pre} 여행자 보험 비용` });
+  return { expenses: out, days, nights };
 }
 
 function parseReport(data) {
@@ -170,6 +214,7 @@ function parseReport(data) {
     if (bad) throw new InputError(`증빙은 이미지나 PDF만 돼요: ${bad.split(/[\\/]/).pop()}`);
     out.expenses[i].proofs = proofs;
     out.expenses[i].pay = e.pay === 'card' ? 'card' : 'personal';
+    out.expenses[i].noVat = noVatOf({ ...out.expenses[i], noVat: e.noVat });   // 법인카드 면세·불공제 (화면에서 고친 값 우선)
   });
   out.fund = String(data.fund || '');   // 자금과목: 일반경비 / 제조경비 (출장마다 사람이 고름)
   if (!FUNDS.includes(out.fund)) throw new InputError('자금과목(일반경비·제조경비)을 골라 주세요.');
@@ -201,12 +246,16 @@ function fundPlanDate(pay, { today = new Date(), usedOn = '' } = {}) {
   return ymd(prevWorkday(pay_));
 }
 /** 채주 금액은 공급가액만 넣는다(부가세·총액은 그룹웨어가 계산). 과세(법인카드)면 합계에서 부가세(합계/11, 버림)를 뺀다 */
-const supplyAmount = (total, pay) => pay === 'card' ? total - Math.floor(total / 11) : total;
+// 부가세: 개인카드 = 공급가액만(부가세 없음). 법인카드 = 과세면 공급가액+부가세(합계/11, 버림), 면세·불공제(항공권·주유비 등)면 부가세 0
+const NO_VAT = /항공|주유|유류|기름|휘발유|경유|LPG|면세|불공제/i;
+const noVatOf = e => (e.noVat === true || e.noVat === false) ? e.noVat : (e.item === 'airfare' || NO_VAT.test(String(e.memo || '')));
+const vatAmount = (total, pay, noVat) => pay === 'card' && !noVat ? Math.floor(total / 11) : 0;
+const supplyAmount = (total, pay, noVat = false) => total - vatAmount(total, pay, noVat);
 /** 품의한 금액보다 많이 청구할 수 없다: 예산 줄 한도(limit) 안에서 앞 영수증부터 채우고 넘는 만큼 깎는다. 한도를 다 쓰면 나머지 줄은 뺀다
  *  예) 교통비 품의 60,000 · 실제 79,000 → 공급가액 60,000 */
 function capToBudget(lines, limit) {   // 한도는 합계(부가세 포함) 기준. 깎은 합계로 공급가액을 다시 계산
   let left = Math.max(0, Number(limit) || 0);
-  return lines.map(l => { const amount = Math.min(l.amount, left); left -= amount; return { ...l, amount, supply: supplyAmount(amount, l.pay), cut: l.amount - amount }; }).filter(l => l.amount > 0);
+  return lines.map(l => { const amount = Math.min(l.amount, left); left -= amount; return { ...l, amount, supply: supplyAmount(amount, l.pay, l.noVat), vat: vatAmount(amount, l.pay, l.noVat), cut: l.amount - amount }; }).filter(l => l.amount > 0);
 }
 /** 예산 줄마다 넣을 채주: 같은 예산과목 영수증을 모아 품의 한도까지 → [{ index, label, lines, cut }]. 예산에 없는 과목은 left 로
  *  budgets: [{ 예산과목, 품의금액, 미지출액 }] (결의서전송 창 예산내역 그대로) */
@@ -298,5 +347,6 @@ module.exports = {
   APPLY_FORM, REPORT_FORM, BUDGET_ITEMS, TRANSPORT_MODES, CORPORATE_CARS, APPLY_CATEGORIES, REPORT_CATEGORIES,
   InputError, ro, applyTitle, reportTitle, budgetMemo, parseCarText, parseTransitText, roundTrip,
   parseApply, parseReport, parseExpenses, transportExpense, applyPrompt, reportPrompt, extractYaml,
-  FUNDS, PAY_MODES, fundPlanDate, supplyAmount, capToBudget, planPayees,
+  OVERSEAS_GRADES, OVERSEAS_RATES, OVERSEAS_RATES_EXEC, overseasGuess, overseasExpenses,
+  FUNDS, PAY_MODES, fundPlanDate, supplyAmount, vatAmount, noVatOf, capToBudget, planPayees,
 };

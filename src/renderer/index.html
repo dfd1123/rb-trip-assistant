@@ -153,13 +153,129 @@ details.more{margin-top:4px}
 details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
 .h2row{display:flex;justify-content:space-between;align-items:center}
 .rates{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
-.rates label,.mealtimes label{font-size:12px;color:var(--muted)}
-.rates input,.mealtimes input{min-width:0}
-.mealtimes{display:flex;flex-direction:column;gap:8px}
-.mrow{display:flex;align-items:center;gap:10px}
-.mrow label{width:44px;font-size:13px;color:var(--ink)}
-.mrow input{width:170px;flex:none}
-.mrow span{color:var(--muted)}
+.rates label{font-size:12px;color:var(--muted)}
+.rates input,.rates select{min-width:0}
+
+/* ===== 신청·보고 화면 꾸밈 (ux.js) ===== */
+.hero{position:relative;overflow:hidden;background:radial-gradient(1200px 300px at 0% 0%,#e9f3ff 0%,transparent 60%),radial-gradient(800px 260px at 100% 0%,#e6fbf7 0%,transparent 55%),#fff;border-color:#cfe2f3;box-shadow:0 10px 30px -18px rgba(27,79,143,.45)}
+.hero h2{font-size:19px;letter-spacing:-.2px}
+.hero .spark{display:inline-block;color:var(--teal);animation:sparkSpin 4s linear infinite}
+@keyframes sparkSpin{0%{transform:rotate(0) scale(1)}50%{transform:rotate(180deg) scale(1.2)}100%{transform:rotate(360deg) scale(1)}}
+.hero .cmd textarea{font-size:16px;min-height:64px;border-radius:14px;border:1.5px solid #cfe2f3;background:#fff;box-shadow:inset 0 1px 0 rgba(0,0,0,.02);transition:border-color .2s,box-shadow .2s}
+.hero .cmd textarea:focus{border-color:var(--accent);box-shadow:0 0 0 4px rgba(27,79,143,.12)}
+.btn.glow{position:relative;border-radius:14px;padding:0 24px;box-shadow:0 8px 20px -8px rgba(27,79,143,.7);transition:transform .15s,box-shadow .2s}
+.btn.glow:not(:disabled):hover{transform:translateY(-1px);box-shadow:0 12px 26px -10px rgba(27,79,143,.85)}
+.btn.glow:not(:disabled)::after{content:"";position:absolute;inset:-2px;border-radius:16px;background:linear-gradient(120deg,transparent 30%,rgba(255,255,255,.55) 50%,transparent 70%);background-size:250% 100%;animation:shine 2.8s ease-in-out infinite;pointer-events:none}
+@keyframes shine{0%{background-position:150% 0}60%,100%{background-position:-50% 0}}
+.btn.glow:disabled{box-shadow:none;opacity:.55}
+/* 자동 작성으로 채워진 칸 반짝 */
+.sparkle{animation:sparkleIn 1.4s ease-out both}
+@keyframes sparkleIn{0%{box-shadow:0 0 0 0 rgba(43,179,201,0);background-color:#fff}20%{box-shadow:0 0 0 4px rgba(43,179,201,.35);background-color:#ecfbfd}100%{box-shadow:0 0 0 0 rgba(43,179,201,0);background-color:#fff}}
+/* 출장 티켓 */
+.ticket{position:relative;margin-bottom:16px;border-radius:16px;color:#fff;padding:16px 18px 14px;background:linear-gradient(135deg,#163f73 0%,#1f6aa8 55%,#2bb3c9 100%);box-shadow:0 14px 30px -16px rgba(22,63,115,.8);overflow:hidden}
+.ticket::before{content:"";position:absolute;right:-40px;top:-40px;width:160px;height:160px;border-radius:50%;background:rgba(255,255,255,.08)}
+.tk-top{display:flex;align-items:center;gap:8px;font-size:12px;opacity:.95}.tk-mode{font-size:18px}.tk-label{letter-spacing:2px;text-transform:uppercase;font-weight:700}.tk-days{margin-left:auto;background:rgba(255,255,255,.18);padding:2px 8px;border-radius:999px}
+.tk-route{display:grid;grid-template-columns:1fr auto 1fr;align-items:end;gap:8px;margin:12px 0 10px}
+.tk-route small,.tk-dates small,.tk-total small{display:block;font-size:10px;letter-spacing:1.5px;opacity:.7}
+.tk-route b{display:block;font-size:15px;line-height:1.25;word-break:keep-all}.tk-route .r{text-align:right}
+.tk-arrow{font-size:18px;opacity:.85;animation:fly 3s ease-in-out infinite}@keyframes fly{0%,100%{transform:translateX(-3px)}50%{transform:translateX(3px)}}
+.tk-dates{display:flex;justify-content:space-between;font-size:13px}.tk-dates .r{text-align:right}
+.tk-cut{margin:12px -18px;border-top:2px dashed rgba(255,255,255,.35);position:relative}
+.tk-cut::before,.tk-cut::after{content:"";position:absolute;top:-9px;width:16px;height:16px;border-radius:50%;background:var(--bg)}.tk-cut::before{left:-8px}.tk-cut::after{right:-8px}
+.tk-total{display:flex;align-items:baseline;justify-content:space-between}.tk-total b{font-size:26px;letter-spacing:-.5px;font-variant-numeric:tabular-nums}
+.tk-break{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.tk-break span{font-size:11px;background:rgba(255,255,255,.16);padding:2px 8px;border-radius:999px}
+/* 제출 준비 */
+.ready .rd-head{display:flex;justify-content:space-between;align-items:baseline;font-size:14px}.ready .rd-head span{font-weight:700;color:var(--accent);font-variant-numeric:tabular-nums}
+.rd-bar{height:8px;border-radius:999px;background:var(--accent-soft);overflow:hidden;margin:8px 0 10px}.rd-bar i{display:block;height:100%;width:0;border-radius:999px;background:linear-gradient(90deg,var(--accent),var(--teal));transition:width .45s cubic-bezier(.2,.8,.2,1)}
+.rd-list{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;font-size:12.5px}
+.rd-list li{display:flex;align-items:center;gap:6px;color:var(--muted);cursor:pointer;border-radius:6px;padding:2px 4px}.rd-list li:hover{background:var(--accent-soft)}
+.rd-list li i{flex:none;width:16px;height:16px;border-radius:50%;border:1.5px solid var(--line);display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-style:normal;transition:all .25s}
+.rd-list li.ok{color:var(--ink)}.rd-list li.ok i{background:var(--ok);border-color:var(--ok);color:#fff;animation:pop .35s ease-out}
+@keyframes pop{0%{transform:scale(.4)}70%{transform:scale(1.2)}100%{transform:scale(1)}}
+.ready.all .rd-bar i{background:linear-gradient(90deg,var(--ok),#34d399)}
+.ready.all #btnApply,.ready.all #btnReport{animation:readyPulse 2s ease-in-out infinite}
+@keyframes readyPulse{0%,100%{box-shadow:0 0 0 0 rgba(21,128,61,.0)}50%{box-shadow:0 0 0 6px rgba(21,128,61,.18)}}
+/* 보고서 단계 */
+.stepper{display:flex;align-items:center;gap:8px;margin:8px 0 14px}
+.stepper .st{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted)}
+.stepper .st i{width:26px;height:26px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-style:normal;font-weight:700;border:2px solid var(--line);background:#fff;transition:all .3s}
+.stepper .st small{display:block;font-size:10px;opacity:.7}
+.stepper .st.done i{background:var(--ok);border-color:var(--ok);color:#fff}.stepper .st.done{color:var(--ink)}
+.stepper .st.now i{border-color:var(--accent);color:var(--accent);box-shadow:0 0 0 4px rgba(27,79,143,.12)}.stepper .st.now{color:var(--accent);font-weight:600}
+.stepper .st-line{flex:1;height:2px;background:var(--line);border-radius:2px;position:relative;overflow:hidden}.stepper .st-line.done::after{content:"";position:absolute;inset:0;background:var(--ok);animation:fillLine .4s ease-out both}
+@keyframes fillLine{from{transform:translateX(-100%)}to{transform:none}}
+.hero #r_drop{border-radius:14px;border-color:#cfe2f3;background:rgba(255,255,255,.7)}
+.hero #r_drop.over{transform:scale(1.01);box-shadow:0 0 0 4px rgba(43,179,201,.2)}
+/* 정산 영수증 */
+.receipt{position:relative;margin-bottom:16px;background:#fff;border:1px solid var(--line);border-radius:12px 12px 4px 4px;padding:16px 18px 18px;box-shadow:0 14px 30px -20px rgba(0,0,0,.35);font-variant-numeric:tabular-nums}
+.receipt::after{content:"";position:absolute;left:0;right:0;bottom:-8px;height:8px;background:linear-gradient(-45deg,transparent 6px,#fff 0) 0 0/12px 8px repeat-x,linear-gradient(45deg,transparent 6px,#fff 0) 0 0/12px 8px repeat-x;filter:drop-shadow(0 1px 0 var(--line))}
+.rc-head{display:flex;justify-content:space-between;align-items:baseline;font-size:14px}.rc-head span{font-size:12px;color:var(--muted)}
+.rc-rows{margin-top:10px;display:grid;gap:8px}
+.rc-row{font-size:13px}.rc-row .t{display:flex;justify-content:space-between}.rc-row .t b{font-weight:600}
+.rc-row .bar{height:6px;border-radius:999px;background:var(--accent-soft);margin-top:4px;overflow:hidden}.rc-row .bar i{display:block;margin:0;width:0;height:100%;border-radius:999px;background:linear-gradient(90deg,var(--accent),var(--teal));transition:width .5s cubic-bezier(.2,.8,.2,1)}
+.rc-row .bar i.over{background:linear-gradient(90deg,#f59e0b,#ef4444)}
+.rc-row .cap{font-size:11px;color:var(--muted);margin-top:2px}
+.rc-cut{margin:12px 0;border-top:1.5px dashed var(--line)}
+.rc-total{display:flex;justify-content:space-between;align-items:baseline}.rc-total small{color:var(--muted)}.rc-total b{font-size:24px;color:var(--accent);letter-spacing:-.5px}
+.rc-empty{font-size:12.5px;color:var(--muted);text-align:center;padding:6px 0}
+@media (prefers-reduced-motion:reduce){.hero .spark,.tk-arrow,.btn.glow::after,.ready.all #btnApply,.ready.all #btnReport,.sparkle{animation:none!important}}
+
+/* 결과 먼저, 세부 입력은 접기 */
+.result{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:start;margin-bottom:16px}
+.result .ticket,.result .receipt{margin-bottom:0}.result .card{margin-bottom:0}
+@media (max-width:900px){.result{grid-template-columns:1fr}}
+.fold{border:1px solid var(--line);border-radius:var(--radius);background:var(--panel);margin-bottom:16px}
+.fold-head{width:100%;display:flex;align-items:center;gap:10px;padding:14px 18px;background:none;border:0;cursor:pointer;text-align:left;font:inherit;color:var(--ink)}
+.fold-head .fh-t{font-weight:700;font-size:15px}.fold-head .fh-s{color:var(--muted);font-size:12.5px;flex:1}
+.fold-head .fh-i{transition:transform .25s;color:var(--muted)}
+.fold.open .fold-head .fh-i{transform:rotate(180deg)}
+.fold-head .fh-badge{background:#fff3e0;color:var(--warn);border-radius:999px;padding:2px 8px;font-size:12px;font-weight:600}
+.fold-body{display:none;padding:0 16px 4px}.fold.open .fold-body{display:block;animation:foldIn .25s ease-out}
+.fold-body>.card{border-color:var(--line);box-shadow:none}
+@keyframes foldIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+.fab{position:fixed;left:50%;translate:-50% 0;bottom:22px;z-index:50;height:48px;border-radius:999px!important;padding:0 26px!important;font-size:15px;white-space:nowrap;max-width:calc(100vw - 32px)}
+
+.tk-modes{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:10px 0 2px}
+.tk-modes button{border:1.5px solid rgba(255,255,255,.35);background:rgba(255,255,255,.1);color:#fff;border-radius:10px;padding:7px 4px;font:inherit;font-size:13px;font-weight:600;cursor:pointer;transition:all .2s}
+.tk-modes button:hover{background:rgba(255,255,255,.2)}
+.tk-modes button.on{background:#fff;color:var(--accent);border-color:#fff;box-shadow:0 6px 14px -8px rgba(0,0,0,.5)}
+.ticket.pick .tk-modes button{animation:pickPulse 1.6s ease-in-out infinite}
+@keyframes pickPulse{0%,100%{border-color:rgba(255,255,255,.35)}50%{border-color:#fff;background:rgba(255,255,255,.22)}}
+.tk-hint{display:none;margin-top:8px;padding:7px 10px;border-radius:10px;background:#fff3cd;color:#7a4b00;font-size:12.5px;font-weight:600;animation:hintBob 1.6s ease-in-out infinite}
+.ticket.pick .tk-hint{display:block}
+@keyframes hintBob{0%,100%{transform:translateY(0)}50%{transform:translateY(-2px)}}
+.tk-break span.need{background:#fff3cd;color:#7a4b00;font-weight:600}
+
+#cfmModal{position:fixed;inset:0;background:rgba(15,23,42,.45);display:none;align-items:center;justify-content:center;z-index:70;backdrop-filter:blur(2px)}
+#cfmModal.on{display:flex;animation:cfFade .18s ease-out}
+@keyframes cfFade{from{opacity:0}to{opacity:1}}
+#cfmModal .box{background:#fff;border-radius:16px;width:620px;max-width:calc(100vw - 32px);max-height:calc(100vh - 48px);display:flex;flex-direction:column;box-shadow:0 30px 70px -20px rgba(0,0,0,.45);animation:cfPop .22s cubic-bezier(.2,.9,.3,1.2)}
+@keyframes cfPop{from{transform:translateY(8px) scale(.98);opacity:.6}to{transform:none;opacity:1}}
+.cf-head{display:flex;align-items:center;padding:18px 22px 10px;font-size:17px}.cf-head .x{margin-left:auto;border:0;background:none;font-size:16px;cursor:pointer;color:var(--muted)}
+.cf-body{padding:4px 22px 10px;overflow:auto}
+.cf-title{background:var(--accent-soft);color:var(--accent);border-radius:10px;padding:10px 12px;font-weight:600;font-size:14px;margin-bottom:12px}
+.cf-grid{display:grid;grid-template-columns:92px 1fr;gap:6px 12px;font-size:13.5px;margin-bottom:12px}.cf-grid dt{color:var(--muted)}.cf-grid dd{margin:0;white-space:pre-wrap;word-break:keep-all}
+.cf-tbl{width:100%;border-collapse:collapse;font-size:13px;margin-top:4px}.cf-tbl th{text-align:left;color:var(--muted);font-weight:500;border-bottom:1px solid var(--line);padding:6px 4px}
+.cf-tbl td{border-bottom:1px solid #f1f5f9;padding:7px 4px}.cf-tbl td.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.cf-tbl tfoot td{border:0;font-weight:700;font-size:15px;padding-top:10px;color:var(--accent)}
+.cf-sec{font-size:12px;font-weight:700;letter-spacing:.5px;color:var(--muted);margin:14px 0 4px}
+.cf-ok{color:var(--ok);font-weight:700}.cf-no{color:var(--warn);font-weight:700}
+.cf-foot{display:flex;align-items:center;gap:8px;padding:12px 22px 18px;border-top:1px solid var(--line)}.cf-foot .btn{height:40px;padding:0 18px;flex:none}.cf-note{flex:1;font-size:12px;color:var(--muted)}
+
+.scope{display:inline-flex;gap:6px;margin:2px 0 10px;padding:4px;border-radius:12px;background:rgba(27,79,143,.06)}
+.scope label{cursor:pointer}.scope input{display:none}
+.scope span{display:inline-block;padding:7px 14px;border-radius:9px;font-size:13.5px;font-weight:600;color:var(--muted);transition:all .2s}
+.scope label:has(input:checked) span{background:#fff;color:var(--accent);box-shadow:0 4px 12px -6px rgba(27,79,143,.5)}
+.tk-ov{margin:10px 0 2px}
+.tk-grades{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.tk-grades button{border:1.5px solid rgba(255,255,255,.35);background:rgba(255,255,255,.1);color:#fff;border-radius:10px;padding:6px 4px;font:inherit;font-size:13px;font-weight:700;cursor:pointer;transition:all .2s;line-height:1.25}
+.tk-grades button small{display:block;font-size:10.5px;font-weight:500;opacity:.8}
+.tk-grades button.on{background:#fff;color:var(--accent);border-color:#fff}
+.ticket.pickg .tk-grades button{animation:pickPulse 1.6s ease-in-out infinite}
+.tk-fx{display:flex;align-items:center;justify-content:space-between;margin-top:8px;font-size:12.5px;background:rgba(255,255,255,.12);border-radius:10px;padding:6px 10px}
+.tk-fx button{border:0;background:rgba(255,255,255,.22);color:#fff;border-radius:8px;padding:4px 10px;font:inherit;font-size:12px;cursor:pointer}
+.tk-fx button:hover{background:rgba(255,255,255,.32)}
+.novat{display:flex;align-items:center;gap:3px;font-size:11.5px;color:var(--muted);margin-top:4px;white-space:nowrap}.novat input{width:auto;margin:0}
 </style>
 </head>
 <body>
@@ -181,16 +297,42 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
 <main>
 <!-- ================= 신청 ================= -->
 <section id="tab-apply">
-<div class="card quick">
-  <div class="h2row"><h2>한 줄로 신청</h2><button class="btn small" id="btnNewApply" title="입력 중인 신청서 내용을 모두 비움">새로 작성</button></div>
+<div class="card quick hero" id="applyHero">
+  <div class="h2row"><h2><span class="spark">✦</span> 한 줄이면 끝</h2><button class="btn small" id="btnNewApply" title="입력 중인 신청서 내용을 모두 비움">새로 작성</button></div>
   <p class="sub">언제 · 어디 · 무슨 일인지만 쓰세요! 알아서 작성해드릴게요!</p>
-  <div class="qrow"><textarea id="q_memo" placeholder="예: 다음주 화~목 판교 RBY1 Muscat 연동 검증, 자차, 홍길동이랑 같이"></textarea>
-    <button class="btn primary" id="btnQuick">자동 작성</button></div>
+  <div class="scope" id="a_scope_seg"><label><input type="radio" name="a_scope" value="국내" checked><span>🇰🇷 국내 출장</span></label><label><input type="radio" name="a_scope" value="해외"><span>✈️ 해외 출장</span></label></div>
+  <div class="qrow cmd"><textarea id="q_memo" data-examples="다음주 화~목 판교 RBY1 Muscat 연동 검증, 자차, 홍길동이랑 같이|10/23 KAI 사천 로봇 정비 당일치기, 대중교통|1월 6일~12일 라스베가스 CES 전시 참관|11월 첫째주 월~수 부산 고객사 데모, 법인차량 스타렉스" placeholder="예: 다음주 화~목 판교 RBY1 Muscat 연동 검증, 자차, 홍길동이랑 같이"></textarea>
+    <button class="btn primary glow" id="btnQuick">✦ 자동 작성</button></div>
   <div class="chips"><select id="q_hist" class="btn small" title="이전에 입력한 문장 (최근 30개)"><option value="">이전 문장…</option></select></div>
   <div class="qstatus" id="q_status"></div>
 </div>
-<div class="grid">
-<div>
+<div class="result">
+<div class="ticket" id="aTicket">
+    <div class="tk-top"><span class="tk-mode" id="tkMode">🧳</span><span class="tk-label">출장 티켓</span><span class="tk-days" id="tkDays"></span></div>
+    <div class="tk-modes" id="tkModes"><button type="button" data-m="car">🚗 자차</button><button type="button" data-m="transit">🚆 대중교통</button><button type="button" data-m="corporate">🚐 법인차량</button></div>
+    <div class="tk-hint" id="tkHint">👆 교통편을 골라 주세요 — 고르면 교통비를 바로 계산해요</div>
+    <div class="tk-ov hidden" id="tkOv"><div class="tk-grades" id="tkGrades"><button type="button" data-g="가">가 등급<small>미국·유럽·캐나다·싱가포르</small></button><button type="button" data-g="나">나 등급<small>그 외 국가</small></button></div>
+      <div class="tk-fx"><span id="tkFx">환율을 확인해 주세요</span><span><button type="button" id="tkFxBtn">환율 확인</button> <button type="button" id="tkShotBtn">화면 캡처</button></span></div></div>
+    <div class="tk-route"><div><small>FROM</small><b id="tkFrom">출발지</b></div><div class="tk-arrow">✈︎</div><div class="r"><small>TO</small><b id="tkTo">출장지</b></div></div>
+    <div class="tk-dates"><div><small>출발</small><span id="tkStart">-</span></div><div class="r"><small>복귀</small><span id="tkEnd">-</span></div></div>
+    <div class="tk-cut"></div>
+    <div class="tk-total"><small>품의 합계</small><b id="tkTotal">0원</b></div>
+    <div class="tk-break" id="tkBreak"></div>
+  </div>
+  <div class="card ready">
+    <div class="rd-head"><b>제출 준비</b><span id="aReadyPct">0%</span></div>
+    <div class="rd-bar"><i id="aReadyBar"></i></div>
+    <ul class="rd-list" id="aReadyList"></ul>
+    <h2 style="margin-top:14px">결재 문서 제목</h2>
+    <div class="title-preview" id="a_title">사유를 입력하면 표시됩니다</div>
+    <div class="err" id="a_err"></div>
+    <button class="btn primary" id="btnApply" style="width:100%">그룹웨어에 입력하기</button>
+    <p class="sub" style="margin:10px 0 0">뒤에서 품의서입력 → 결재상신 → 본문 작성까지 채우고 작성 창을 띄워요. <b>보관·상신은 직접</b> 확인하고 누르세요.</p>
+  </div>
+</div>
+<div class="fold" id="aFold">
+  <button class="fold-head" type="button"><span class="fh-t">세부 내용 확인·수정</span><span class="fh-s">AI가 채운 출장 정보·교통·경비예요. 고칠 게 있을 때만 펼치세요</span><span class="fh-i">▾</span></button>
+  <div class="fold-body">
   <div class="card">
     <h2>출장 정보</h2>
     <p class="sub">자동으로 채운 내용을 확인하고 필요하면 고치세요.</p>
@@ -208,11 +350,23 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
     <div class="row" style="align-items:start"><label style="padding-top:8px">출장목적</label><textarea id="a_purpose" placeholder="무엇을, 왜 하러 가는지 2~4문장"></textarea></div>
   </div>
 
-  <div class="card">
+  <div class="card hidden" id="a_ovCard">
+    <h2>✈️ 해외 경비</h2>
+    <p class="sub">출장여비지급규정(부장 이하): 가 등급 일비 $90·숙박 한도 $200, 나 등급 일비 $50·숙박 한도 $150. 일비·우버는 신청일 환율로 계산해요. 환율은 [환율 확인]으로 서울외국환중개 화면을 열어 USD 매매기준율을 적고, [화면 캡처]로 그 화면을 첨부해요 (사이트가 자동 수집을 금지해서 앱이 값을 직접 읽지 않아요).</p>
+    <div class="row"><label>국가 등급</label><div class="seg" id="a_grade_seg"><label><input type="radio" name="a_grade" value="가">가 (미국·유럽·캐나다·싱가포르)</label><label><input type="radio" name="a_grade" value="나">나 (그 외)</label></div></div>
+    <div class="row"><label>환율 (USD)</label><div class="inline"><input id="a_rate" inputmode="decimal" placeholder="서울외국환중개 USD 매매기준율 (예: 1,348.50)"><button class="btn" id="btnRate" type="button">환율 확인</button><button class="btn" id="btnRateShot" type="button">화면 캡처</button></div></div>
+    <div class="row"><label></label><div class="fare" id="a_rate_desc"></div></div>
+    <div class="row"><label>항공권 (원)</label><input id="a_air" inputmode="numeric" placeholder="여행사 견적 금액"></div>
+    <div class="row"><label>숙박 (원)</label><input id="a_hotel" inputmode="numeric" placeholder="여행사 견적 금액 — 비우면 규정 한도로 계산"></div>
+    <div class="row"><label>우버 ($/일)</label><input id="a_uber" inputmode="decimal" placeholder="1일 예상 사용액 (USD)"></div>
+    <div class="row"><label>로밍 (원)</label><input id="a_roam" inputmode="numeric" placeholder="없으면 비워 두기"></div>
+    <div class="row"><label>여행자 보험 (원)</label><input id="a_ins" inputmode="numeric" placeholder="없으면 비워 두기"></div>
+  </div>
+  <div class="card" id="a_trCard">
     <div class="h2row"><h2>교통 · 경비</h2><button class="btn small" id="btnRecalc">규정대로 다시 계산</button></div>
     <p class="sub">교통비는 네이버 지도 금액 왕복 (자차: 연료비+통행료, 대중교통: 버스 포함 총 요금)</p>
-    <div class="row"><label>교통편</label><div class="seg">
-      <label><input type="radio" name="a_mode" value="car" checked>자차</label>
+    <div class="row"><label>교통편</label><div class="seg" id="a_mode_seg">
+      <label><input type="radio" name="a_mode" value="car">자차</label>
       <label><input type="radio" name="a_mode" value="transit">대중교통</label>
       <label><input type="radio" name="a_mode" value="corporate">법인차량</label>
     </div></div>
@@ -231,10 +385,7 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
     <button class="btn small" id="btnAddExp" style="margin-top:6px">+ 경비 추가</button>
     <div class="total"><span>품의 합계</span><span id="a_total">0원</span></div>
   </div>
-</div>
-
-<div class="aside">
-  <details class="card ai more"><summary>다른 AI 채팅(ChatGPT 등)으로 작성하기</summary>
+<details class="card ai more"><summary>다른 AI 채팅(ChatGPT 등)으로 작성하기</summary>
     <h2 style="margin-top:10px">AI 채팅으로 작성</h2>
     <ol class="steps"><li>위 "한 줄로 신청" 칸에 출장 메모 쓰기</li>
       <li>[프롬프트 복사] → 쓰는 AI(ChatGPT, Gemini, Claude…)에 붙여 넣고 보내기</li><li>AI 답변 전체를 아래에 붙여 넣기</li></ol>
@@ -243,14 +394,7 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
     <button class="btn" id="btnFill" style="margin-top:8px;width:100%">양식에 채우기</button>
     <div class="err" id="aiErr"></div>
   </details>
-  <div class="card">
-    <h2>결재 문서 제목</h2>
-    <div class="title-preview" id="a_title">사유를 입력하면 표시됩니다</div>
-    <div class="err" id="a_err"></div>
-    <button class="btn primary" id="btnApply" style="width:100%">그룹웨어에 입력하기</button>
-    <p class="sub" style="margin:10px 0 0">뒤에서 품의서입력 → 결재상신 → 본문 작성까지 채우고 작성 창을 띄워요. <b>보관·상신은 직접</b> 확인하고 누르세요.</p>
   </div>
-</div>
 </div>
 </section>
 
@@ -270,17 +414,37 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
   </div>
 
   <div id="reportView" class="hidden">
-  <div class="card quick">
-    <h2>영수증 + 한 줄 메모로 보고서</h2>
-    <p class="sub">① 영수증을 넣고 ② 출장에서 한 일을 한 줄 적은 뒤 [자동 작성]을 누르면, 영수증은 경비 줄(과목·금액·증빙)로, 메모는 보고사항과 날짜별 일정으로 채워요.</p>
+  <div class="card quick hero" id="reportHero">
+    <h2><span class="spark">✦</span> 영수증 던지고, 한 줄 쓰면 보고서 끝</h2>
+    <div class="stepper" id="rSteps"><div class="st" data-s="1"><i>1</i><span>영수증 넣기<small>선택</small></span></div><div class="st-line"></div><div class="st" data-s="2"><i>2</i><span>한 일 한 줄</span></div><div class="st-line"></div><div class="st" data-s="3"><i>3</i><span>자동 작성</span></div></div>
     <div id="r_drop"><b>① 영수증·증빙을 여기에 끌어다 놓기 (선택)</b><span>이미지·PDF 여러 개 한꺼번에 — 정산할 게 없으면 비워 두세요</span><button class="btn small" id="btnPickReceipts">파일 고르기</button></div>
     <div class="chips" id="rq_files" style="margin:0 0 10px"></div>
-    <div class="qrow"><textarea id="rq_memo" placeholder="② 예: SDK 래핑 완료, 실기에서 제어·상태조회 검증 통과. 그리퍼 토크 이슈는 다음주 재검증 예정"></textarea>
-      <button class="btn primary" id="btnRQuick" disabled>자동 작성</button></div>
+    <div class="qrow"><textarea id="rq_memo" data-examples="SDK 래핑 완료, 실기에서 제어·상태조회 검증 통과. 그리퍼 토크 이슈는 다음주 재검증 예정|KAI 로봇 정비 완료, 감속기 교체 후 정상 동작 확인|고객사 데모 진행, 추가 요구사항 3건 받아옴" placeholder="② 예: SDK 래핑 완료, 실기에서 제어·상태조회 검증 통과. 그리퍼 토크 이슈는 다음주 재검증 예정"></textarea>
+      <button class="btn primary glow" id="btnRQuick" disabled>✦ 자동 작성</button></div>
     <div class="qstatus" id="rq_status"></div>
   </div>
-  <div class="grid">
-  <div>
+  <div class="result">
+<div class="receipt" id="rReceipt">
+      <div class="rc-head"><b>정산 영수증</b><span id="rcCount">영수증 0장</span></div>
+      <div class="rc-rows" id="rcRows"></div>
+      <div class="rc-cut"></div>
+      <div class="rc-total"><small>정산 합계</small><b id="rcTotal">0원</b></div>
+    </div>
+    <div class="card ready">
+      <div class="rd-head"><b>제출 준비</b><span id="rReadyPct">0%</span></div>
+      <div class="rd-bar"><i id="rReadyBar"></i></div>
+      <ul class="rd-list" id="rReadyList"></ul>
+      <h2 style="margin-top:14px">결재 문서 제목</h2>
+      <div class="title-preview" id="r_title"></div>
+      <div class="err" id="r_err"></div>
+      <button class="btn primary" id="btnReport" style="width:100%">그룹웨어에 정산 입력하기</button>
+      <p class="sub" style="margin:10px 0 0">승인된 신청 품의로 품의서승인 → 결의서전송 창에서 지출결의서·채주내역(영수증마다)·환원까지 채우고 멈춰요. <b>[전송]은 직접</b> 확인하고 누르세요.</p>
+      <button class="btn" id="btnBack" style="width:100%;margin-top:8px">목록으로</button>
+    </div>
+  </div>
+  <div class="fold" id="rFold">
+    <button class="fold-head" type="button"><span class="fh-t">세부 내용 확인·수정</span><span class="fh-s">보고서 본문·출장일정·정산 경비예요. 고칠 게 있을 때만 펼치세요</span><span class="fh-i">▾</span></button>
+    <div class="fold-body">
     <div class="card">
       <h2 id="r_heading">출장 보고서</h2>
       <p class="sub" id="r_trip"></p>
@@ -311,9 +475,7 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
       <div class="total"><span>정산 합계</span><span id="r_total">0원</span></div>
       <p class="sub" id="r_attach" style="margin:10px 0 0"></p>
     </div>
-  </div>
-  <div class="aside">
-    <details class="card ai more"><summary>다른 AI 채팅(ChatGPT 등)으로 작성하기</summary>
+<details class="card ai more"><summary>다른 AI 채팅(ChatGPT 등)으로 작성하기</summary>
       <h2 style="margin-top:10px">AI 채팅으로 작성</h2>
       <ol class="steps"><li>위 "한 줄 메모" 칸에 출장에서 한 일 쓰기</li><li>[프롬프트 복사] → AI에 붙여 넣고 보내기</li><li>답변 전체를 아래에 붙여 넣기</li></ol>
       <div class="inline" style="margin:10px 0"><button class="btn" id="btnRPrompt">프롬프트 복사</button><span class="fare" id="rcopied"></span></div>
@@ -321,15 +483,7 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
       <button class="btn" id="btnRFill" style="margin-top:8px;width:100%">양식에 채우기</button>
       <div class="err" id="rErr"></div>
     </details>
-    <div class="card">
-      <h2>결재 문서 제목</h2>
-      <div class="title-preview" id="r_title"></div>
-      <div class="err" id="r_err"></div>
-      <button class="btn primary" id="btnReport" style="width:100%">그룹웨어에 정산 입력하기</button>
-      <p class="sub" style="margin:10px 0 0">승인된 신청 품의로 품의서승인 → 결의서전송 창에서 지출결의서·채주내역(영수증마다)·환원까지 채우고 멈춰요. <b>[전송]은 직접</b> 확인하고 누르세요.</p>
-      <button class="btn" id="btnBack" style="width:100%;margin-top:8px">목록으로</button>
     </div>
-  </div>
   </div>
   </div>
 </section>
@@ -380,22 +534,17 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
     <ul class="sub" style="margin:4px 0 12px;padding-left:18px;line-height:1.7">
       <li><b>숙박비</b> = 1박 금액 × 잔 날 수. 예) 10/20~10/22 출장이면 2박</li>
       <li><b>교통비</b> = 네이버 지도 왕복 + 여유분 (자차·대중교통 신청 때만, 보고서는 실제 금액)</li>
-      <li><b>식대</b> = 먹은 끼니만 더해요. 중간 날은 아침·점심·저녁 다 넣어요.</li>
-      <li><b>첫날</b>은 그 끼니 시간이 시작되기 전에 출발했을 때만 넣어요. 예) 9시 출발이면 아침(7~8시)은 빼고 점심·저녁</li>
-      <li><b>마지막 날</b>은 그 끼니 시간이 끝난 뒤에 돌아왔을 때만 넣어요. 예) 18시 복귀면 아침·점심만, 저녁(18~19시)은 빼고</li>
+      <li><b>식대</b> (출장여비지급규정) — 당일: 점심만, 7시 전 출발이면 아침, 20시 넘어 복귀면 저녁, 13시 넘어 출발이면 점심 빼요</li>
+      <li>1박 이상: 첫날 점심·저녁 (13시 넘어 출발이면 저녁만), 중간 날 아침·점심·저녁, 마지막 날 아침·점심 (20시 넘어 복귀면 저녁도)</li>
+      <li><b>임원</b>은 숙박 1박 350,000원 한도, 해외는 일비 없이 실비예요</li>
     </ul>
     <div class="rates">
+      <div><label>직급</label><select id="s_rank"><option value="staff">부장 이하</option><option value="exec">임원</option></select></div>
       <div><label>숙박 1박</label><input id="s_lodging" inputmode="numeric"></div>
       <div><label>교통비 여유분</label><input id="s_fare_margin" inputmode="numeric" title="자차·대중교통 신청 때 네이버 지도 왕복 금액에 더해요"></div>
       <div><label>아침</label><input id="s_breakfast" inputmode="numeric"></div>
       <div><label>점심</label><input id="s_lunch" inputmode="numeric"></div>
       <div><label>저녁</label><input id="s_dinner" inputmode="numeric"></div>
-    </div>
-    <p class="sub" style="margin:16px 0 6px">끼니 시간대 (시작 ~ 끝) — 첫날·마지막 날 끼니를 넣을지 정하는 기준이에요</p>
-    <div class="mealtimes">
-      <div class="mrow"><label>아침</label><input type="time" id="s_bf_from"><span>~</span><input type="time" id="s_bf_to"></div>
-      <div class="mrow"><label>점심</label><input type="time" id="s_lu_from"><span>~</span><input type="time" id="s_lu_to"></div>
-      <div class="mrow"><label>저녁</label><input type="time" id="s_di_from"><span>~</span><input type="time" id="s_di_to"></div>
     </div>
     <div class="inline" style="justify-content:flex-end;gap:8px;margin-top:12px"><span class="fare" id="s_rate_msg"></span><button class="btn primary" id="btnRateSave">저장</button></div>
   </div>
@@ -414,6 +563,9 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
       <button class="btn" id="jobNo">아니오</button><button class="btn primary" id="jobYes">계속</button></div></div>
 </div>
 
+<div id="cfmModal"><div class="box"><div class="cf-head"><b id="cfTitle">이대로 보낼까요?</b><button class="x" type="button" id="cfX">✕</button></div>
+  <div class="cf-body" id="cfBody"></div>
+  <div class="cf-foot"><span class="cf-note" id="cfNote"></span><button class="btn" type="button" id="cfNo">고칠게요</button><button class="btn primary glow" type="button" id="cfYes">보내기 ✦</button></div></div></div>
 <div id="updModal"><div class="box">
   <h2 style="margin:0 0 4px">새 버전이 있어요</h2>
   <p class="sub" id="updMsg" style="margin:0"></p>
@@ -435,6 +587,8 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
     <button type="button" class="btn small" id="lg_close">나중에</button></div>
 </form></div>
 
+<button class="btn primary glow fab hidden" id="fabSubmit" type="button"></button>
 <script src="app.js"></script>
+<script src="ux.js"></script>
 </body>
 </html>

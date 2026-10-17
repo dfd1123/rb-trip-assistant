@@ -63,7 +63,7 @@ async function runApply(env, data, { save = true } = {}) {
     await gw.enterBudget(cfg.budgetDept, expenses, { memo: R.budgetMemo(title) });
     if (gw.lastBudget) { rec.gwApply = gw.lastBudget; store.save(id, rec); }   // 그룹웨어 품의와 연결 (목록·삭제용)
     const popup = await gw.openApproval(R.APPLY_FORM, title);
-    await gw.fillAndKeep(popup, { title, probe: '출장일', payload: applyPayload(a), save });
+    await gw.fillAndKeep(popup, { title, probe: '출장일', payload: applyPayload(a), attachments: a.overseas && a.overseas.rateShot ? [a.overseas.rateShot] : [], save });   // 해외: 서울외국환중개 환율 스크린샷 첨부 필수
   } catch (e) { await abort(env, gw); if (ui.cancelled) store.remove(id); throw e; }
   rec.status = save ? '보관됨' : '입력됨(미보관)';
   store.save(id, rec);
@@ -105,7 +105,7 @@ async function runReport(env, data) {
   const payee = cfg.name || rep.name;
   if (!payee) throw new R.InputError('그룹웨어 이름을 몰라요. 설정에서 그룹웨어에 로그인해 내 정보를 불러와 주세요.');
   const usedOn = (/(\d{4})[.-](\d{2})[.-](\d{2})/.exec(rep.period) || []).slice(1).join('-');   // 출장 시작일 (법인카드 자금계획일 기준)
-  const lines = rep.expenses.map(e => ({ label: e.label, pay: e.pay, amount: e.amount, supply: R.supplyAmount(e.amount, e.pay), memo: e.memo, planDate: R.fundPlanDate(e.pay, { usedOn }), proof: (e.proofs || [])[0] || '' }));
+  const lines = rep.expenses.map(e => ({ label: e.label, pay: e.pay, noVat: e.noVat, amount: e.amount, supply: R.supplyAmount(e.amount, e.pay, e.noVat), vat: R.vatAmount(e.amount, e.pay, e.noVat), memo: e.memo, planDate: R.fundPlanDate(e.pay, { usedOn }), proof: (e.proofs || [])[0] || '' }));
   const gw = new Amaranth({ win: env.gwWindow(), baseUrl: cfg.baseUrl, ui, log, debugDir: env.debugDir, creds: env.creds });
   await gw.ensureLogin();
   // 1~2단계: 결의서전송 (이미 전송한 출장이면 건너뜀 — 다시 돌릴 때)

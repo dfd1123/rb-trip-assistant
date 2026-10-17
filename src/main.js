@@ -130,6 +130,16 @@ function makeNaverWindow() {
   park(naverWin);
   return naverWin;
 }
+let fxWin = null;
+/** 서울외국환중개 '오늘의 환율'을 사람이 보는 창으로 연다 (자동으로 읽지 않음 — 사이트가 자동 수집을 금지) */
+function openFxWindow() {
+  if (fxWin && !fxWin.isDestroyed()) { fxWin.show(); fxWin.focus(); return fxWin; }
+  fxWin = new BrowserWindow({ width: 1280, height: 1000, icon: ICON, title: '서울외국환중개 — 오늘의 환율 (USD 매매기준율을 확인해 앱에 적어 주세요)', autoHideMenuBar: true,
+    webPreferences: { partition: 'persist:fx', contextIsolation: true, sandbox: true } });
+  fxWin.loadURL(require('./engine/fx').PAGE_URL).catch(() => {});
+  fxWin.on('closed', () => { fxWin = null; });
+  return fxWin;
+}
 function showNaver() { if (naverWin && !naverWin.isDestroyed()) { unpark(naverWin); naverWin.focus(); return true; } return false; }
 
 // ---------- 작업 1건 (사람 확인 포함) ----------
@@ -264,7 +274,7 @@ const publicConfig = c => { const { aiKeyEnc, gwPwEnc, ...rest } = c; return { .
 async function quick(memo) {
   const cfg = store.config();
   const places = store.places();
-  const ctx = { today: new Date(), places, rates: cfg.rates, mealTimes: cfg.mealTimes, origin: cfg.defaultOrigin, defaults: { mode: store.lastMode() } };
+  const ctx = { today: new Date(), places, rates: cfg.rates, rank: cfg.rank, origin: cfg.defaultOrigin, defaults: { mode: store.lastMode() } };
   const base = Q.quickApply(memo, ctx);
   const ai = aiSettings(cfg);
   let data = base.data, source = 'template', note = '';
@@ -277,10 +287,25 @@ async function quick(memo) {
   }
   let meals = null;
   if (data.dates.start && data.reason) {
-    meals = Q.computeExpenses({ start: data.dates.start, end: data.dates.end || data.dates.start, startTime: data.dates.start_time, endTime: data.dates.end_time, reason: data.reason, rates: cfg.rates, mealTimes: cfg.mealTimes });
+    meals = Q.computeExpenses({ start: data.dates.start, end: data.dates.end || data.dates.start, startTime: data.dates.start_time, endTime: data.dates.end_time, reason: data.reason, rates: cfg.rates, rank: cfg.rank });
     data.expenses = meals.expenses;
   }
+  // 해외출장: 메모·출장지로 판단 → 국내 교통편·식대 계산 대신 화면에서 규정대로(일비·숙박·우버…) 계산
+  const ov = R.overseasGuess(`${memo} ${data.destination || ''}`);
+  if (ov.overseas) {
+    data.scope = '해외'; data.grade = ov.grade; data.transport = { mode: 'overseas', to: '', from: '' }; data.expenses = [];
+    const missing = [];
+    if (!data.dates.start) missing.push('날짜');
+    if (!data.destination) missing.push('출장지');
+    return { data, missing, source, note, meals: null, fare: null };
+  }
+  data.scope = '국내';
+  // 교통편은 메모에 적혀 있을 때만 정한다 (자차·대중교통·법인차량). 아니면 비워 두고 사람이 고르면 그때 교통비를 계산
+  const said = Q.parseMode(memo);
+  if (!said.mode) data.transport = { ...data.transport, mode: '', corporate_car: undefined };
+  else if (said.mode !== data.transport.mode) data.transport = { ...data.transport, mode: said.mode, ...(said.corporate_car ? { corporate_car: said.corporate_car } : {}) };
   const missing = [];
+  if (!data.transport.mode) missing.push('교통편');
   if (!data.dates.start) missing.push('날짜');
   if (!data.dates.start_time) missing.push('출발 시각');
   if (!data.dates.end_time) missing.push('복귀 시각');
@@ -352,7 +377,12 @@ async function route(p, body = {}) {
     }
     case '/api/quick': return quick(String(body.memo || ''));
     case '/api/report-quick': return quickReport(body.id, String(body.memo || ''));
-    case '/api/expenses': { const r = Q.computeExpenses({ start: body.start, end: body.end || body.start, startTime: body.start_time, endTime: body.end_time, reason: body.reason || '', rates: cfg.rates, mealTimes: cfg.mealTimes }); return { expenses: r.expenses, summary: r.summary, timed: r.timed }; }
+    case '/api/overseas-expenses': {   // 해외출장 품의 경비 줄 (규정: 등급별 일비·숙박 한도, 신청일 환율)
+      const n = v => (v === undefined || v === null || v === '') ? null : Number(String(v).replace(/[^\d.]/g, '')) || 0;
+      return R.overseasExpenses({ start: body.start, end: body.end || body.start, name: cfg.name || '출장자', people: 1, rank: cfg.rank, grade: body.grade, rate: Number(body.rate) || 0,
+        airfare: n(body.airfare), lodging: n(body.lodging), uberUsd: n(body.uber), roaming: n(body.roaming), insurance: n(body.insurance) });
+    }
+    case '/api/expenses': { const r = Q.computeExpenses({ start: body.start, end: body.end || body.start, startTime: body.start_time, endTime: body.end_time, reason: body.reason || '', rates: cfg.rates, rank: cfg.rank }); return { expenses: r.expenses, summary: r.summary, timed: r.timed }; }
     case '/api/repeat': { const a = store.load(body.id).apply;   // keep: 반려돼서 고쳐 올릴 땐 날짜·시각 그대로
       const dates = body.keep ? { start: a.start, end: a.end, start_time: a.start_time, end_time: a.end_time } : { start: '', end: '' };
       return { data: { ...a, dates, transport: { ...a.transport, total: null, screenshot: '' } } }; }
@@ -410,6 +440,12 @@ async function route(p, body = {}) {
       const ai = aiSettings(cfg);
       if (!ai) throw new Error('영수증 자동 분류는 AI 가 있어야 해요. 설정 › AI 문장 작성에서 Gemini 를 골라 주세요.');
       return startJob('receipts', env => readReceipts(env, ai, (body.paths || []).map(String), String(body.period || '')), body.title);
+    }
+    case '/api/fx/open': openFxWindow(); return { ok: true };   // 환율 화면 열기 (사람이 보고 값 입력)
+    case '/api/fx/capture': {   // 사람이 연 환율 화면을 캡처 → 결재 문서 첨부
+      const d = new Date(), date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      const shot = await require('./engine/fx').captureWindow(fxWin, path.join(store.tripsDir, '_fx', `환율_USD_${date}_${Date.now()}.png`));
+      return { screenshot: shot, date };
     }
     case '/api/job/refund-check': return startJob('refund-check', env => runner.runRefundCheck(env), body.title);
     case '/api/job/gw-profile': return startJob('gw-profile', env => runner.runProfile(env, { force: !!body.force }), body.title);

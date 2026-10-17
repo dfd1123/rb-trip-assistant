@@ -79,11 +79,13 @@ test('날짜 말 해석', () => {
   assert.deepEqual(d('1/5~7'), ['2027-01-05', '2027-01-07']);
 });
 
-test('규정 경비: 숙박 7만/박, 식대 3.8만/일 (판교 4박5일 = 28만 + 19만)', () => {
+test('규정 경비 (별첨 1): 숙박 7만/박, 첫날 중·석 · 중간 조·중·석 · 마지막 날 조·중, 당일은 중식', () => {
   const e = Q.computeExpenses({ start: '2026-09-28', end: '2026-10-02', reason: '판교', rates: Q.DEFAULT_RATES }).expenses;
-  assert.deepEqual(e.map(x => [x.item, x.amount]), [['domestic_lodging', 280000], ['meal', 190000]]);
+  assert.deepEqual(e.map(x => [x.item, x.amount]), [['domestic_lodging', 280000], ['meal', 30000 + 38000 * 3 + 23000]]);   // 4박 5일
   const day = Q.computeExpenses({ start: '2026-10-16', end: '2026-10-16', reason: 'x', rates: Q.DEFAULT_RATES }).expenses;
-  assert.deepEqual(day.map(x => [x.item, x.amount]), [['meal', 38000]]);
+  assert.deepEqual(day.map(x => [x.item, x.amount]), [['meal', 15000]]);
+  const ex = Q.computeExpenses({ start: '2026-09-28', end: '2026-09-29', reason: 'x', rates: Q.DEFAULT_RATES, rank: 'exec' }).expenses;   // 임원 숙박 35만
+  assert.equal(ex[0].amount, 350000);
 });
 
 test('한 줄 메모 → 신청서', () => {
@@ -143,16 +145,22 @@ test('AI 호출 형식 (Claude / OpenAI / Gemini)', async () => {
   } finally { global.fetch = orig; }
 });
 
-test('시각 기준 식대: 저녁 출발이면 첫날 아침·점심 없음', () => {
+test('시각 기준 식대 (규정): 13시 이후 출발이면 중식 없음, 당일 7시 전 출발이면 조식, 20시 넘어 복귀하면 석식', () => {
   const c = Q.computeExpenses({ start: '2026-10-20', end: '2026-10-22', startTime: '19:00', endTime: '15:00', reason: 'r' });
-  assert.equal(c.summary, '10/20 없음 · 10/21 아침·점심·저녁 · 10/22 아침·점심');
-  assert.deepEqual(c.expenses.map(e => e.amount), [140000, 8000 * 2 + 15000 * 2 + 15000]);
+  assert.equal(c.summary, '10/20 저녁 · 10/21 아침·점심·저녁 · 10/22 아침·점심');
+  assert.deepEqual(c.expenses.map(e => e.amount), [140000, 15000 + 38000 + 23000]);
   const e17 = Q.computeExpenses({ start: '2026-10-20', end: '2026-10-21', startTime: '17:30', endTime: '12:30', reason: 'r' });
-  assert.equal(e17.summary, '10/20 저녁 · 10/21 아침');
+  assert.equal(e17.summary, '10/20 저녁 · 10/21 아침·점심');
   const one = Q.computeExpenses({ start: '2026-10-20', end: '2026-10-20', startTime: '09:00', endTime: '18:30', reason: 'r' });
   assert.equal(one.summary, '10/20 점심');
   const early = Q.computeExpenses({ start: '2026-10-20', end: '2026-10-20', startTime: '06:30', endTime: '20:00', reason: 'r' });
-  assert.equal(early.summary, '10/20 아침·점심·저녁');
+  assert.equal(early.summary, '10/20 아침·점심');                       // 20시 정각 복귀는 '초과' 아님
+  const late = Q.computeExpenses({ start: '2026-10-20', end: '2026-10-20', startTime: '06:30', endTime: '20:30', reason: 'r' });
+  assert.equal(late.summary, '10/20 아침·점심·저녁');
+  const pm = Q.computeExpenses({ start: '2026-10-20', end: '2026-10-20', startTime: '13:30', endTime: '18:00', reason: 'r' });
+  assert.equal(pm.expenses.length, 0);                                   // 13시 이후 출발 당일: 식대 없음
+  const back = Q.computeExpenses({ start: '2026-10-20', end: '2026-10-21', startTime: '09:00', endTime: '21:00', reason: 'r' });
+  assert.equal(back.summary, '10/20 점심·저녁 · 10/21 아침·점심·저녁');   // 마지막 날도 20시 넘어 복귀하면 석식
 });
 
 test('시각 말 해석', () => {
@@ -163,7 +171,7 @@ test('시각 말 해석', () => {
   const q = Q.quickApply('다음주 화 저녁에 출발 목 3시 복귀 판교 RBY1 연동 검증 자차', { today: TODAY, places: PLACES });
   assert.deepEqual(q.data.dates, { start: '2026-10-20', end: '2026-10-22', start_time: '19:00', end_time: '15:00' });
   assert.equal(q.data.reason, 'RBY1 연동 검증');
-  assert.deepEqual(q.data.expenses.map(e => e.amount), [140000, 61000]);
+  assert.deepEqual(q.data.expenses.map(e => e.amount), [140000, 15000 + 38000 + 23000]);   // 19시 출발: 첫날 석식만 (규정)
   assert.equal(Q.parseDates('다음주 월 목적지 판교', TODAY).end, '2026-10-19');   // '목적지'는 목요일 아님
   const a = R.parseApply({ ...q.data, transport: { ...q.data.transport, total: 1 }, purpose: 'p' });
   assert.equal(a.start_time, '19:00');
@@ -305,4 +313,34 @@ test('식대 여러 번(4일 출장): 예산 줄 하나 아래 채주 여러 줄
   const tight = R.planPayees([{ ...budgets[2], 미지출액: '30,000' }], lines.slice(1)).plan[0];
   assert.deepEqual(tight.lines.map(l => l.supply), [15000, 9000, 6000]);
   assert.equal(tight.dropped, 5);
+});
+
+test('해외출장 사전품의: 규정·예시대로 경비 줄과 적요', () => {
+  const r = R.overseasExpenses({ start: '2026-04-23', end: '2026-04-30', name: '안재용', grade: '가', rate: 1480.3, airfare: 3000000, lodging: 2800000, uberUsd: 70, roaming: 100000, insurance: 50000 });
+  assert.equal(r.days, 8);
+  const by = Object.fromEntries(r.expenses.map(e => [e.memo.split('해외출장 ')[1].split(/[ (]/)[0], e]));
+  assert.equal(by['일비'].amount, 1065600);                     // $90 x 8일 x 1,480 (예시와 같음)
+  assert.equal(by['일비'].memo, '04/23~04/30 안재용 1인 해외출장 일비 신청($90 x 8일 x 1,480) - 신청일 환율 기준');
+  assert.equal(by['우버'].amount, 828800);                      // $70 x 8일 x 1,480
+  assert.equal(by['항공'].item, 'airfare'); assert.equal(by['숙박'].item, 'overseas_lodging'); assert.equal(by['로밍'].item, 'travel_etc'); assert.equal(by['여행자'].item, 'travel_etc');
+  // 나 등급, 숙박 견적 없음 → 일비 $50, 숙박은 한도 $150 x 박
+  const n = R.overseasExpenses({ start: '2026-11-02', end: '2026-11-04', name: '김종완', grade: '나', rate: 1348.5 });
+  const ex = R.overseasExpenses({ start: '2026-11-02', end: '2026-11-04', name: '김종완', grade: '가', rate: 1348.5, rank: 'exec' });   // 임원: 일비 없음, 숙박 한도 $280
+  assert.deepEqual(ex.expenses.map(e => [e.item, e.amount]), [['overseas_lodging', 280 * 2 * 1349]]);
+  assert.deepEqual(n.expenses.map(e => [e.item, e.amount]), [['overseas_per_diem', 50 * 3 * 1349], ['overseas_lodging', 150 * 2 * 1349]]);
+  assert.deepEqual(R.overseasGuess('1월 라스베가스 CES'), { overseas: true, grade: '가' });
+  assert.deepEqual(R.overseasGuess('도쿄 고객사 미팅'), { overseas: true, grade: '나' });
+  assert.equal(R.overseasGuess('판교 AI 사무소').overseas, false);
+});
+
+test('보고서 부가세: 개인 = 공급가액만, 법인카드 과세 = 공급가액+부가세, 법인카드 면세(항공권·주유비) = 부가세 0', () => {
+  assert.deepEqual([R.supplyAmount(55000, 'personal'), R.vatAmount(55000, 'personal')], [55000, 0]);
+  assert.deepEqual([R.supplyAmount(55000, 'card'), R.vatAmount(55000, 'card')], [50000, 5000]);
+  assert.deepEqual([R.supplyAmount(79000, 'card', true), R.vatAmount(79000, 'card', true)], [79000, 0]);
+  assert.equal(R.noVatOf({ item: 'airfare', memo: '' }), true);
+  assert.equal(R.noVatOf({ item: 'domestic_transport', memo: '10/2 주유비' }), true);
+  assert.equal(R.noVatOf({ item: 'meal', memo: '9/28 1인 석식' }), false);
+  assert.equal(R.noVatOf({ item: 'meal', memo: '주유', noVat: false }), false);   // 화면에서 끈 값이 우선
+  const [c] = R.capToBudget([{ amount: 66000, pay: 'card', noVat: false }], 60000);   // 한도까지 깎은 뒤 부가세 계산
+  assert.deepEqual([c.amount, c.supply, c.vat], [60000, 54546, 5454]);
 });
