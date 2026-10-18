@@ -171,7 +171,7 @@ function fillApply(d){
   $$('input[name=a_grade]').forEach(x => x.checked = false); if(d.grade) setRadio('a_grade', d.grade);
   if(d.rate) setRate({ rate: d.rate, date: d.rate_date, screenshot: d.rate_shot });
   refreshApply();
-  if(ov){ if(!$('#a_uber').value) $('#a_uber').value = (META.config.rates && META.config.rates.uberUsdPerDay) || ''; recalcOverseas(); }
+  if(ov){ if(!$('#a_uber').value) $('#a_uber').value = (META.config.rates && META.config.rates.uberUsdPerDay) || ''; recalcOverseas(); if(!d.rate && META.config.fxKeySet) lookupRate(); }
 }
 /** 신청서 전체 비우기 ([새로 작성], 그룹웨어 입력이 끝났을 때) */
 function resetApply(){
@@ -270,13 +270,14 @@ function setRate(r){
   if(r.rate) $('#a_rate').value = Number(r.rate).toLocaleString('en-US', { maximumFractionDigits: 2 });
   rateInfo = { date: r.date || '', screenshot: r.screenshot || '' };
   const d = $('#a_rate_desc'); d.innerHTML = '';
-  if(r.rate){ d.append(`서울외국환중개 매매기준율 · 계산은 ${Math.round(r.rate).toLocaleString('en-US')}원${r.screenshot ? ` · ${r.date} 캡처` : ' · 화면 캡처 필요'}`); if(r.screenshot){ const a = document.createElement('a'); a.href = '#'; a.textContent = ' 캡처 보기 (결재 문서에 첨부)'; a.onclick = e => { e.preventDefault(); rpc('/api/open', {path: r.screenshot}); }; d.append(a); } }
+  if(r.rate){ d.append(`한국수출입은행 매매기준율${r.date ? ` (${r.date} 고시)` : ''} · 계산은 ${Math.round(r.rate).toLocaleString('en-US')}원`); if(r.screenshot){ const a = document.createElement('a'); a.href = '#'; a.textContent = ' · 조회 결과 보기 (결재 문서에 첨부)'; a.onclick = e => { e.preventDefault(); rpc('/api/open', {path: r.screenshot}); }; d.append(a); } }
 }
-// 환율: 서울외국환중개는 자동 수집 금지 → 화면만 열어 주고, 값은 사람이 적고, 캡처는 사람이 누를 때
-function lookupRate(){ rpc('/api/fx/open').then(() => { $('#a_rate').focus(); $('#a_rate_desc').textContent = '열린 창에서 미국 달러(USD) 매매기준율을 환율 칸에 적고 [화면 캡처]를 눌러 주세요.'; }).catch(e => alertErr(e.message)); }
-async function captureRate(){
-  try { const r = await rpc('/api/fx/capture'); setRate({ rate: Number(String($('#a_rate').value).replace(/,/g, '')) || 0, date: r.date, screenshot: r.screenshot }); recalcOverseas(); }
-  catch(e){ alertErr(e.message); }
+// 환율: 한국수출입은행 Open API (설정의 인증키) → 값 + 결재 첨부용 조회 결과 이미지
+async function lookupRate(){
+  if(!META.config.fxKeySet){ alertErr('설정 › 환율에서 한국수출입은행 인증키를 먼저 넣어 주세요.'); return; }
+  $('#a_rate_desc').textContent = '환율 불러오는 중…';
+  try { setRate(await rpc('/api/fx/rate')); recalcOverseas(); }
+  catch(e){ $('#a_rate_desc').textContent = ''; alertErr(e.message); }
 }
 let ovTimer;
 async function recalcOverseas(){
@@ -292,17 +293,15 @@ async function recalcOverseas(){
   $('#a_meal_plan').textContent = `해외 ${r.nights}박 ${r.days}일 · ${grade} 등급 일비 $${grade === '가' ? 90 : 50}/일${$('#a_hotel').value.trim() ? '' : ` · 숙박은 한도 $${grade === '가' ? 200 : 150}/박으로 계산 (견적이 있으면 숙박 칸에 넣으세요)`}`;
   refreshApply();
 }
-['#a_air', '#a_hotel', '#a_uber', '#a_roam', '#a_ins', '#a_rate'].forEach(id => $(id).addEventListener('input', () => { if(['#a_air', '#a_hotel', '#a_roam', '#a_ins'].includes(id)){ const x = $(id); x.value = x.value ? num(x.value).toLocaleString('ko-KR') : ''; } clearTimeout(ovTimer); ovTimer = setTimeout(recalcOverseas, 300); }));
+['#a_air', '#a_hotel', '#a_uber', '#a_roam', '#a_ins'].forEach(id => $(id).addEventListener('input', () => { if(['#a_air', '#a_hotel', '#a_roam', '#a_ins'].includes(id)){ const x = $(id); x.value = x.value ? num(x.value).toLocaleString('ko-KR') : ''; } clearTimeout(ovTimer); ovTimer = setTimeout(recalcOverseas, 300); }));
 $$('input[name=a_grade]').forEach(r => r.addEventListener('change', () => { $('#a_grade_seg').classList.remove('need'); recalcOverseas(); }));
 $$('input[name=a_scope]').forEach(r => r.addEventListener('change', () => {
   $('#a_exp tbody').innerHTML = ''; $('#a_meal_plan').textContent = '';
-  if(isOverseas()){ if(!$('#a_uber').value) $('#a_uber').value = (META.config.rates && META.config.rates.uberUsdPerDay) || ''; if(!radio('a_grade')){ const g = /미국|유럽|캐나다|싱가포르|영국|프랑스|독일|이탈리아|스페인|네덜란드|스위스/.test($('#a_destination').value) ? '가' : ''; if(g) setRadio('a_grade', g); } recalcOverseas(); }
+  if(isOverseas()){ if(!$('#a_uber').value) $('#a_uber').value = (META.config.rates && META.config.rates.uberUsdPerDay) || ''; if(!radio('a_grade')){ const g = /미국|유럽|캐나다|싱가포르|영국|프랑스|독일|이탈리아|스페인|네덜란드|스위스/.test($('#a_destination').value) ? '가' : ''; if(g) setRadio('a_grade', g); } recalcOverseas(); if(!$('#a_rate').value && META.config.fxKeySet) lookupRate(); }
   else recalcExpenses();
   refreshApply();
 }));
 $('#btnRate').onclick = lookupRate;
-$('#btnRateShot').onclick = captureRate;
-$('#a_rate').addEventListener('change', () => setRate({ rate: Number(String($('#a_rate').value).replace(/,/g, '')) || 0, date: rateInfo.date, screenshot: rateInfo.screenshot }));
 function showMealPlan(m){
   $('#a_meal_plan').textContent = m && m.summary ? `식대 내역: ${m.summary}${m.timed ? '' : '  (출발·복귀 시각을 넣으면 첫날·마지막 날 끼니를 정확히 계산해요)'}` : '';
 }
@@ -311,7 +310,7 @@ let recalcTimer = null;
 ['#a_start','#a_end','#a_start_time','#a_end_time'].forEach(id => ['input', 'change'].forEach(ev => $(id).addEventListener(ev, () => { clearTimeout(recalcTimer); recalcTimer = setTimeout(recalcExpenses, 300); })));
 $('#btnRecalc').onclick = recalcExpenses;
 function markNeed(missing){
-  const map = {'교통편': ['#a_mode_seg'], '국가 등급': ['#a_grade_seg'], '환율': ['#a_rate'], '환율 화면 캡처': ['#btnRateShot'], '날짜': ['#a_start','#a_end'], '출발 시각': ['#a_start_time'], '복귀 시각': ['#a_end_time'], '출장지': ['#a_destination'], '사유': ['#a_reason'], '교통비': ['#a_fare'], '과제명': ['#a_project'], '동행목적': ['#a_companion_purpose']};
+  const map = {'교통편': ['#a_mode_seg'], '국가 등급': ['#a_grade_seg'], '환율': ['#btnRate'], '날짜': ['#a_start','#a_end'], '출발 시각': ['#a_start_time'], '복귀 시각': ['#a_end_time'], '출장지': ['#a_destination'], '사유': ['#a_reason'], '교통비': ['#a_fare'], '과제명': ['#a_project'], '동행목적': ['#a_companion_purpose']};
   $$('.need').forEach(el => el.classList.remove('need'));
   missing.forEach(m => (map[m]||[]).forEach(id => $(id).classList.add('need')));
 }
@@ -373,7 +372,7 @@ $('#btnApply').onclick = async () => {
   if(!data.dates.start || !$('#a_end').value) need.push('날짜');
   if(!data.dates.start_time) need.push('출발 시각');
   if(!data.dates.end_time) need.push('복귀 시각');
-  if(data.scope === '해외'){ if(!data.grade) need.push('국가 등급'); if(!(data.rate > 0)) need.push('환율'); else if(!data.rate_shot) need.push('환율 화면 캡처'); }   // 캡처 첨부 필수 (사전품의 작성 기준)
+  if(data.scope === '해외'){ if(!data.grade) need.push('국가 등급'); if(!(data.rate > 0) || !data.rate_shot) need.push('환율'); }   // 조회 결과 이미지 첨부 필수 (사전품의 작성 기준)
   else if(!data.transport.mode) need.push('교통편');
   else if(data.transport.mode !== 'corporate' && data.transport.total === undefined) need.push('교통비');   // 0원은 허용 (비운 것만 막음)
   if(data.category === '연구과제' && !data.project) need.push('과제명');
@@ -786,6 +785,7 @@ function loadAiSettings(){
 
   const r = c.rates; $('#s_lodging').value = r.lodgingPerNight; $('#s_breakfast').value = r.breakfast; $('#s_lunch').value = r.lunch; $('#s_dinner').value = r.dinner; $('#s_fare_margin').value = r.fareMargin ?? 20000;
   $('#s_rank').value = c.rank || 'staff';
+  $('#s_fx_key').value = ''; $('#s_fx_key').placeholder = c.fxKeySet ? '저장됨 (바꾸려면 새 키 입력)' : '인증키 붙여넣기';
 }
 $('#s_ai').onchange = () => { const k = $('#s_ai').value; $('#s_model').placeholder = META.providers[k] ? `기본: ${META.providers[k].model}` : '비우면 기본 모델'; };
 $('#btnAiSave').onclick = async () => {
@@ -801,6 +801,14 @@ $('#btnAiTest').onclick = async () => {
 $('#btnRateSave').onclick = async () => {
   const rates = {...META.config.rates, lodgingPerNight: num($('#s_lodging').value), breakfast: num($('#s_breakfast').value), lunch: num($('#s_lunch').value), dinner: num($('#s_dinner').value), fareMargin: num($('#s_fare_margin').value)};
   await rpc('/api/config', {rates, rank: $('#s_rank').value}); META = await rpc('/api/meta'); $('#s_rate_msg').textContent = '저장됨';
+};
+
+$('#btnFxSave').onclick = async () => {
+  const k = $('#s_fx_key').value.trim();
+  if(k){ await rpc('/api/config', {fxKey: k}); META = await rpc('/api/meta'); loadAiSettings(); }
+  if(!META.config.fxKeySet){ $('#s_fx_msg').textContent = '인증키를 넣어 주세요'; return; }
+  $('#s_fx_msg').textContent = '확인 중…';
+  try { const r = await rpc('/api/fx/rate'); $('#s_fx_msg').textContent = `연결됨: USD ${r.rate.toLocaleString('en-US')}원 (${r.date} 고시)`; } catch(e){ $('#s_fx_msg').textContent = e.message; }
 };
 
 /* ---------- 작업 패널 ---------- */

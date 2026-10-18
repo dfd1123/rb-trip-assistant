@@ -63,7 +63,7 @@ async function runApply(env, data, { save = true } = {}) {
     await gw.enterBudget(cfg.budgetDept, expenses, { memo: R.budgetMemo(title) });
     if (gw.lastBudget) { rec.gwApply = gw.lastBudget; store.save(id, rec); }   // 그룹웨어 품의와 연결 (목록·삭제용)
     const popup = await gw.openApproval(R.APPLY_FORM, title);
-    await gw.fillAndKeep(popup, { title, probe: '출장일', payload: applyPayload(a), attachments: a.overseas && a.overseas.rateShot ? [a.overseas.rateShot] : [], save });   // 해외: 서울외국환중개 환율 스크린샷 첨부 필수
+    await gw.fillAndKeep(popup, { title, probe: '출장일', payload: applyPayload(a), attachments: a.overseas && a.overseas.rateShot ? [a.overseas.rateShot] : [], save });   // 해외: 수출입은행 환율 조회 결과 이미지 첨부 필수
   } catch (e) { await abort(env, gw); if (ui.cancelled) store.remove(id); throw e; }
   rec.status = save ? '보관됨' : '입력됨(미보관)';
   store.save(id, rec);

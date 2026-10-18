@@ -1,20 +1,51 @@
 'use strict';
-// 해외출장 환율: 서울외국환중개 '오늘의 환율' 화면.
-// 이 사이트는 크롤러·스크래퍼·봇·매크로 등 자동 수단으로 접근하거나 데이터를 수집하는 것을 금지한다(사이트 '저작권보호정책 안내').
-// 그래서 앱은 값을 자동으로 읽지 않는다: 사람이 보는 창으로 열어 주고, 사람이 환율을 적고, 사람이 누를 때 그 창을 캡처만 한다
-// (화면을 보고 스크린샷을 찍는 것과 같음).
+// 해외출장 환율: 한국수출입은행 환율 Open API (정부 공개 API, 개인 인증키, 하루 1,000회).
+// 영업일 11시쯤 고시라 주말·공휴일·고시 전엔 빈 결과 → 하루씩 거슬러 가장 최근 고시값(USD 매매기준율)을 쓴다.
 
 const fs = require('fs');
 const path = require('path');
 
-const PAGE_URL = 'http://www.smbs.biz/ExRate/TodayExRate.jsp';
+const API = 'https://oapi.koreaexim.go.kr/site/program/financial/exchangeJSON';
+const KEY_URL = 'https://www.koreaexim.go.kr/ir/HPHKIR020M01?apino=2&viewtype=C';
+const ERR = { 2: '수출입은행 API 데이터 코드 오류', 3: '수출입은행 인증키가 올바르지 않아요. 설정 › 환율에서 키를 확인해 주세요.', 4: '수출입은행 API 오늘 조회 한도(1,000회)를 넘었어요.' };
+const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
-/** 사람이 연 환율 창을 그대로 캡처해 파일로 (결재 문서 첨부용) */
-async function captureWindow(win, shotPath) {
-  if (!win || win.isDestroyed()) throw new Error('환율 화면이 열려 있지 않아요. [환율 확인]으로 먼저 열어 주세요.');
-  fs.mkdirSync(path.dirname(shotPath), { recursive: true });
-  fs.writeFileSync(shotPath, (await win.webContents.capturePage()).toPNG());
-  return shotPath;
+/** 오늘(from)부터 거슬러 가장 최근 고시된 USD 매매기준율 */
+async function usdRate(key, { from = new Date(), fetch: f = fetch, days = 10 } = {}) {
+  if (!key) throw new Error('설정 › 환율에서 한국수출입은행 인증키를 먼저 넣어 주세요.');
+  for (let i = 0; i < days; i++) {
+    const d = new Date(from); d.setDate(d.getDate() - i);
+    const res = await f(`${API}?authkey=${encodeURIComponent(key)}&searchdate=${ymd(d).replace(/-/g, '')}&data=AP01`);
+    if (!res.ok) throw new Error(`수출입은행 환율 조회 실패 (HTTP ${res.status})`);
+    const rows = await res.json();
+    const bad = rows.find(r => r.result && r.result !== 1);
+    if (bad) throw new Error(ERR[bad.result] || `수출입은행 환율 조회 실패 (결과 ${bad.result})`);
+    const usd = rows.find(r => r.cur_unit === 'USD');
+    if (usd) return { rate: Number(String(usd.deal_bas_r).replace(/,/g, '')), date: ymd(d), row: usd };
+  }
+  throw new Error(`최근 ${days}일 동안 고시된 USD 환율이 없어요.`);
 }
 
-module.exports = { PAGE_URL, captureWindow };
+const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+function proofHtml({ date, row }, at = new Date()) {
+  const cell = (k, v) => `<tr><th>${k}</th><td>${esc(v)}</td></tr>`;
+  return `<!doctype html><meta charset="utf-8"><style>body{font:15px -apple-system,'Apple SD Gothic Neo','Malgun Gothic',sans-serif;margin:28px;color:#111}
+h1{font-size:19px;margin:0 0 4px}p{color:#555;margin:0 0 16px;font-size:13px}table{border-collapse:collapse;width:100%}th,td{border:1px solid #ccc;padding:9px 12px;text-align:left}
+th{background:#f3f6fa;width:38%;font-weight:600}tr.k td{font-weight:700;font-size:17px;color:#0b4f9c}</style>
+<h1>한국수출입은행 환율 (USD)</h1><p>고시일 ${esc(date)} · 조회 ${esc(ymd(at))} ${at.toTimeString().slice(0, 5)} · 출처: 한국수출입은행 환율 Open API</p>
+<table>${cell('통화', `${row.cur_unit} (${row.cur_nm || '미국 달러'})`)}<tr class="k"><th>매매기준율</th><td>${esc(row.deal_bas_r)}</td></tr>${cell('전신환 받으실 때', row.ttb)}${cell('전신환 보내실 때', row.tts)}${cell('장부가격', row.bkpr)}</table>`;
+}
+
+/** 조회 결과를 결재 첨부용 이미지로 */
+async function saveProof(r, shotPath) {
+  const { BrowserWindow } = require('electron');
+  const w = new BrowserWindow({ show: false, width: 640, height: 300, webPreferences: { sandbox: true, javascript: false } });
+  try {
+    await w.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(proofHtml(r)));
+    fs.mkdirSync(path.dirname(shotPath), { recursive: true });
+    fs.writeFileSync(shotPath, (await w.webContents.capturePage()).toPNG());
+    return shotPath;
+  } finally { w.destroy(); }
+}
+
+module.exports = { KEY_URL, usdRate, proofHtml, saveProof };

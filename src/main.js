@@ -2,7 +2,7 @@
 // 와니의 결재 도우미 - Electron 메인 프로세스
 // 화면(렌더러) ↔ 작업(엔진) 중계. 그룹웨어와 네이버 지도는 앱 안의 별도 창(내장 Chromium)에서 조작한다.
 
-const { app, BrowserWindow, ipcMain, clipboard, shell, safeStorage, dialog, session } = require('electron');
+const { app, BrowserWindow, ipcMain, clipboard, shell, safeStorage, dialog, session, net } = require('electron');
 try { process.loadEnvFile(require('path').join(__dirname, '..', '.env')); } catch (e) { /* 개발용 .env 없음 (배포본엔 없음) */ }
 // 우분투 24.04 이상 AppImage: AppArmor 가 user namespace 를 막고 AppImage 는 SUID 샌드박스도 못 쓰니 샌드박스 없이 켠다
 // (deb·rpm 은 설치 스크립트가 AppArmor 프로필을 넣어 샌드박스를 그대로 쓴다)
@@ -129,16 +129,6 @@ function makeNaverWindow() {
   });
   park(naverWin);
   return naverWin;
-}
-let fxWin = null;
-/** 서울외국환중개 '오늘의 환율'을 사람이 보는 창으로 연다 (자동으로 읽지 않음 — 사이트가 자동 수집을 금지) */
-function openFxWindow() {
-  if (fxWin && !fxWin.isDestroyed()) { fxWin.show(); fxWin.focus(); return fxWin; }
-  fxWin = new BrowserWindow({ width: 1280, height: 1000, icon: ICON, title: '서울외국환중개 — 오늘의 환율 (USD 매매기준율을 확인해 앱에 적어 주세요)', autoHideMenuBar: true,
-    webPreferences: { partition: 'persist:fx', contextIsolation: true, sandbox: true } });
-  fxWin.loadURL(require('./engine/fx').PAGE_URL).catch(() => {});
-  fxWin.on('closed', () => { fxWin = null; });
-  return fxWin;
 }
 function showNaver() { if (naverWin && !naverWin.isDestroyed()) { unpark(naverWin); naverWin.focus(); return true; } return false; }
 
@@ -268,7 +258,11 @@ function aiSettings(cfg) {
 function encryptKey(key) {
   return (safeStorage.isEncryptionAvailable() ? safeStorage.encryptString(key) : Buffer.from(key, 'utf8')).toString('base64');
 }
-const publicConfig = c => { const { aiKeyEnc, gwPwEnc, ...rest } = c; return { ...rest, aiKeySet: Boolean(aiKeyEnc) || Boolean(aiSettings(c)), aiBuiltin: !aiKeyEnc && Boolean(aiSettings(c)), gwSaved: Boolean(c.gwId && gwPwEnc) }; };
+function fxKey(cfg) {
+  if (!cfg.fxKeyEnc) return '';
+  try { const buf = Buffer.from(cfg.fxKeyEnc, 'base64'); return safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(buf) : buf.toString('utf8'); } catch (e) { return ''; }
+}
+const publicConfig = c => { const { aiKeyEnc, gwPwEnc, fxKeyEnc, ...rest } = c; return { ...rest, fxKeySet: Boolean(fxKeyEnc), aiKeySet: Boolean(aiKeyEnc) || Boolean(aiSettings(c)), aiBuiltin: !aiKeyEnc && Boolean(aiSettings(c)), gwSaved: Boolean(c.gwId && gwPwEnc) }; };
 
 /** 한 줄 메모 → 신청서. AI 가 있으면 문장/추론은 AI, 금액·출장지 이름은 항상 규칙. */
 async function quick(memo) {
@@ -369,6 +363,7 @@ async function route(p, body = {}) {
       const patch = { ...body };
       if ('aiKey' in patch) { const k = String(patch.aiKey || '').trim(); delete patch.aiKey; if (k) patch.aiKeyEnc = encryptKey(k); }
       if (patch.clearAiKey) { patch.aiKeyEnc = ''; delete patch.clearAiKey; }
+      if ('fxKey' in patch) { const k = String(patch.fxKey || '').trim(); delete patch.fxKey; patch.fxKeyEnc = k ? encryptKey(k) : ''; }
       return publicConfig(store.saveConfig(patch));
     }
     case '/api/ai/test': {
@@ -441,11 +436,11 @@ async function route(p, body = {}) {
       if (!ai) throw new Error('영수증 자동 분류는 AI 가 있어야 해요. 설정 › AI 문장 작성에서 Gemini 를 골라 주세요.');
       return startJob('receipts', env => readReceipts(env, ai, (body.paths || []).map(String), String(body.period || '')), body.title);
     }
-    case '/api/fx/open': openFxWindow(); return { ok: true };   // 환율 화면 열기 (사람이 보고 값 입력)
-    case '/api/fx/capture': {   // 사람이 연 환율 화면을 캡처 → 결재 문서 첨부
-      const d = new Date(), date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-      const shot = await require('./engine/fx').captureWindow(fxWin, path.join(store.tripsDir, '_fx', `환율_USD_${date}_${Date.now()}.png`));
-      return { screenshot: shot, date };
+    case '/api/fx/rate': {   // 한국수출입은행 USD 매매기준율 + 결재 첨부용 조회 결과 이미지
+      const FX = require('./engine/fx');
+      const r = await FX.usdRate(fxKey(cfg), { fetch: net.fetch });
+      const shot = await FX.saveProof(r, path.join(store.tripsDir, '_fx', `환율_USD_${r.date}_${Date.now()}.png`));
+      return { rate: r.rate, date: r.date, screenshot: shot };
     }
     case '/api/job/refund-check': return startJob('refund-check', env => runner.runRefundCheck(env), body.title);
     case '/api/job/gw-profile': return startJob('gw-profile', env => runner.runProfile(env, { force: !!body.force }), body.title);

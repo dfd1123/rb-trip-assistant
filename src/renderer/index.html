@@ -312,7 +312,7 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
     <div class="tk-modes" id="tkModes"><button type="button" data-m="car">🚗 자차</button><button type="button" data-m="transit">🚆 대중교통</button><button type="button" data-m="corporate">🚐 법인차량</button></div>
     <div class="tk-hint" id="tkHint">👆 교통편을 골라 주세요 — 고르면 교통비를 바로 계산해요</div>
     <div class="tk-ov hidden" id="tkOv"><div class="tk-grades" id="tkGrades"><button type="button" data-g="가">가 등급<small>미국·유럽·캐나다·싱가포르</small></button><button type="button" data-g="나">나 등급<small>그 외 국가</small></button></div>
-      <div class="tk-fx"><span id="tkFx">환율을 확인해 주세요</span><span><button type="button" id="tkFxBtn">환율 확인</button> <button type="button" id="tkShotBtn">화면 캡처</button></span></div></div>
+      <div class="tk-fx"><span id="tkFx">환율을 확인해 주세요</span><span><button type="button" id="tkFxBtn">환율 불러오기</button></span></div></div>
     <div class="tk-route"><div><small>FROM</small><b id="tkFrom">출발지</b></div><div class="tk-arrow">✈︎</div><div class="r"><small>TO</small><b id="tkTo">출장지</b></div></div>
     <div class="tk-dates"><div><small>출발</small><span id="tkStart">-</span></div><div class="r"><small>복귀</small><span id="tkEnd">-</span></div></div>
     <div class="tk-cut"></div>
@@ -352,9 +352,9 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
 
   <div class="card hidden" id="a_ovCard">
     <h2>✈️ 해외 경비</h2>
-    <p class="sub">출장여비지급규정(부장 이하): 가 등급 일비 $90·숙박 한도 $200, 나 등급 일비 $50·숙박 한도 $150. 일비·우버는 신청일 환율로 계산해요. 환율은 [환율 확인]으로 서울외국환중개 화면을 열어 USD 매매기준율을 적고, [화면 캡처]로 그 화면을 첨부해요 (사이트가 자동 수집을 금지해서 앱이 값을 직접 읽지 않아요).</p>
+    <p class="sub">출장여비지급규정(부장 이하): 가 등급 일비 $90·숙박 한도 $200, 나 등급 일비 $50·숙박 한도 $150. 일비·우버는 신청일 환율(한국수출입은행 USD 매매기준율)로 계산해요. 환율은 자동으로 불러오고, 조회 결과 이미지를 결재 문서에 첨부해요.</p>
     <div class="row"><label>국가 등급</label><div class="seg" id="a_grade_seg"><label><input type="radio" name="a_grade" value="가">가 (미국·유럽·캐나다·싱가포르)</label><label><input type="radio" name="a_grade" value="나">나 (그 외)</label></div></div>
-    <div class="row"><label>환율 (USD)</label><div class="inline"><input id="a_rate" inputmode="decimal" placeholder="서울외국환중개 USD 매매기준율 (예: 1,348.50)"><button class="btn" id="btnRate" type="button">환율 확인</button><button class="btn" id="btnRateShot" type="button">화면 캡처</button></div></div>
+    <div class="row"><label>환율 (USD)</label><div class="inline"><input id="a_rate" readonly placeholder="[환율 불러오기]를 누르면 오늘 1달러가 몇 원인지 채워져요"><button class="btn" id="btnRate" type="button">환율 불러오기</button></div></div>
     <div class="row"><label></label><div class="fare" id="a_rate_desc"></div></div>
     <div class="row"><label>항공권 (원)</label><input id="a_air" inputmode="numeric" placeholder="여행사 견적 금액"></div>
     <div class="row"><label>숙박 (원)</label><input id="a_hotel" inputmode="numeric" placeholder="여행사 견적 금액 — 비우면 규정 한도로 계산"></div>
@@ -526,6 +526,15 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
       <button class="btn" id="btnAiClear">키 삭제</button>
       <button class="btn" id="btnAiTest">연결 테스트</button>
       <button class="btn primary" id="btnAiSave">저장</button>
+    </div>
+  </div>
+  <div class="card">
+    <h2>환율 (해외출장)</h2>
+    <p class="sub">해외출장 일비·우버는 한국수출입은행이 고시한 USD 매매기준율로 계산해요. <a href="https://www.koreaexim.go.kr/ir/HPHKIR020M01?apino=2&viewtype=C" target="_blank">한국수출입은행 Open API</a>에서 인증키를 무료로 받아 넣어 주세요 (로그인 → 인증키 발급).</p>
+    <div class="row"><label>인증키</label><input id="s_fx_key" type="password" autocomplete="off"></div>
+    <div class="inline" style="justify-content:flex-end;gap:8px;margin-top:12px">
+      <span class="fare" id="s_fx_msg"></span>
+      <button class="btn primary" id="btnFxSave">저장 후 확인</button>
     </div>
   </div>
   <div class="card">

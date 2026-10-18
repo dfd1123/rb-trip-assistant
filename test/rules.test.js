@@ -344,3 +344,15 @@ test('보고서 부가세: 개인 = 공급가액만, 법인카드 과세 = 공�
   const [c] = R.capToBudget([{ amount: 66000, pay: 'card', noVat: false }], 60000);   // 한도까지 깎은 뒤 부가세 계산
   assert.deepEqual([c.amount, c.supply, c.vat], [60000, 54546, 5454]);
 });
+
+test('수출입은행 환율: 고시 없는 날은 거슬러 가고, 키 오류는 알려 줌', async () => {
+  const FX = require('../src/engine/fx');
+  const seen = [];
+  const fake = byDate => async url => { const d = /searchdate=(\d+)/.exec(url)[1]; seen.push(d); return { ok: true, json: async () => byDate[d] || [] }; };
+  const usd = [{ result: 1, cur_unit: 'JPY(100)', deal_bas_r: '950.1' }, { result: 1, cur_unit: 'USD', cur_nm: '미국 달러', deal_bas_r: '1,348.5', ttb: '1,335', tts: '1,362', bkpr: '1,348' }];
+  const r = await FX.usdRate('k', { from: new Date(2026, 9, 18), fetch: fake({ '20261016': usd }) });   // 일요일 → 금요일 고시값
+  assert.deepEqual([r.rate, r.date, seen], [1348.5, '2026-10-16', ['20261018', '20261017', '20261016']]);
+  await assert.rejects(FX.usdRate('bad', { fetch: fake({ '20261018': [{ result: 3 }] }), from: new Date(2026, 9, 18) }), /인증키/);
+  await assert.rejects(FX.usdRate(''), /인증키를 먼저/);
+  assert.match(FX.proofHtml(r), /1,348\.5/);
+});

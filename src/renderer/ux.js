@@ -96,7 +96,6 @@ function renderReady(listSel, barSel, pctSel, items, btnSel, baseLabel){
 /* ---------- 신청: 출장 티켓 + 체크리스트 ---------- */
 $$('#tkGrades button').forEach(b => b.onclick = () => { const r = $(`input[name=a_grade][value="${b.dataset.g}"]`); if(!r || r.checked) return; r.checked = true; r.dispatchEvent(new Event('change', {bubbles: true})); });
 $('#tkFxBtn').onclick = () => { if(typeof lookupRate === 'function') lookupRate(); };
-$('#tkShotBtn').onclick = () => { if(typeof captureRate === 'function') captureRate(); };
 $$('input[name=a_mode]').forEach(r => r.addEventListener('change', () => { const sg = $('#a_mode_seg'); if(sg) sg.classList.remove('need'); }));
 // 티켓의 교통편 버튼 = 아래 진짜 라디오를 누름 → 기존 처리(교통비 지우고 네이버 지도 조회)가 그대로 돈다. 법인차량이면 차량 고르게 세부 내용을 펼침
 $$('#tkModes button').forEach(b => b.onclick = () => { const r = $(`input[name=a_mode][value=${b.dataset.m}]`); if(!r || r.checked) return; r.checked = true; r.dispatchEvent(new Event('change', {bubbles: true}));
@@ -116,8 +115,7 @@ function updateApply(){
   $('#tkModes').classList.toggle('hidden', ovs); $('#tkOv').classList.toggle('hidden', !ovs);
   $$('#tkModes button').forEach(b => b.classList.toggle('on', b.dataset.m === mode)); $('#aTicket').classList.toggle('pick', !ovs && !mode);
   $$('#tkGrades button').forEach(b => b.classList.toggle('on', b.dataset.g === grade)); $('#aTicket').classList.toggle('pickg', ovs && !grade);
-  const shot = typeof rateInfo !== 'undefined' && rateInfo.screenshot;
-  $('#tkFx').textContent = rateTxt ? `USD ${rateTxt}원 · ${shot ? '캡처 ✓' : '캡처 필요'}` : '환율을 확인해 주세요';
+  $('#tkFx').textContent = rateTxt ? `USD ${rateTxt}원${typeof rateInfo !== 'undefined' && rateInfo.date ? ` · ${rateInfo.date} 고시` : ''}` : '환율을 불러와 주세요';
   $('#tkFrom').textContent = !mode ? ($('#a_from').value || (META.config && META.config.defaultOrigin) || '출발지') : mode === 'corporate' ? ($('#a_corporate_car').value || '법인차량') : ($('#a_from').value || (META.config && META.config.defaultOrigin) || '출발지');
   $('#tkTo').textContent = $('#a_destination').value || '출장지';
   $('#tkStart').textContent = fmtDay(start, $('#a_start_time').value);
@@ -132,8 +130,7 @@ function updateApply(){
   const companions = list($('#a_companions').value);
   const items = ovs ? [
     { label: '국가 등급', ok: !!grade, focus: '#tkGrades button' },
-    { label: '환율', ok: !!rateTxt, focus: '#a_rate' },
-    { label: '환율 화면 캡처', ok: !!(typeof rateInfo !== 'undefined' && rateInfo.screenshot), focus: '#tkShotBtn' },
+    { label: '환율', ok: !!(rateTxt && typeof rateInfo !== 'undefined' && rateInfo.screenshot), focus: '#tkFxBtn' },
   ] : [
     { label: '교통편', ok: !!mode, focus: '#tkModes button' },
   ];
