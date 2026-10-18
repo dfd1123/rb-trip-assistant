@@ -353,6 +353,6 @@ test('수출입은행 환율: 고시 없는 날은 거슬러 가고, 키 오류�
   const r = await FX.usdRate('k', { from: new Date(2026, 9, 18), fetch: fake({ '20261016': usd }) });   // 일요일 → 금요일 고시값
   assert.deepEqual([r.rate, r.date, seen], [1348.5, '2026-10-16', ['20261018', '20261017', '20261016']]);
   await assert.rejects(FX.usdRate('bad', { fetch: fake({ '20261018': [{ result: 3 }] }), from: new Date(2026, 9, 18) }), /인증키/);
-  await assert.rejects(FX.usdRate(''), /인증키를 먼저/);
+  await assert.rejects(FX.usdRate(''), /OPEN_API_KEY/);
   assert.match(FX.proofHtml(r), /1,348\.5/);
 });

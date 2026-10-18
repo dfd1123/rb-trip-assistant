@@ -274,7 +274,7 @@ function setRate(r){
 }
 // 환율: 한국수출입은행 Open API (설정의 인증키) → 값 + 결재 첨부용 조회 결과 이미지
 async function lookupRate(){
-  if(!META.config.fxKeySet){ alertErr('설정 › 환율에서 한국수출입은행 인증키를 먼저 넣어 주세요.'); return; }
+  if(!META.config.fxKeySet){ alertErr('환율 API 키가 들어 있지 않은 버전이에요. 관리자에게 알려 주세요.'); return; }
   $('#a_rate_desc').textContent = '환율 불러오는 중…';
   try { setRate(await rpc('/api/fx/rate')); recalcOverseas(); }
   catch(e){ $('#a_rate_desc').textContent = ''; alertErr(e.message); }
@@ -785,7 +785,6 @@ function loadAiSettings(){
 
   const r = c.rates; $('#s_lodging').value = r.lodgingPerNight; $('#s_breakfast').value = r.breakfast; $('#s_lunch').value = r.lunch; $('#s_dinner').value = r.dinner; $('#s_fare_margin').value = r.fareMargin ?? 20000;
   $('#s_rank').value = c.rank || 'staff';
-  $('#s_fx_key').value = ''; $('#s_fx_key').placeholder = c.fxKeySet ? '저장됨 (바꾸려면 새 키 입력)' : '인증키 붙여넣기';
 }
 $('#s_ai').onchange = () => { const k = $('#s_ai').value; $('#s_model').placeholder = META.providers[k] ? `기본: ${META.providers[k].model}` : '비우면 기본 모델'; };
 $('#btnAiSave').onclick = async () => {
@@ -801,14 +800,6 @@ $('#btnAiTest').onclick = async () => {
 $('#btnRateSave').onclick = async () => {
   const rates = {...META.config.rates, lodgingPerNight: num($('#s_lodging').value), breakfast: num($('#s_breakfast').value), lunch: num($('#s_lunch').value), dinner: num($('#s_dinner').value), fareMargin: num($('#s_fare_margin').value)};
   await rpc('/api/config', {rates, rank: $('#s_rank').value}); META = await rpc('/api/meta'); $('#s_rate_msg').textContent = '저장됨';
-};
-
-$('#btnFxSave').onclick = async () => {
-  const k = $('#s_fx_key').value.trim();
-  if(k){ await rpc('/api/config', {fxKey: k}); META = await rpc('/api/meta'); loadAiSettings(); }
-  if(!META.config.fxKeySet){ $('#s_fx_msg').textContent = '인증키를 넣어 주세요'; return; }
-  $('#s_fx_msg').textContent = '확인 중…';
-  try { const r = await rpc('/api/fx/rate'); $('#s_fx_msg').textContent = `연결됨: USD ${r.rate.toLocaleString('en-US')}원 (${r.date} 고시)`; } catch(e){ $('#s_fx_msg').textContent = e.message; }
 };
 
 /* ---------- 작업 패널 ---------- */

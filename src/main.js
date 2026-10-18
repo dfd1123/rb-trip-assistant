@@ -258,11 +258,9 @@ function aiSettings(cfg) {
 function encryptKey(key) {
   return (safeStorage.isEncryptionAvailable() ? safeStorage.encryptString(key) : Buffer.from(key, 'utf8')).toString('base64');
 }
-function fxKey(cfg) {
-  if (!cfg.fxKeyEnc) return '';
-  try { const buf = Buffer.from(cfg.fxKeyEnc, 'base64'); return safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(buf) : buf.toString('utf8'); } catch (e) { return ''; }
-}
-const publicConfig = c => { const { aiKeyEnc, gwPwEnc, fxKeyEnc, ...rest } = c; return { ...rest, fxKeySet: Boolean(fxKeyEnc), aiKeySet: Boolean(aiKeyEnc) || Boolean(aiSettings(c)), aiBuiltin: !aiKeyEnc && Boolean(aiSettings(c)), gwSaved: Boolean(c.gwId && gwPwEnc) }; };
+// 한국수출입은행 환율 키: 개발 중엔 .env 의 OPEN_API_KEY, 배포본엔 빌드 때 builtin-key.json 에 내장 (팀 공용)
+const fxKey = () => (process.env.OPEN_API_KEY || (() => { try { return require('./engine/builtin-key.json').fxKey; } catch (e) { return ''; } })() || '').trim();
+const publicConfig = c => { const { aiKeyEnc, gwPwEnc, ...rest } = c; return { ...rest, fxKeySet: Boolean(fxKey()), aiKeySet: Boolean(aiKeyEnc) || Boolean(aiSettings(c)), aiBuiltin: !aiKeyEnc && Boolean(aiSettings(c)), gwSaved: Boolean(c.gwId && gwPwEnc) }; };
 
 /** 한 줄 메모 → 신청서. AI 가 있으면 문장/추론은 AI, 금액·출장지 이름은 항상 규칙. */
 async function quick(memo) {
@@ -363,7 +361,6 @@ async function route(p, body = {}) {
       const patch = { ...body };
       if ('aiKey' in patch) { const k = String(patch.aiKey || '').trim(); delete patch.aiKey; if (k) patch.aiKeyEnc = encryptKey(k); }
       if (patch.clearAiKey) { patch.aiKeyEnc = ''; delete patch.clearAiKey; }
-      if ('fxKey' in patch) { const k = String(patch.fxKey || '').trim(); delete patch.fxKey; patch.fxKeyEnc = k ? encryptKey(k) : ''; }
       return publicConfig(store.saveConfig(patch));
     }
     case '/api/ai/test': {
@@ -438,7 +435,7 @@ async function route(p, body = {}) {
     }
     case '/api/fx/rate': {   // 한국수출입은행 USD 매매기준율 + 결재 첨부용 조회 결과 이미지
       const FX = require('./engine/fx');
-      const r = await FX.usdRate(fxKey(cfg), { fetch: net.fetch });
+      const r = await FX.usdRate(fxKey(), { fetch: net.fetch });
       const shot = await FX.saveProof(r, path.join(store.tripsDir, '_fx', `환율_USD_${r.date}_${Date.now()}.png`));
       return { rate: r.rate, date: r.date, screenshot: shot };
     }

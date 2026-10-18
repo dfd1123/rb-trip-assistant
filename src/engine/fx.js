@@ -1,18 +1,17 @@
 'use strict';
-// 해외출장 환율: 한국수출입은행 환율 Open API (정부 공개 API, 개인 인증키, 하루 1,000회).
+// 해외출장 환율: 한국수출입은행 환율 Open API (정부 공개 API, 팀 공용 인증키 OPEN_API_KEY, 하루 1,000회).
 // 영업일 11시쯤 고시라 주말·공휴일·고시 전엔 빈 결과 → 하루씩 거슬러 가장 최근 고시값(USD 매매기준율)을 쓴다.
 
 const fs = require('fs');
 const path = require('path');
 
 const API = 'https://oapi.koreaexim.go.kr/site/program/financial/exchangeJSON';
-const KEY_URL = 'https://www.koreaexim.go.kr/ir/HPHKIR020M01?apino=2&viewtype=C';
-const ERR = { 2: '수출입은행 API 데이터 코드 오류', 3: '수출입은행 인증키가 올바르지 않아요. 설정 › 환율에서 키를 확인해 주세요.', 4: '수출입은행 API 오늘 조회 한도(1,000회)를 넘었어요.' };
+const ERR = { 2: '수출입은행 API 데이터 코드 오류', 3: '수출입은행 인증키가 올바르지 않거나 만료됐어요 (발급 2년이 지나면 파기돼요). 관리자에게 알려 주세요 (.env OPEN_API_KEY 를 새로 발급받은 키로).', 4: '수출입은행 API 오늘 조회 한도(1,000회)를 넘었어요.' };
 const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
 /** 오늘(from)부터 거슬러 가장 최근 고시된 USD 매매기준율 */
 async function usdRate(key, { from = new Date(), fetch: f = fetch, days = 10 } = {}) {
-  if (!key) throw new Error('설정 › 환율에서 한국수출입은행 인증키를 먼저 넣어 주세요.');
+  if (!key) throw new Error('환율 API 키가 들어 있지 않은 버전이에요. 관리자에게 알려 주세요 (.env OPEN_API_KEY).');
   for (let i = 0; i < days; i++) {
     const d = new Date(from); d.setDate(d.getDate() - i);
     const res = await f(`${API}?authkey=${encodeURIComponent(key)}&searchdate=${ymd(d).replace(/-/g, '')}&data=AP01`);
@@ -48,4 +47,4 @@ async function saveProof(r, shotPath) {
   } finally { w.destroy(); }
 }
 
-module.exports = { KEY_URL, usdRate, proofHtml, saveProof };
+module.exports = { usdRate, proofHtml, saveProof };

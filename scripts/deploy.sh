@@ -10,6 +10,7 @@
 #   - 키체인에 회사 Developer ID Application 인증서 (맥 서명)
 #   - APPLE_ID · APPLE_APP_SPECIFIC_PASSWORD (맥 공증) — 환경변수 또는 ~/.zshrc 의 export 줄 (web-rainbow-ui 배포와 같은 값)
 #   - .env 의 GEMINI_API_KEY (팀 공용 AI 키, 앱에 내장)
+#   - .env 의 OPEN_API_KEY (한국수출입은행 환율 키, 앱에 내장)
 set -e
 
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -33,6 +34,7 @@ for v in APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
   fi
 done
 [ -n "$GEMINI_API_KEY" ] || { echo "Error: .env 에 GEMINI_API_KEY 가 없습니다 (팀 공용 AI 키, 앱에 내장)."; exit 1; }
+[ -n "$OPEN_API_KEY" ] || { echo "Error: .env 에 OPEN_API_KEY 가 없습니다 (한국수출입은행 환율 키, 앱에 내장)."; exit 1; }
 docker info >/dev/null 2>&1 || { echo "Error: Docker 가 실행 중이 아닙니다 (리눅스 deb·rpm 빌드). Docker 를 켜고 다시 실행하세요."; exit 1; }
 if [ $IS_MAC = 1 ]; then
   if [ -z "$APPLE_ID" ] || [ -z "$APPLE_APP_SPECIFIC_PASSWORD" ]; then
@@ -70,7 +72,7 @@ node -e "const f='package.json',j=JSON.parse(require('fs').readFileSync(f,'utf8'
 rm -rf dist
 trap 'rm -f "$APP_DIR/src/engine/builtin-key.json"' EXIT   # 중간에 실패해도 키 파일은 남기지 않음
 node scripts/write-builtin-key.js
-[ -s src/engine/builtin-key.json ] || { echo "Error: 팀 공용 AI 키를 앱에 넣지 못했습니다."; exit 1; }
+[ -s src/engine/builtin-key.json ] || { echo "Error: 팀 공용 키(AI·환율)를 앱에 넣지 못했습니다."; exit 1; }
 if [ $IS_MAC = 1 ]; then
   echo "▶ macOS (arm64·x64, 서명+공증)"
   npx electron-builder --mac --arm64 --x64 --publish never
