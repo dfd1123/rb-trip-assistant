@@ -310,7 +310,7 @@ let recalcTimer = null;
 ['#a_start','#a_end','#a_start_time','#a_end_time'].forEach(id => ['input', 'change'].forEach(ev => $(id).addEventListener(ev, () => { clearTimeout(recalcTimer); recalcTimer = setTimeout(recalcExpenses, 300); })));
 $('#btnRecalc').onclick = recalcExpenses;
 function markNeed(missing){
-  const map = {'교통편': ['#a_mode_seg'], '국가 등급': ['#a_grade_seg'], '환율': ['#btnRate'], '날짜': ['#a_start','#a_end'], '출발 시각': ['#a_start_time'], '복귀 시각': ['#a_end_time'], '출장지': ['#a_destination'], '사유': ['#a_reason'], '교통비': ['#a_fare'], '과제명': ['#a_project'], '동행목적': ['#a_companion_purpose']};
+  const map = {'교통편': ['#a_mode_seg'], '국가 등급': ['#a_grade_seg'], '환율': ['#btnRate'], '항공권': ['#a_air'], '날짜': ['#a_start','#a_end'], '출발 시각': ['#a_start_time'], '복귀 시각': ['#a_end_time'], '출장지': ['#a_destination'], '사유': ['#a_reason'], '교통비': ['#a_fare'], '과제명': ['#a_project'], '동행목적': ['#a_companion_purpose']};
   $$('.need').forEach(el => el.classList.remove('need'));
   missing.forEach(m => (map[m]||[]).forEach(id => $(id).classList.add('need')));
 }
@@ -372,7 +372,7 @@ $('#btnApply').onclick = async () => {
   if(!data.dates.start || !$('#a_end').value) need.push('날짜');
   if(!data.dates.start_time) need.push('출발 시각');
   if(!data.dates.end_time) need.push('복귀 시각');
-  if(data.scope === '해외'){ if(!data.grade) need.push('국가 등급'); if(!(data.rate > 0) || !data.rate_shot) need.push('환율'); }   // 조회 결과 이미지 첨부 필수 (사전품의 작성 기준)
+  if(data.scope === '해외'){ if(!data.grade) need.push('국가 등급'); if(!(data.rate > 0) || !data.rate_shot) need.push('환율'); if(!data.expenses.some(e => e.item === 'airfare')) need.push('항공권'); }   // 조회 결과 이미지 첨부 필수 (사전품의 작성 기준)
   else if(!data.transport.mode) need.push('교통편');
   else if(data.transport.mode !== 'corporate' && data.transport.total === undefined) need.push('교통비');   // 0원은 허용 (비운 것만 막음)
   if(data.category === '연구과제' && !data.project) need.push('과제명');

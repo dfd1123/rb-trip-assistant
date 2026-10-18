@@ -131,6 +131,7 @@ function updateApply(){
   const items = ovs ? [
     { label: '국가 등급', ok: !!grade, focus: '#tkGrades button' },
     { label: '환율', ok: !!(rateTxt && typeof rateInfo !== 'undefined' && rateInfo.screenshot), focus: '#tkFxBtn' },
+    { label: '항공권', ok: exps.some(e => e.item === 'airfare'), focus: '#a_air' },
   ] : [
     { label: '교통편', ok: !!mode, focus: '#tkModes button' },
   ];
