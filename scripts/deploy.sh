@@ -100,7 +100,7 @@ printf '  %s\n' "${FILES[@]}"
 
 # ---------- 버전 커밋·태그 → Release(설치 파일 + version.json) ----------
 git add package.json
-git commit -m "chore: v${VERSION} 배포"
+if git diff --cached --quiet; then echo "  ⓘ package.json 이 이미 v${VERSION} 이라 버전 커밋은 없이 태그만 달아요."; else git commit -m "chore: v${VERSION} 배포"; fi
 git tag "$TAG"
 git push origin main "$TAG"
 
