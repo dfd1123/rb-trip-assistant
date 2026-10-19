@@ -550,7 +550,7 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
     </ul>
     <div class="rates">
       <div><label>직급</label><select id="s_rank"><option value="staff">부장 이하</option><option value="exec">임원</option></select></div>
-      <div><label>내 차 연료 (자차)</label><select id="s_car_fuel" title="자차 유류대를 네이버 지도에서 이 연료·연비 8km/L 로 조회해요"><option value="gasoline">휘발유</option><option value="diesel">경유</option><option value="lpg">LPG</option><option value="electric">전기</option></select></div>
+      <div><label>내 차 연료 (자차)</label><select id="s_car_fuel" title="자차 유류대를 네이버 지도에서 이 연료로 조회해요 (휘발유·경유·LPG 는 연비 8km/L, 전기는 네이버 기본 전비)"><option value="gasoline">휘발유</option><option value="diesel">경유</option><option value="lpg">LPG</option><option value="electric">전기</option></select></div>
       <div><label>내 차 차종</label><select id="s_car_type"><option value="6">1종(경차) · 경차</option><option value="1">1종 · 승용차, 소형승합차, 소형화물차</option><option value="2">2종 · 중형승합차, 중형화물차</option><option value="3">3종 · 대형승합차, 2축 대형화물차</option><option value="4">4종 · 3축 대형화물차</option><option value="5">5종 · 4축이상 특수화물차</option><option value="9">이륜차</option></select></div>
       <div><label>숙박 1박</label><input id="s_lodging" inputmode="numeric"></div>
       <div><label>교통비 여유분</label><input id="s_fare_margin" inputmode="numeric" title="자차·대중교통 신청 때 네이버 지도 왕복 금액에 더해요"></div>
@@ -576,7 +576,7 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
 </div>
 
 <div id="carModal"><div class="box" style="width:520px"><div class="cf-head"><b>🚗 자차가 있나요?</b></div>
-  <div class="cf-body"><p class="sub" style="margin:0 0 12px">자차로 출장 가면 네이버 지도에서 내 차 기준(연비 8km/L)으로 유류대를 조회해 증빙으로 써요. 나중에 설정에서 바꿀 수 있어요.</p>
+  <div class="cf-body"><p class="sub" style="margin:0 0 12px">자차로 출장 가면 네이버 지도에서 내 차 기준(휘발유·경유·LPG 는 연비 8km/L, 전기는 네이버 기본 전비)으로 유류대를 조회해 증빙으로 써요. 나중에 설정에서 바꿀 수 있어요.</p>
     <div id="carPick" class="hidden"><div class="row"><label>연료</label><select id="car_fuel"><option value="gasoline">휘발유</option><option value="diesel">경유</option><option value="lpg">LPG</option><option value="electric">전기</option></select></div>
     <div class="row"><label>차종</label><select id="car_type"><option value="6">1종(경차) · 경차</option><option value="1">1종 · 승용차, 소형승합차, 소형화물차</option><option value="2">2종 · 중형승합차, 중형화물차</option><option value="3">3종 · 대형승합차, 2축 대형화물차</option><option value="4">4종 · 3축 대형화물차</option><option value="5">5종 · 4축이상 특수화물차</option><option value="9">이륜차</option></select></div></div></div>
   <div class="cf-foot" style="justify-content:flex-end"><button class="btn" type="button" id="carNo">없어요</button><button class="btn primary" type="button" id="carYes">있어요</button></div></div></div>

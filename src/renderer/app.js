@@ -644,7 +644,8 @@ function fillReport(d){
   reportTransport = d.transport || null;
   const tm = reportTransport && reportTransport.mode;
   $('#btnFuel').classList.toggle('hidden', !(tm === 'car' || !tm));   // 교통편을 모르는 출장(그룹웨어에서 가져옴)도 자차일 수 있으니 보여 줌
-  $('#r_fuel_hint').textContent = tm === 'car' ? ' 자차 유류대 증빙은 [🚗 유류대 조회]로 네이버 지도(내 차 연료·연비 8km/L) 캡처를 넣어요.' : tm === 'corporate' ? ' 법인차량은 주유소 영수증을 증빙으로 넣어 주세요.' : tm === 'transit' ? ' 대중교통은 승차권·영수증을 증빙으로 넣어 주세요.' : ' 신청서에서 교통편을 못 읽었어요. 자차였으면 [🚗 유류대 조회], 대중교통이면 승차권 영수증을 넣어 주세요.';
+  const carWord = (META.config.carFuel === 'electric') ? '내 차 기준 (전기차, 네이버 기본 전비)' : '내 차 연료·연비 8km/L';
+  $('#r_fuel_hint').textContent = tm === 'car' ? ` 자차 유류대는 [🚗 유류대 조회]로 네이버 지도(${carWord}) 캡처를 증빙으로 넣어요. 통행료·하이패스는 영수증을 [+ 경비 추가]로 따로 올리세요.` : tm === 'corporate' ? ' 법인차량은 주유소 영수증을 증빙으로 넣어 주세요.' : tm === 'transit' ? ' 대중교통은 승차권·영수증을 증빙으로 넣어 주세요.' : ' 신청서에서 교통편을 못 읽었어요. 자차였으면 [🚗 유류대 조회], 대중교통이면 승차권 영수증을 넣어 주세요.';
   $('#r_attach').textContent = reportAttachments.length ? `첨부: ${reportAttachments.map(p=>p.split(/[\\/]/).pop()).join(', ')}` : '';
   refreshReport();
 }
@@ -660,7 +661,7 @@ function lookupFuel(){
     const tb = $('#r_exp tbody');
     const proofName = tr => (JSON.parse(tr.dataset.proofs || '[]')[0] || '').split(/[\\/]/).pop();
     [...tb.querySelectorAll('tr')].filter(tr => tr.querySelector('.item').value === 'domestic_transport' && /^(교통비_car.*)?$/.test(proofName(tr))).forEach(tr => tr.remove());   // 증빙 없는 교통비 줄·이전 지도 캡처 줄은 새 값으로 (영수증 붙은 줄은 그대로)
-    expRow(tb, { item: 'domestic_transport', amount: r.total, memo: `자차 왕복 유류대·통행료 (${r.basis || '휘발유 8km/L'}, 네이버 지도)`, proofs: r.screenshot ? [r.screenshot] : [] }, refreshReport);
+    expRow(tb, { item: 'domestic_transport', amount: (Number(r.fuel) || 0) * 2, memo: `출장 유류비 (왕복, ${r.basis || '연비 8km/L'} 네이버 지도 기준)`, proofs: r.screenshot ? [r.screenshot] : [] }, refreshReport);   // 유류대만. 통행료·하이패스는 영수증으로
     refreshReport();
   });
 }

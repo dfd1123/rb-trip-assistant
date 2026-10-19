@@ -274,6 +274,11 @@ function planPayees(budgets, lines) {
 }
 
 /** 신청 교통비 = 네이버 지도 왕복 + 여유분(자차·대중교통, 기본 2만원). 보고서 정산은 실제 금액으로 */
+/** 보고서(정산)의 자차 교통비 줄: 네이버 조회값 중 유류대만 왕복. 통행료·하이패스는 영수증으로 따로 올린다 */
+function fuelOnlyExpense(fare) {
+  const fuel = Number(fare.fuel) || 0;
+  return { item: 'domestic_transport', amount: roundTrip(fuel), memo: `출장 유류비 (왕복, ${fare.basis || '연비 8km/L'} 네이버 지도 기준)`, proofs: fare.screenshot ? [fare.screenshot] : [] };
+}
 function transportExpense(a, total, margin = 0) {
   const extra = (a.transport.mode === 'car' || a.transport.mode === 'transit') ? Math.max(0, Number(margin) || 0) : 0;
   const base = a.transport.mode === 'car' ? '출장 유류비 및 통행료 (왕복' : '출장 대중교통비 (왕복';
@@ -347,7 +352,7 @@ function extractYaml(text) {
 module.exports = {
   APPLY_FORM, REPORT_FORM, BUDGET_ITEMS, TRANSPORT_MODES, CORPORATE_CARS, APPLY_CATEGORIES, REPORT_CATEGORIES,
   InputError, ro, applyTitle, reportTitle, budgetMemo, parseCarText, parseTransitText, roundTrip,
-  parseApply, parseReport, parseExpenses, transportExpense, applyPrompt, reportPrompt, extractYaml,
+  parseApply, parseReport, parseExpenses, transportExpense, fuelOnlyExpense, applyPrompt, reportPrompt, extractYaml,
   OVERSEAS_GRADES, OVERSEAS_RATES, OVERSEAS_RATES_EXEC, overseasGuess, overseasExpenses,
   FUNDS, PAY_MODES, fundPlanDate, supplyAmount, vatAmount, noVatOf, capToBudget, planPayees,
 };

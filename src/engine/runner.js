@@ -86,9 +86,10 @@ function reportDraft(store, cfg, id) {
     purpose: a.purpose, report: '',
     schedule: days.map(date => ({ date, place: a.destination, detail: '' })),
     transport: a.transport ? { mode: a.transport.mode, from: a.transport.from || '', to: a.transport.to || '', place: a.transport.place || (r.fare && r.fare.place && r.fare.place.lng ? r.fare.place : null) } : null,
-    // 교통비는 신청 때 더한 여유분 없이 실제(네이버 지도) 금액으로, 증빙은 지도 캡처. 자차는 휘발유 8km/L 로 조회한 것만 증빙이 됨
+    // 교통비는 신청 때 더한 여유분 없이 실제(네이버 지도) 금액으로, 증빙은 지도 캡처. 자차는 내 차 기준(8km/L)으로 조회한 것만 증빙이 되고,
+    // 정산엔 유류대만 넣는다 (통행료·하이패스는 영수증으로 따로 — 지도 추정값은 증빙이 안 됨)
     expenses: (r.expenses || a.expenses).map(({ item, amount, memo }) => item === 'domestic_transport' && r.fare && r.fare.total && (a.transport.mode !== 'car' || r.fare.basis === carBasis({ type: cfg.carType, fuel: cfg.carFuel }))
-      ? { item, amount: r.fare.total, memo: memo.replace(/ \+ 여유 [\d,]+원/, ''), proofs: r.fare.screenshot ? [r.fare.screenshot] : [] }
+      ? (a.transport.mode === 'car' ? R.fuelOnlyExpense(r.fare) : { item, amount: r.fare.total, memo: memo.replace(/ \+ 여유 [\d,]+원/, ''), proofs: r.fare.screenshot ? [r.fare.screenshot] : [] })
       : { item, amount, memo, proofs: [] }),
     attachments: [],
   };

@@ -384,3 +384,9 @@ test('네이버 길찾기 주소: 도착지 좌표를 주소에 넣고 출발지
   assert.equal(directionsUrl('transit', null, d).split('/').pop(), 'transit');
   assert.equal(directionsUrl('car', null, { name: 'x', lng: 0, lat: 0 }), 'https://map.naver.com/p/directions/-/-/-/car');
 });
+
+test('보고서 자차 교통비: 유류대만 왕복, 통행료는 빠짐', () => {
+  const e = R.fuelOnlyExpense({ fuel: 50166, toll: 9800, total: 119932, basis: '1종 휘발유 8km/L', screenshot: '/x/교통비_car_1.png' });
+  assert.deepEqual(e, { item: 'domestic_transport', amount: 100332, memo: '출장 유류비 (왕복, 1종 휘발유 8km/L 네이버 지도 기준)', proofs: ['/x/교통비_car_1.png'] });
+  assert.equal(R.fuelOnlyExpense({ total: 1000 }).amount, 0);
+});
