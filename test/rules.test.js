@@ -390,3 +390,49 @@ test('보고서 자차 교통비: 유류대만 왕복, 통행료는 빠짐', () 
   assert.deepEqual(e, { item: 'domestic_transport', amount: 100332, memo: '출장 유류비 (왕복, 1종 휘발유 8km/L 네이버 지도 기준)', proofs: ['/x/교통비_car_1.png'] });
   assert.equal(R.fuelOnlyExpense({ total: 1000 }).amount, 0);
 });
+
+test('구매의뢰서 입력 검증: 납기 필수, 합계는 VAT 포함이면 1.1배, 제목 자동', () => {
+  const base = { vendor: { name: '다성 오토메이션' }, purpose: '생산 운영', project: 'KAI', items: [{ name: '모션 컨트롤러', part_no: 'Ez-ML', qty: 2, unit_price: 105000, due: '2026-04-22' }], vat_included: true, reason: '사유', file: '/x/po.pdf' };
+  const p = R.parsePurchase(base);
+  assert.deepEqual([p.items[0].amount, p.supply, p.total, p.urgency, p.substitutable, p.title], [210000, 210000, 231000, '일반', false, '[구매의뢰서 - KAI] 모션 컨트롤러 구매 요청의 건']);
+  assert.equal(R.parsePurchase({ ...base, vat_included: false, total: '' }).total, 210000);
+  assert.equal(R.parsePurchase({ ...base, items: [{ ...base.items[0], amount: 0 }] }).items[0].amount, 0);   // 0 도 그대로
+  assert.equal(R.parsePurchase({ ...base, items: [{ ...base.items[0], due: '' }] }).items[0].due, '');   // 납기는 선택
+  assert.throws(() => R.parsePurchase({ ...base, project: '기타' }), /세부 프로젝트명/);
+  assert.throws(() => R.parsePurchase({ ...base, project: '정부과제' }), /세부 프로젝트명/);
+  assert.equal(R.parsePurchase({ ...base, project: '정부과제', project_etc: '핵심부품 국산화' }).title, '[구매의뢰서 - 핵심부품 국산화] 모션 컨트롤러 구매 요청의 건');
+  assert.equal(R.parsePurchase({ ...base, project_etc: 'KAI 정비 3차' }).title, '[구매의뢰서 - KAI 정비 3차] 모션 컨트롤러 구매 요청의 건');
+  assert.throws(() => R.parsePurchase({ ...base, items: [] }), /비어/);
+  assert.equal(R.purchaseTitle('', '무선 LAN 안테나'), '[구매의뢰서] 무선 LAN 안테나 구매 요청의 건');
+});
+
+test('워드·엑셀 발주서 글자 뽑기', () => {
+  const { officeText } = require('../src/engine/office');
+  const path = require('path');
+  assert.equal(officeText(path.join(__dirname, 'fixtures', 'po.docx')), '구매 발주서\n품명\t수량\n모션 컨트롤러 & 케이블\t1');
+  assert.equal(officeText(path.join(__dirname, 'fixtures', 'po.xlsx')), '품명\t단가\n모션 컨트롤러\t105000\n합계\t115500');
+  assert.throws(() => officeText('x.xls'), /docx/);
+});
+
+test('구매의뢰서: 제품 페이지 링크면 사유 칸에 링크·캡처·글 (html), 아니면 글만', () => {
+  const { purchasePayload } = require('../src/engine/editorFill');
+  const base = { vendor: { name: 'v' }, purpose: '생산 운영', project: 'KAI', items: [{ name: 'a', qty: 1, unit_price: 100, due: '2026-05-01' }], reason: '사유 <한 줄>\n둘째 줄', file: '/x/po.pdf' };
+  assert.throws(() => R.parsePurchase({ ...base, link: { url: 'https://shop.example/x' } }), /둘 중 하나/);
+  assert.throws(() => R.parsePurchase({ ...base, file: '' }), /발주서 파일이나 제품 페이지/);
+  const p1 = R.parsePurchase({ ...base, file: '', link: { url: 'https://shop.example/x', title: '안테나 | 알에프마트', shot: '/t/s.png' } });
+  assert.deepEqual(p1.link, { url: 'https://shop.example/x', title: '안테나 | 알에프마트', shot: '/t/s.png' });
+  assert.deepEqual([p1.vat_included, p1.price_vat, p1.total], [true, true, 100]);   // 온라인 판매가는 부가세 포함 그대로
+  const f = purchasePayload(p1, { shotDataUrl: 'data:image/png;base64,AAA' }).fields.find(x => x.label === '구매 상세 사유');
+  assert.ok(f.html.includes('href="https://shop.example/x"') && f.html.includes('src="data:image/png;base64,AAA"') && f.html.includes('사유 &lt;한 줄&gt;<br />둘째 줄'));
+  assert.throws(() => R.parsePurchase({ ...base, file: '', link: { url: 'javascript:alert(1)' } }), /발주서 파일이나 제품 페이지/);
+  assert.equal(purchasePayload(R.parsePurchase(base)).fields.find(x => x.label === '구매 상세 사유').text, base.reason);
+  assert.deepEqual(R.PURCHASE_RECIPIENTS, ['구매팀', '경영지원부(전자결재용)', '연구지원팀']);
+});
+
+test('구매의뢰서 거래처 담당자 칸: 거래처명 / 담당자명, 하나만 있으면 그것만', () => {
+  const { purchasePayload } = require('../src/engine/editorFill');
+  const mk = v => purchasePayload(R.parsePurchase({ vendor: v, purpose: '생산 운영', project: 'KAI', items: [{ name: 'a', qty: 1, unit_price: 1 }], reason: 'r', file: '/x.pdf' })).fields.find(f => f.label === '담당자').text;
+  assert.equal(mk({ name: '㈜은성일렉콤', contact: '이현규' }), '㈜은성일렉콤 / 이현규');
+  assert.equal(mk({ name: '알에프씨엠', contact: '' }), '알에프씨엠');
+  assert.equal(mk({ name: '알에프씨엠', contact: '알에프씨엠' }), '알에프씨엠');
+});

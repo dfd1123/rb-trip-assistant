@@ -130,6 +130,28 @@ app.whenReady().then(async () => {
       console.log('E2E 정산 보고서 본문 OK');
     }
 
+    // ---- 구매의뢰서 본문 채우기 (실제 양식 HTML) ----
+    {
+      const { FILL_JS, purchasePayload } = require('../src/engine/editorFill');
+      const w = new BrowserWindow({ show: false });
+      await w.loadFile(path.join(__dirname, 'fixtures', 'purchase_body.html'));
+      const pu = R.parsePurchase({ vendor: { name: '다성 오토메이션', contact: '서성문', phone: '', email: 'dsa01@dasungauto.com' }, purpose: '기타', purpose_etc: '시험 장비', project: '기타', project_etc: '디스플레이 2차', urgency: '긴급', substitutable: false,
+        items: Array.from({ length: 6 }, (_, i) => ({ name: `모션 컨트롤러 ${i + 1}`, part_no: 'Ez-ML-PE-RSA', unit: 'EA', qty: 1, unit_price: 105000, amount: 105000, due: i < 5 ? '2026-04-22' : '2026-04-30', note: i === 0 ? '옵션 1.0M' : '' })),   // 6줄 > 양식 5줄 → 합계 행 앞에 줄 추가
+        vat_included: true, total: 693000, reason: '양팔로봇 시험 장비 제어용으로 구매합니다.', memo: '', file: '/x/발주서.pdf' });
+      const res = await w.webContents.executeJavaScript(`(${FILL_JS})(${JSON.stringify(purchasePayload(pu))})`);
+      assert.deepEqual(res.missing, [], '못 채운 칸: ' + res.missing.join(', '));
+      const html = await w.webContents.executeJavaScript('document.body.innerHTML');
+      for (const needle of ['다성 오토메이션', '모션 컨트롤러 6 (Ez-ML-PE-RSA)', '>6<', '납기 2026-04-22 / 옵션 1.0M', '납기 2026-04-30', '105,000', '693,000원', '시험 장비', '양팔로봇 시험 장비 제어용', '다성 오토메이션 / 서성문', 'dsa01@dasungauto.com', '모션 컨트롤러 6: 2026-04-30', 'value="디스플레이 2차"'])
+        assert.ok(html.includes(needle), `본문에 '${needle}' 없음`);
+      assert.equal((html.match(/checked="checked"/g) || []).length, 5, 'VAT포함·구매목적 기타·프로젝트 기타·긴급·대체 불가 = 5개 체크');
+      assert.ok(!html.includes('__________________'), '구매목적 기타 밑줄이 글자로 바뀜');
+      const sumIdx = html.indexOf('합계 금액'), lastRowIdx = html.indexOf('모션 컨트롤러 6');
+      assert.ok(lastRowIdx < sumIdx, '추가한 줄이 합계 행 앞에');
+      assert.equal(pu.title, '[구매의뢰서 - 디스플레이 2차] 모션 컨트롤러 1 외 5건 구매 요청의 건');
+      w.destroy();
+      console.log('E2E 구매의뢰서 본문 OK');
+    }
+
     // 올린 품의 목록·삭제: 결재 진행 중(순번 44)은 잠김, 나머지만 삭제
     const { rows } = await runner.runListBudget(env);
     assert.equal(rows.find(r => r.seq === '44').locked, true);

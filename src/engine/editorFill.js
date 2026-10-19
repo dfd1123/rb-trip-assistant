@@ -83,6 +83,16 @@ const fillForm = (payload) => {
       if (!done) result.missing.push(`${[].concat(f.label)[0]}:${f.replace[0]}`);
     }
     if (f.text !== undefined) { setText(td, f.text); result.filled.push([].concat(f.label)[0]); }
+    if (f.html !== undefined) { td.innerHTML = f.html; result.filled.push([].concat(f.label)[0]); }   // 링크·이미지가 든 칸
+    if (f.checkLabel) {   // 체크박스가 라벨 칸 안에 있는 경우 (예: "합계 금액( ☐VAT포함 ☐VAT미포함)")
+      const found = check(label, f.checkLabel);
+      if (found.length < [].concat(f.checkLabel).length) result.missing.push(`${[].concat(f.label)[0]}:${f.checkLabel}`);
+    }
+    if (f.input !== undefined) {   // 값 칸 안의 글자 입력칸 (예: 프로젝트명 '기타' 옆)
+      const inp = td.querySelector('input[type=text]');
+      if (inp) { inp.value = f.input; inp.setAttribute('value', f.input); }
+      else result.missing.push(`${[].concat(f.label)[0]}:input`);
+    }
   }
 
   if (payload.table) {
@@ -95,11 +105,14 @@ const fillForm = (payload) => {
       const tbody = headRow.parentElement;
       let row = headRow.nextElementSibling;
       t.rows.forEach((vals, i) => {
-        if (!row) {
-          const last = tbody.lastElementChild;
-          row = last.cloneNode(true);
-          Array.from(row.querySelectorAll('td')).forEach(td => setText(td, ''));
-          tbody.appendChild(row);
+        // 빈 행이 모자라면: 합계 행(colspan) 앞에 바로 위 행을 복제해 끼움, 합계 행이 없으면 맨 뒤에
+        const isSum = r => r && Array.from(r.querySelectorAll('td')).some(td => td.colSpan > 1);
+        if (!row || isSum(row)) {
+          const src = row ? row.previousElementSibling : tbody.lastElementChild;
+          const clone = src.cloneNode(true);
+          Array.from(clone.querySelectorAll('td')).forEach(td => setText(td, ''));
+          if (row) tbody.insertBefore(clone, row); else tbody.appendChild(clone);
+          row = clone;
         }
         const tds = Array.from(row.querySelectorAll('td'));
         vals.forEach((v, j) => { if (tds[j]) setText(tds[j], v); });
@@ -157,4 +170,30 @@ function reportPayload(r) {
   return payload;
 }
 
-module.exports = { FILL_JS, FIND_JS, applyPayload, reportPayload };
+/** 구매의뢰서 본문 (실제 양식 HTML: test/fixtures/purchase_body.html) */
+function purchasePayload(p, { shotDataUrl = '' } = {}) {
+  const won = n => Math.round(Number(n) || 0).toLocaleString('ko-KR');
+  const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const dues = [...new Set(p.items.map(i => i.due).filter(Boolean))];
+  // 제품 페이지로 올리는 경우: 사유 칸에 링크 + 페이지 캡처 + 글 (캡처 파일은 첨부로도)
+  const reasonField = p.link
+    ? { label: '구매 상세 사유', html: `<p><span style="font-size:10pt;"><a href="${esc(p.link.url)}" target="_blank">${esc(p.link.title || p.link.url)}</a></span></p>${shotDataUrl ? `<p style="margin:6px 0;"><img src="${shotDataUrl}" style="max-width:100%;display:block;" alt="제품 페이지" /></p><p><br /></p>` : ''}<p style="margin-top:8px;"><span style="font-size:10pt;">${esc(p.reason).replace(/\r?\n/g, '<br />')}</span></p>` }
+    : { label: '구매 상세 사유', text: p.reason };
+  const fields = [
+    { label: '합계금액(VAT포함VAT미포함)', text: `${won(p.total)}원`, checkLabel: [p.vat_included ? 'VAT포함' : 'VAT미포함'] },
+    { label: '구매목적', check: [p.purpose], ...(p.purpose === '기타' ? { replace: ['__________________', p.purpose_etc] } : {}) },
+    { label: '프로젝트명', check: [p.project], ...(p.project === '기타' ? { input: p.project_etc } : {}) },
+    reasonField,
+    { label: '긴급도', check: [p.urgency] },
+    { label: '납기 요청일자', text: dues.length <= 1 ? (dues[0] || '') : p.items.filter(i => i.due).map(i => `${i.name}: ${i.due}`).join('\n') },
+    { label: '대체 가능 여부', check: [p.substitutable ? '대체 가능' : '대체 불가'] },
+    { label: '담당자', text: [p.vendor.name, p.vendor.contact].filter((x, i, a) => x && a.indexOf(x) === i).join(' / ') },   // 거래처명 / 담당자명 (하나만 있으면 그것만)
+    { label: '연락처', text: p.vendor.phone },
+    { label: '이메일', text: p.vendor.email },
+  ];
+  // 구매 요청 내역: 거래처 · 품번(목록 순서 1,2,3) · 품명(규격·모델은 괄호로) · 단위 · 발주수량 · 단가 · 공급가액 · 비고(납기 요청일자)
+  const table = { header: '거래처', rows: p.items.map((i, n) => [p.vendor.name, String(n + 1), i.part_no && !i.name.includes(i.part_no) ? `${i.name} (${i.part_no})` : i.name, i.unit, String(i.qty), won(i.unit_price), won(i.amount), [i.due && `납기 ${i.due}`, i.note].filter(Boolean).join(' / ')]) };   // 비고 = 납기 요청일 + 비고
+  return { fields, table };
+}
+
+module.exports = { FILL_JS, FIND_JS, applyPayload, reportPayload, purchasePayload };

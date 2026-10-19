@@ -9,6 +9,7 @@ const { FILL_JS, FIND_JS } = require('./editorFill');
 
 const BUDGET_PATH = '/#/HP/NPC1023/NCA0018';
 const APPROVE_PATH = '/#/HP/NPC1025/NCA0019';
+const COMPOSE_PATH = '/#/UB/UB/UBA0000?specialLnb=Y&moduleCode=UB&menuCode=UBA&pageCode=UBA6000';   // 전자결재 › 결재작성 (전체 양식)
 const RESOLUTION_PATH = '/#/HP/NPC1030/NCA0020';   // 결의서입력: 전송된 결의 → [결재상신]   // 품의서승인(복수): 승인된 품의 → [결의서전송/취소]
 const { capToBudget, planPayees, PAY_MODES } = require('./rules');
 const popupsOf = new WeakMap();   // 그룹웨어 창 → 그 창에서 열린 작성 팝업들
@@ -1332,16 +1333,94 @@ class Amaranth {
   }
 
   /** 팝업 본문 채우기 → 첨부 → [보관] */
-  async fillAndKeep(popup, { title, probe, payload, attachments = [], save = true }) {
+  /** 결재작성(전체 양식)에서 양식 이름을 찾아 눌러 작성 창을 연다 (품의 입력이 없는 양식: 구매의뢰서 등). 돌려주는 건 작성 팝업 창 */
+  async openForm(formName) {
+    const p = this.page, ui = this.ui;
+    this.log(`결재작성: ${formName}`);
+    for (const w of popupsOf.get(this.win.webContents) || []) if (!w.isDestroyed()) w.destroy();
+    await p.goto(this.baseUrl + COMPOSE_PATH); await sleep(2500);
+    if (await this.isLoginPage()) { await this.ensureLogin(); await p.goto(this.baseUrl + COMPOSE_PATH); await sleep(2500); }
+    // 양식 목록 줄: <dt><p class="ellipsis">전산기기 <em>구매의뢰서</em></p></dt> — 검색어가 <em> 으로 쪼개지고 비슷한 이름(전산기기 구매의뢰서)이 같이 뜬다
+    // → 줄(p·dt) 전체 글자가 양식 이름과 '정확히' 같은 것만
+    const FIND = f => { const hit = all('dt p, dt, li p, li').filter(e => vis(e) && norm(e.textContent) === norm(f)); return hit[0] || null; };
+    const popupPromise = new Promise(resolve => this.win.webContents.once('did-create-window', w => resolve(w)));
+    try {
+      if (!(await p.waitFor(FIND, [formName], { timeout: 6000 }))) {
+        // 목록에 안 보이면 검색칸에 이름을 넣고 찾는다
+        await p.clickWhere(() => all('input[type=text], input:not([type])').filter(i => vis(i) && /검색|양식/.test((i.placeholder || '') + (i.title || '')) ).pop() || all('input[type=text], input:not([type])').filter(vis)[0]);
+        await p.selectAll(); await p.type(formName); await p.key('Enter'); await sleep(1500);
+        await p.waitFor(FIND, [formName], { timeout: 8000, message: `결재작성 목록에서 '${formName}' 양식을 못 찾았어요` });
+      }
+      await p.clickWhere(FIND, formName);
+    } catch (e) {
+      await this.debugDump('compose-form', '결재작성');
+      await ui.assist(`'${formName}' 양식을 자동으로 못 열었어요 (${e.message}). [작업 중인 창 열기]에서 결재작성 › 전체 양식의 '${formName}'을 직접 눌러 작성 창을 띄운 뒤 [계속]을 눌러 주세요.`);
+    }
+    const popup = await Promise.race([popupPromise, sleep(30000).then(() => null)]);
+    if (!popup) throw new Error('전자결재 작성 창이 열리지 않았습니다.');
+    await new Promise(r => popup.webContents.isLoading() ? popup.webContents.once('did-finish-load', r) : r());
+    this.log('전자결재 작성 창이 열렸습니다.');
+    return popup;
+  }
+
+  /** 작성 창 머리의 '수신및참조' 칸에 부서를 넣는다 (이미 든 건 건너뜀). 입력칸에 이름을 치면 조직도 자동완성(👥 경영지원부(전자결재용))이 뜨고,
+   *  그 위에 경로 말풍선((주)레인보우로보틱스>본사>…)이 같이 뜬다 → 글자가 이름과 '정확히' 같은 줄만 누른다. 없으면 Enter(첫 후보) */
+  async addRecipients(popup, names, { withDept = false } = {}) {
     const pp = new Page(popup), ui = this.ui;
+    if (withDept) {   // 머리 표 '작성부서' 칸에 골라져 있는 부서 (예: 개발 2팀)
+      const dept = await pp.eval(() => { const lb = all('td,th').find(e => vis(e) && norm(e.textContent) === '작성부서'); const tr = lb && lb.closest('tr'); if (!tr) return '';
+        const sel = all('select', tr).find(vis); if (sel && sel.selectedIndex >= 0) return sel.options[sel.selectedIndex].text.trim();
+        const inp = all('input', tr).find(i => vis(i) && i.value); if (inp) return inp.value.trim();
+        const cell = lb.nextElementSibling; return cell ? cell.innerText.trim().split('\n')[0] : ''; }).catch(() => '');
+      if (dept) names = [...names, dept]; else this.log('(작성부서를 못 읽어서 수신및참조에 안 넣었어요)');
+    }
+    const row = () => pp.eval(() => { const lb = all('td,th').find(e => vis(e) && norm(e.textContent) === '수신및참조'); const tr = lb && lb.closest('tr'); return tr ? tr.innerText : null; });
+    const input = () => pp.clickWhere(() => { const lb = all('td,th').find(e => vis(e) && norm(e.textContent) === '수신및참조'); const tr = lb && lb.closest('tr');
+      return tr && all('input', tr).filter(i => vis(i) && !i.readOnly && i.type !== 'checkbox' && i.type !== 'hidden').pop(); });
+    const missing = [];
+    for (const name of names) {
+      if (norm((await row()) || '').includes(norm(name))) continue;
+      try {
+        await input(); await pp.selectAll(); await pp.type(name); await sleep(1600);
+        const pt = await pp.eval(n => {
+          const lb = all('td,th').find(e => vis(e) && norm(e.textContent) === '수신및참조'); const tr = lb && lb.closest('tr');
+          const c = all('li, [role=option], a, span, div, p').filter(e => vis(e) && norm(e.textContent) === norm(n) && !(tr && tr.contains(e)) && !/>/.test(e.textContent));
+          c.sort((x, y) => x.getBoundingClientRect().width * x.getBoundingClientRect().height - y.getBoundingClientRect().width * y.getBoundingClientRect().height);
+          const el = c[0] && (c[0].closest('li, [role=option]') || c[0]); return el ? center(el) : null; }, name);
+        if (pt) await pp.click(pt); else await pp.key('Enter');
+        await sleep(1000);
+        if (!norm((await row()) || '').includes(norm(name))) missing.push(name);
+      } catch (e) { missing.push(name); }
+    }
+    if (missing.length) {
+      if (this.debugDir) { try { require('fs').writeFileSync(require('path').join(this.debugDir, 'recipients-popup.html'), await pp.eval(() => document.body.outerHTML)); } catch (e) { /* */ } }
+      await ui.assist(`수신및참조에 ${missing.join(', ')}을(를) 자동으로 못 넣었어요. 작성 창에서 직접 추가한 뒤 [계속]을 눌러 주세요.`);
+    } else this.log(`수신및참조: ${names.join(', ')}`);
+  }
+
+  async fillAndKeep(popup, { title, probe, payload, attachments = [], save = true, beforeShow = null }) {   // beforeShow: 창을 사람에게 띄우기 전에 더 할 일 (수신및참조 등)
+    const pp = new Page(popup), ui = this.ui;
+    // "작성 중이던 임시 저장 본문이 있습니다. 불러오시겠습니까?" → [취소] (새로 작성). 늦게 뜰 수 있어 몇 초 기다려 봄
+    const tmp = await pp.waitFor(() => all('div, p, span').some(e => vis(e) && /임시\s*저장\s*본문이\s*있습니다/.test(e.textContent || '') && e.children.length <= 3), [], { timeout: 3000 }).catch(() => null);
+    if (tmp) {
+      try { await pp.clickWhere(() => { const msg = all('div, p, span').filter(e => vis(e) && /임시\s*저장\s*본문이\s*있습니다/.test(e.textContent || '')).pop();
+        for (let box = msg; box; box = box.parentElement) { const b = all('button', box).find(x => vis(x) && norm(x.textContent) === '취소'); if (b) return b; } return null; });
+        this.log('임시 저장 본문은 불러오지 않고 새로 작성해요'); await sleep(800);
+      } catch (e) { await ui.assist('작성 창의 "임시 저장 본문을 불러올까요?"에서 [취소]를 눌러 주세요. 그 뒤 [계속]을 누르면 이어서 채워요.'); }
+    }
     let frame = await pp.findFrame(FIND_JS, probe, 30000);
     if (!frame) { await ui.assist('본문 편집기를 찾지 못했습니다. 작성 창이 다 열렸는지 확인해 주세요.'); frame = await pp.findFrame(FIND_JS, probe, 5000); }
 
-    const cur = await pp.eval(() => { const i = document.querySelector('.docTitleBox input'); return i ? i.value : null; });
+    // 제목 칸: 대부분 양식은 .docTitleBox, 구매의뢰서 같은 양식은 머리 표의 '제 목' 줄 입력칸
+    const TITLE_INPUT = () => document.querySelector('.docTitleBox input') || (() => { const lb = all('td,th').find(e => vis(e) && norm(e.textContent) === '제목'); const tr = lb && lb.closest('tr');
+      return tr && all('input[type=text], input:not([type]), textarea', tr).filter(i => vis(i) && !i.readOnly)[0]; })();
+    const titleVal = () => pp.eval(`() => { const i = (${TITLE_INPUT})(); return i ? i.value : null; }`).catch(() => null);
+    const cur = await titleVal();
     if (cur !== null && cur !== title) {
-      await pp.clickWhere(() => document.querySelector('.docTitleBox input'));
-      await pp.selectAll(); await pp.type(title);
-    }
+      await pp.clickWhere(TITLE_INPUT);
+      await pp.selectAll(); await pp.type(title); await sleep(300);
+      if ((await titleVal()) !== title) await ui.assist(`제목을 못 넣었어요. 작성 창 제목 칸에 "${title}"를 넣고 [계속]을 눌러 주세요.`);
+    } else if (cur === null) await ui.assist(`제목 칸을 못 찾았어요. 작성 창 제목 칸에 "${title}"를 넣고 [계속]을 눌러 주세요.`);
 
     if (frame) {
       const res = await frame.executeJavaScript(`(${FILL_JS})(${JSON.stringify(payload)})`);
@@ -1360,6 +1439,7 @@ class Amaranth {
       catch (e) { await ui.assist(`첨부 실패(${e.message}). 다음 파일을 직접 끌어다 놓아 주세요: ${files.join(', ')}`); }
     }
 
+    if (beforeShow) await beforeShow();
     if (!save) { popup.setSkipTaskbar(false); popup.center(); popup.show(); popup.focus(); this.log('본문까지 채웠어요. 열린 작성 창에서 확인하고 [보관]·[상신]은 직접 눌러 주세요.'); return; }
     await pp.eval(() => { window.__confirm = window.confirm; window.confirm = () => true; window.alert = () => {}; return true; });   // 보관 확인창 자동 승인
     await pp.clickWhere(() => all('.topBtn').find(b => norm(b.textContent) === '보관'));

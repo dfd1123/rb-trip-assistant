@@ -51,6 +51,7 @@ function wrapFill(name, root){
 wrapFill('fillApply', '#tab-apply');
 wrapFill('fillReport', '#reportView');
 wrapFill('applyReceipts', '#reportView');
+wrapFill('fillPurchase', '#tab-purchase');
 
 /* ---------- 세부 내용 접기: 기본은 접힘. 고칠 칸(주황)이 생기거나 체크리스트에서 고르면 펼침 ---------- */
 function setFold(id, open){ const f = $(id); if(f) f.classList.toggle('open', open); }
@@ -67,7 +68,7 @@ function foldBadge(id){   // 접혀 있을 때 고칠 칸 개수 표시
 /* ---------- 떠 있는 제출 버튼: 원래 버튼이 화면 밖이면 오른쪽 아래에 ---------- */
 const fab = $('#fabSubmit');
 function updateFab(){
-  const btn = !$('#tab-apply').classList.contains('hidden') ? $('#btnApply') : !$('#reportView').classList.contains('hidden') ? $('#btnReport') : null;
+  const btn = !$('#tab-apply').classList.contains('hidden') ? $('#btnApply') : !$('#reportView').classList.contains('hidden') ? $('#btnReport') : !$('#tab-purchase').classList.contains('hidden') ? $('#btnPurchase') : null;
   if(!btn){ fab.classList.add('hidden'); return; }
   const r = btn.getBoundingClientRect(), off = r.bottom < 0 || r.top > innerHeight;
   const jp = $('#jobPanel'), busy = jp && getComputedStyle(jp).display !== 'none';   // 작업 창(토스트)과 겹치지 않게
@@ -166,15 +167,14 @@ function updateReport(){
   $$('#rSteps .st-line').forEach((el, i) => el.classList.toggle('done', st[i] || (i === 0 && (memo || written))));
   // 정산 영수증
   const by = {}; exps.forEach(e => { const k = (META.items[e.item] || e.item).replace('여비교통비(판)_', ''); const o = by[k] || (by[k] = { sum: 0, n: 0, proof: 0 }); o.sum += e.amount; o.n++; if((e.proofs || []).length) o.proof++; });
-  const max = Math.max(1, ...Object.values(by).map(o => o.sum));
   const rows = $('#rcRows'); rows.innerHTML = '';
   if(!exps.length) rows.innerHTML = '<div class="rc-empty">아직 정산할 경비가 없어요<br>영수증을 넣으면 여기에 쌓여요</div>';
   Object.entries(by).forEach(([k, o]) => {
     const d = document.createElement('div'); d.className = 'rc-row';
-    d.innerHTML = '<div class="t"><b></b><span></span></div><div class="bar"><i></i></div><div class="cap"></div>';
+    d.innerHTML = '<div class="t"><b></b><span></span></div><div class="cap"></div>';
     d.querySelector('b').textContent = k; d.querySelector('.t span').textContent = won(o.sum);
     d.querySelector('.cap').textContent = `${o.n}건 · 증빙 ${o.proof}/${o.n}`;
-    rows.appendChild(d); requestAnimationFrame(() => { d.querySelector('.bar i').style.width = Math.round(o.sum / max * 100) + '%'; });
+    rows.appendChild(d);
   });
   const proofs = exps.reduce((s, e) => s + ((e.proofs || []).length ? 1 : 0), 0);
   $('#rcCount').textContent = `영수증 ${proofs}장`;
@@ -196,7 +196,7 @@ function updateReport(){
   if(ev === 'click' && !e.target.closest('#tkModes, .seg, .tsel, .rd-list')) return;
   const err = id === '#tab-apply' ? $('#a_err') : $('#r_err'); if(err) err.textContent = '';
 }, true)));
-setInterval(() => { try { updateApply(); updateReport(); foldBadge('#aFold'); foldBadge('#rFold'); updateFab(); } catch(e){ /* 화면 준비 전 */ } }, 350);
+setInterval(() => { try { updateApply(); updateReport(); foldBadge('#aFold'); foldBadge('#rFold'); foldBadge('#puFold'); updateFab(); } catch(e){ /* 화면 준비 전 */ } }, 350);
 // 다른 출장 보고서를 열거나 새로 작성하면 다시 접음
 const _showReport = window.showReport; if(typeof _showReport === 'function') window.showReport = async function(...a){ setFold('#rFold', false); return _showReport.apply(this, a); };
 const _resetApply = window.resetApply; if(typeof _resetApply === 'function') window.resetApply = function(...a){ setFold('#aFold', false); return _resetApply.apply(this, a); };

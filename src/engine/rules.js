@@ -4,6 +4,11 @@
 const yaml = require('js-yaml');
 
 const APPLY_FORM = '출장신청 및 출장경비 사전품의';
+const PURCHASE_FORM = '구매의뢰서';   // 결재작성 › 전체 양식 (품의 입력 없이 바로 전자결재)
+const PURCHASE_PURPOSES = ['생산 운영', '신규 프로젝트', '고객 요청 대응', '품질 개선 / 불량 대응', '설비 유지보수 / 수리', '기타'];
+const PURCHASE_RECIPIENTS = ['구매팀', '경영지원부(전자결재용)', '연구지원팀'];   // 구매의뢰서 수신및참조 기본
+const PROJECT_DETAIL_REQUIRED = ['정부과제', '기타'];   // 세부 프로젝트명 필수 (다른 프로젝트는 선택). 제목엔 세부 이름이 들어감
+const PURCHASE_PROJECTS = ['협동로봇', '천문', '2족보행', '4족보행', '양팔로봇', '관리', 'S사이족보행', '모바일로봇', 'KAI', '정부과제', '기타'];
 const REPORT_FORM = '출장보고서 및 경비정산 지출결의서';   // 결의서입력 → 결재상신 양식 (예전 '출장보고서 및 정산 품의서'는 안 씀)
 
 // 예산과목 (사업코드도움에서 코드로 검색)
@@ -349,8 +354,51 @@ function extractYaml(text) {
   return data;
 }
 
+/** 구매의뢰서 결재 제목: "[구매의뢰서 - 양팔로봇] 무선 LAN 안테나 연장선 구매 요청의 건" */
+const purchaseTitle = (tag, desc) => `[${PURCHASE_FORM}${tag ? ` - ${tag}` : ''}] ${String(desc || '').trim()} 구매 요청의 건`;
+
+/** 구매의뢰서 입력 검증 (화면 → 엔진). 금액 0 도 그대로 (사용자가 넣은 값) */
+function parsePurchase(data) {
+  const where = '구매의뢰서';
+  const items = asList(data.items ? [] : []).length ? [] : (Array.isArray(data.items) ? data.items : []);
+  if (!items.length) throw new InputError('구매 요청 내역이 비어 있어요. 발주서를 올리거나 줄을 추가해 주세요.');
+  const rows = items.map((it, i) => {
+    const w = `items[${i}]`;
+    const name = String(it.name || '').trim(); if (!name) throw new InputError(`${w}: 품명이 없어요.`);
+    const qty = amount(it.qty === '' || it.qty == null ? 1 : it.qty, `${w}.qty`), unit_price = amount(it.unit_price ?? 0, `${w}.unit_price`);
+    const row = { name, part_no: String(it.part_no || '').trim(), unit: String(it.unit || 'EA').trim() || 'EA', qty, unit_price,
+      amount: it.amount === '' || it.amount == null ? qty * unit_price : amount(it.amount, `${w}.amount`), due: String(it.due || '').trim(), note: String(it.note || '').trim().slice(0, 80) };
+    return row;   // 납기 요청일자는 선택
+  });
+  const purpose = String(data.purpose || '').trim();
+  if (!PURCHASE_PURPOSES.includes(purpose)) throw new InputError('구매목적을 골라 주세요.');
+  const project = String(data.project || '').trim();
+  if (!PURCHASE_PROJECTS.includes(project)) throw new InputError('프로젝트명을 골라 주세요.');
+  const purpose_etc = String(data.purpose_etc || '').trim(), project_etc = String(data.project_etc || '').trim();
+  if (purpose === '기타' && !purpose_etc) throw new InputError('구매목적 기타 내용을 적어 주세요.');
+  if (PROJECT_DETAIL_REQUIRED.includes(project) && !project_etc) throw new InputError(`${project}는 세부 프로젝트명을 적어 주세요.`);
+  const urgency = String(data.urgency || '일반').trim();
+  if (!['긴급', '일반'].includes(urgency)) throw new InputError('긴급도는 긴급·일반 중 하나예요.');
+  const v = data.vendor || {};
+  const vendor = { name: String(v.name || '').trim(), contact: String(v.contact || '').trim(), phone: String(v.phone || '').trim(), email: String(v.email || '').trim() };
+  if (!vendor.name) throw new InputError('거래처 이름이 없어요.');
+  const supply = rows.reduce((a, r) => a + r.amount, 0);
+  // 온라인 판매가(제품 페이지)는 이미 부가세 포함 → 합계는 그대로 더하고 'VAT포함'. 발주서는 공급가액 + 부가세
+  const price_vat = data.price_vat === undefined ? Boolean(data.link && data.link.url && data.link.priceVat !== 'excl') : Boolean(data.price_vat);
+  const vat_included = price_vat || Boolean(data.vat_included);
+  const total = data.total === '' || data.total == null ? (vat_included && !price_vat ? Math.round(supply * 1.1) : supply) : amount(data.total, 'total');
+  const reason = String(data.reason || '').trim(); if (!reason) throw new InputError('구매 상세 사유를 적어 주세요.');
+  const title = String(data.title || '').trim() || purchaseTitle(project_etc || project, rows[0].name + (rows.length > 1 ? ` 외 ${rows.length - 1}건` : ''));
+  const file = String(data.file || '').trim();
+  const l = data.link || {};
+  if (file && l.url) throw new InputError('발주서 파일과 제품 페이지는 둘 중 하나만 쓸 수 있어요.');
+  const link = l.url && /^https?:\/\//i.test(String(l.url)) ? { url: String(l.url).trim(), title: String(l.title || '').trim().slice(0, 120), shot: String(l.shot || '').trim(), ...(l.priceVat ? { priceVat: String(l.priceVat) } : {}) } : null;   // 제품 페이지 (사유에 링크·캡처)
+  if (!file && !link) throw new InputError('발주서 파일이나 제품 페이지가 있어야 해요.');
+  return { items: rows, link, price_vat, purpose, purpose_etc, project, project_etc, urgency, substitutable: Boolean(data.substitutable), vendor, supply, vat_included, total, reason, title, file, memo: String(data.memo || '').trim() };
+}
+
 module.exports = {
-  APPLY_FORM, REPORT_FORM, BUDGET_ITEMS, TRANSPORT_MODES, CORPORATE_CARS, APPLY_CATEGORIES, REPORT_CATEGORIES,
+  APPLY_FORM, REPORT_FORM, PURCHASE_FORM, PURCHASE_PURPOSES, PURCHASE_PROJECTS, PURCHASE_RECIPIENTS, PROJECT_DETAIL_REQUIRED, purchaseTitle, parsePurchase, BUDGET_ITEMS, TRANSPORT_MODES, CORPORATE_CARS, APPLY_CATEGORIES, REPORT_CATEGORIES,
   InputError, ro, applyTitle, reportTitle, budgetMemo, parseCarText, parseTransitText, roundTrip,
   parseApply, parseReport, parseExpenses, transportExpense, fuelOnlyExpense, applyPrompt, reportPrompt, extractYaml,
   OVERSEAS_GRADES, OVERSEAS_RATES, OVERSEAS_RATES_EXEC, overseasGuess, overseasExpenses,

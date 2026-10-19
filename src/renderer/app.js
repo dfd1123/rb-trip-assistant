@@ -39,13 +39,17 @@ if(window.api.onDevStale) window.api.onDevStale(() => { if($('#devStale')) retur
 
 /* ---------- 탭 ---------- */
 $$('nav button').forEach(b => b.onclick = () => {
-  $$('nav button').forEach(x => x.classList.toggle('on', x===b));
-  ['apply','trips','settings'].forEach(t => $('#tab-'+t).classList.toggle('hidden', t!==b.dataset.tab));
+  $$('nav button').forEach(x => x.classList.toggle('on', x===b || (b.dataset.tab==='trips' && x.dataset.tab==='apply')));   // '출장' 메뉴 = 출장 신청 + 출장 보고
+  ['apply','trips','purchase','settings'].forEach(t => $('#tab-'+t).classList.toggle('hidden', t!==b.dataset.tab));
+  if(b.dataset.tab==='purchase') initPurchase();
   if(b.dataset.tab==='trips'){ $('#tripList').classList.remove('hidden'); $('#reportView').classList.add('hidden'); loadTrips(); autoGwCheck(true); }   // 탭에 들어올 때마다 그룹웨어에서 다시 읽기 (저장된 목록은 먼저 보여줌)
   if(b.dataset.tab==='settings'){ ['#s_msg', '#s_ai_msg', '#s_rate_msg'].forEach(id => $(id).textContent = ''); rpc('/api/meta').then(m => { META = m; renderSettings(); }); }   // 저장된 값으로 다시 그림, '저장됨' 같은 알림은 지움
   if(b.dataset.tab==='apply') rpc('/api/meta').then(m => { META = m; syncApplyDefaults(); });          // 쓰던 신청서는 그대로, 설정에서 온 값만 맞춤
   window.scrollTo(0, 0);   // 메뉴를 바꾸면 맨 위부터
 });
+
+// 출장 안의 두 탭 (출장 신청 / 출장 보고) = 숨은 메뉴 버튼을 누름
+$$('.trip-view label').forEach(l => l.onclick = () => { const b = $(`nav button[data-tab="${l.dataset.go}"]`); if(b) b.click(); });
 
 /* ---------- 경비 표 ---------- */
 function expRow(tbody, e={}, onchange){
@@ -783,7 +787,7 @@ function applyReceipts(results){
   dz.addEventListener('drop', e => addRqFiles([...e.dataTransfer.files].map(f => window.api.pathForFile(f))));
   $('#btnPickReceipts').onclick = async () => { const {paths} = await rpc('/api/pick-proofs', {many: true}); addRqFiles(paths || []); };
   // 창 아무 데나 떨어뜨려도 앱이 파일을 열어 버리지 않게
-  ['dragover', 'drop'].forEach(ev => window.addEventListener(ev, e => { if(!e.target.closest || !e.target.closest('#r_drop')) e.preventDefault(); }));
+  ['dragover', 'drop'].forEach(ev => window.addEventListener(ev, e => { if(!e.target.closest || !e.target.closest('#r_drop, #po_drop')) e.preventDefault(); }));
 }
 $('#reportView').addEventListener('input', e => { if(e.target.classList) e.target.classList.remove('need'); });   // 입력 시작하면 빈 칸 표시 해제
 $$('input[name=r_fund]').forEach(x => x.addEventListener('change', () => $('#r_fund').classList.remove('need')));
@@ -887,6 +891,208 @@ $('#btnRateSave').onclick = async () => {
   await rpc('/api/config', {rates, rank: $('#s_rank').value, carFuel: $('#s_car_fuel').value, carType: $('#s_car_type').value}); META = await rpc('/api/meta'); $('#s_rate_msg').textContent = '저장됨';
 };
 
+/* ---------- 구매 의뢰 (구매의뢰서) ---------- */
+let puFile = '', puInited = false, puLink = null;   // puLink: 제품 페이지 {url, title, shot}
+let puSummary = [];   // 발주서·견적서·제품 페이지에서 뽑은 중요 정보 줄 → 사유 끝 '구매 제품 내용:'
+const SUM_HEAD = '구매 제품 내용:';
+/** 사유 = 글 + 빈 줄 + '구매 제품 내용:' + 요약 줄. 사유에 이미 요약 블록이 있으면 새 것으로 바꿈 */
+function withSummary(reason){
+  const body = String(reason || '').split(SUM_HEAD)[0].trim();
+  return puSummary.length ? `${body}${body ? '\n\n' : ''}${SUM_HEAD}\n${puSummary.map(l => '- ' + l.replace(/^[-·•]\s*/, '')).join('\n')}` : body;
+}
+function loadPurchaseList(){
+  runJob('구매의뢰 목록', '/api/job/purchase-list', {}, r => {
+    const box = $('#puList'); box.innerHTML = r.rows.length ? '' : '<p class="sub">최근 3개월에 올린 구매의뢰서가 없어요.</p>';
+    r.rows.forEach(x => {
+      const el = document.createElement('div'); el.className = 'item';
+      const st = x.docNo ? pill('결재', x.status || '', `${x.status || ''} · ${x.docNo}`) : '<span class="pill">상신 전</span>';
+      el.innerHTML = `<div><b></b>${st}<div class="sub" style="margin:2px 0 0"></div></div><div class="inline"></div>`;
+      el.querySelector('b').textContent = x.title.replace(/^\[[^\]]*\]\s*/, '');
+      el.querySelector('.sub').textContent = `${x.date || ''}${x.docNo ? ' · ' + x.docNo : ''}${x.local ? ` · 이 PC에서 작성` : ''}`;
+      const btns = el.querySelector('.inline');
+      if(x.local && x.local.data){ const b = document.createElement('button'); b.className = 'btn small'; b.textContent = '다시 불러오기'; b.title = '그때 입력한 내용을 아래 칸에 다시 채워요'; b.onclick = () => { puView('new'); fillPurchase(x.local.data); $('#pu_status').textContent = '전에 작성한 내용을 불러왔어요.'; }; btns.appendChild(b); }
+      if(x.local && !x.docNo){ const d = document.createElement('button'); d.className = 'btn small danger'; d.textContent = '기록 삭제'; d.onclick = async () => { await rpc('/api/purchase/forget', {title: x.title}); loadPurchaseList(); }; btns.appendChild(d); }
+      box.appendChild(el);
+    });
+  }, {quiet: true});
+}
+$('#btnPuList').onclick = loadPurchaseList;
+function puView(v){ setRadio('pu_view', v); $('#puNew').classList.toggle('hidden', v !== 'new'); $('#puHistory').classList.toggle('hidden', v !== 'list'); window.scrollTo(0, 0); }
+$$('input[name=pu_view]').forEach(r => r.addEventListener('change', () => { puView(radio('pu_view')); if(radio('pu_view') === 'list') loadPurchaseList(); }));
+function initPurchase(){
+  if(puInited || !META.purchase) return; puInited = true;
+  loadPurchaseList();
+  const opt = (sel, list) => { sel.innerHTML = '<option value="">고르세요</option>' + list.map(v => `<option>${escH(v)}</option>`).join(''); };
+  opt($('#pu_purpose'), META.purchase.purposes); opt($('#pu_project'), META.purchase.projects);
+  try { const d = JSON.parse(localStorage.pu_draft || 'null'); if(d) fillPurchase(d); } catch(e){ /* 없음 */ }
+  puRender();
+}
+function puItemRow(it = {}){
+  const tr = document.createElement('tr');
+  tr.innerHTML = '<td><input class="name"></td><td><input class="unit"></td><td><input class="qty" inputmode="numeric"></td><td><input class="price" inputmode="numeric"></td><td><input class="amt" inputmode="numeric"></td><td><input class="due" type="date"></td><td><input class="note" placeholder="예: 옵션 1.0M"></td><td><button class="btn small del" type="button">✕</button></td>';
+  const q = c => tr.querySelector('.' + c);
+  q('name').value = it.part_no && !(it.name || '').includes(it.part_no) ? `${it.name || ''} (${it.part_no})`.trim() : (it.name || ''); q('unit').value = it.unit || 'EA'; q('qty').value = it.qty ?? 1; q('price').value = it.unit_price != null ? Number(it.unit_price).toLocaleString('ko-KR') : ''; q('amt').value = it.amount != null ? Number(it.amount).toLocaleString('ko-KR') : ''; q('due').value = it.due || ''; q('note').value = it.note || '';
+  const recalc = () => { q('amt').value = (num(q('qty').value) * num(q('price').value)).toLocaleString('ko-KR'); puRender(); };
+  q('qty').addEventListener('input', recalc); q('price').addEventListener('input', recalc);
+  q('amt').addEventListener('input', puRender); q('due').addEventListener('change', puRender); q('note').addEventListener('input', puRender);
+  q('del').onclick = () => { tr.remove(); puRender(); };
+  $('#pu_items tbody').appendChild(tr);
+  return tr;
+}
+function puItems(){ return [...$('#pu_items tbody').querySelectorAll('tr')].map(tr => { const q = c => tr.querySelector('.' + c).value.trim(); return { name: q('name'), part_no: '', unit: q('unit') || 'EA', qty: num(q('qty')), unit_price: num(q('price')), amount: q('amt') === '' ? '' : num(q('amt')), due: q('due'), note: q('note') }; }); }
+function purchaseData(){
+  return { file: puLink ? '' : puFile, link: puFile ? null : puLink, summary: puSummary, memo: $('#pu_memo').value.trim(), purpose: $('#pu_purpose').value, purpose_etc: $('#pu_purpose_etc').value.trim(), project: $('#pu_project').value, project_etc: $('#pu_project_etc').value.trim(),
+    urgency: radio('pu_urgency') || '일반', substitutable: radio('pu_sub') === 'yes', items: puItems(), vat_included: $('#pu_vat').checked, price_vat: puOnlineVatIn(), total: '',
+    vendor: { name: $('#pu_vendor').value.trim(), contact: $('#pu_contact').value.trim(), phone: $('#pu_phone').value.trim(), email: $('#pu_email').value.trim() },
+    title: $('#pu_title').value.trim(), reason: $('#pu_reason').value.trim() };
+}
+function fillPurchase(d){
+  puFile = d.file || ''; renderPoChip(); puLink = d.link && d.link.url ? d.link : null; renderUrlCard(); puSummary = Array.isArray(d.summary) ? d.summary : [];
+  setRadio('pu_src', puLink ? 'url' : 'file'); puSrcToggle();
+  $('#pu_memo').value = d.memo || ''; $('#pu_purpose').value = d.purpose || ''; $('#pu_purpose_etc').value = d.purpose_etc || ''; $('#pu_project').value = d.project || ''; $('#pu_project_etc').value = d.project_etc || '';
+  setRadio('pu_urgency', d.urgency || '일반'); setRadio('pu_sub', d.substitutable ? 'yes' : 'no'); $('#pu_vat').checked = !!d.vat_included;
+  $('#pu_items tbody').innerHTML = ''; (d.items || []).forEach(puItemRow);
+  const v = d.vendor || {}; $('#pu_vendor').value = v.name || ''; $('#pu_contact').value = v.contact || ''; $('#pu_phone').value = v.phone || ''; $('#pu_email').value = v.email || '';
+  $('#pu_title').value = d.title || ''; $('#pu_reason').value = d.reason || '';
+  puRender();
+}
+const DETAIL_REQ = ['정부과제', '기타'];   // 세부 프로젝트명 필수
+function puTag(){ return $('#pu_project_etc').value.trim() || $('#pu_project').value; }   // 제목: 세부 프로젝트명이 있으면 그것
+let puDesc = '';   // AI 가 쓴 제목 설명. 제목을 직접 고치면 그대로 둔다
+function puRender(){
+  $('#pu_purpose_etc').classList.toggle('hidden', $('#pu_purpose').value !== '기타'); $('#pu_project_etc').classList.toggle('hidden', !$('#pu_project').value);
+  $('#pu_project_etc').placeholder = DETAIL_REQ.includes($('#pu_project').value) ? '세부 프로젝트명 (필수 — 제목에 들어가요)' : '세부 프로젝트명 (선택 — 제목에 들어가요)';
+  const online = puOnlineVatIn();   // 온라인 판매가가 부가세 포함이면 그대로 (VAT 별도 가격인 쇼핑몰은 발주서처럼 +10%)
+  if(online){ $('#pu_vat').checked = true; $('#pu_vat').disabled = true; } else $('#pu_vat').disabled = false;
+  const items = puItems(), supply = items.reduce((a, i) => a + (i.amount === '' ? i.qty * i.unit_price : i.amount), 0), total = $('#pu_vat').checked && !online ? Math.round(supply * 1.1) : supply;
+  $('#pu_total').textContent = `합계 ${won(total)}${online ? ' (온라인 판매가 · 부가세 포함)' : $('#pu_vat').checked ? ` (공급가액 ${won(supply)} + 부가세)` : ''}`;
+  // 제목 설명: AI 가 메모로 쓴 짧은 설명 → 없으면 메모 그대로 → 없으면 첫 품명(짧게). 긴 모델명 그대로 쓰지 않음
+  if(!$('#pu_title').dataset.manual){ const memo = $('#pu_memo').value.trim().replace(/\s*(구매|요청|구입)(\s*요청)?(의\s*건)?\s*$/, ''), first = items[0] && items[0].name ? items[0].name.replace(/\s*\(.*\)\s*$/, '').slice(0, 30) : '';
+    const desc = puDesc || (memo && memo.length <= 40 ? memo : '') || (first ? first + (items.length > 1 ? ` 외 ${items.length - 1}건` : '') : ''); $('#pu_title').value = desc ? `[구매의뢰서${puTag() ? ' - ' + puTag() : ''}] ${desc} 구매 요청의 건` : ''; }
+  $('#pu_err').textContent = '';
+  const d = purchaseData();
+  // 구매 정보 카드 아래 한 줄: 거래처 · 합계
+  $('#ppVendor').textContent = d.vendor.name ? `${d.vendor.name} · 품목 ${items.length}건${$('#pu_vat').checked ? ' · 부가세 포함' : ''}` : '거래처 —';
+  if(typeof countTo === 'function') countTo($('#ppTotal'), total); else $('#ppTotal').textContent = won(total);
+  if(typeof renderReady === 'function') renderReady('#puReadyList', '#puReadyBar', '#puReadyPct', [
+    radio('pu_src') === 'url' ? { label: '제품 페이지', ok: !!puLink, focus: '#pu_url' } : { label: '발주서', ok: !!puFile, focus: '#po_drop' },   // 고른 쪽만, 필수
+    { label: '구매 요청 내역', ok: d.items.length > 0 && d.items.every(i => i.name), focus: '#pu_items' },
+    { label: '납기 요청일자', ok: d.items.length > 0 && d.items.every(i => i.due), optional: true, focus: '#pu_due_all' },
+    { label: '구매목적', ok: !!d.purpose && (d.purpose !== '기타' || !!d.purpose_etc), focus: '#pu_purpose' },
+    { label: '프로젝트명', ok: !!d.project && (!DETAIL_REQ.includes(d.project) || !!d.project_etc), focus: DETAIL_REQ.includes(d.project) ? '#pu_project_etc' : '#pu_project' },
+    { label: '거래처', ok: !!d.vendor.name, focus: '#pu_vendor' },
+    { label: '구매 상세 사유', ok: !!d.reason.split(SUM_HEAD)[0].trim(), focus: '#pu_memo' },   // 요약만 있고 사유 글이 없으면 미완
+    { label: '제목', ok: !!d.title, focus: '#pu_title' },
+  ], '#btnPurchase', '그룹웨어에 입력하기');
+  try { localStorage.pu_draft = JSON.stringify(d); } catch(e){ /* 저장 공간 없음 */ }
+}
+['#pu_purpose', '#pu_project', '#pu_purpose_etc', '#pu_project_etc', '#pu_vat', '#pu_vendor', '#pu_contact', '#pu_phone', '#pu_email', '#pu_reason', '#pu_memo'].forEach(id => ['input', 'change'].forEach(ev => $(id).addEventListener(ev, puRender)));
+$$('input[name=pu_urgency],input[name=pu_sub]').forEach(r => r.addEventListener('change', puRender));
+$('#pu_title').addEventListener('input', () => { $('#pu_title').dataset.manual = $('#pu_title').value.trim() ? '1' : ''; puRender(); });
+$('#pu_due_all').addEventListener('change', () => { $$('#pu_items .due').forEach(i => i.value = $('#pu_due_all').value); puRender(); });
+$('#btnPuAddItem').onclick = () => { puItemRow({ due: $('#pu_due_all').value }); puRender(); };
+function resetPurchase(src = 'file'){ puDesc = ''; puSummary = []; delete $('#pu_title').dataset.manual; poInfo = ''; fillPurchase({ items: [] }); setRadio('pu_src', src); puSrcToggle(); $('#pu_due_all').value = ''; $('#pu_url').value = ''; $('#pu_status').textContent = ''; }
+$('#btnNewPurchase').onclick = () => resetPurchase(radio('pu_src') || 'file');
+let poInfo = '';   // 발주서 카드 아래 줄 (읽는 중 / 읽은 결과)
+function renderPoChip(busy = false){
+  const has = !!puFile; $('#po_drop').classList.toggle('has', has); $('#po_card').classList.toggle('hidden', !has);
+  if(!has) return;
+  const name = puFile.split(/[\\/]/).pop(), ext = name.split('.').pop().toLowerCase();
+  $('#po_ico').textContent = ext === 'pdf' ? '📄' : ext === 'docx' ? '📝' : ext === 'xlsx' ? '📊' : '🖼️';
+  $('#po_name').textContent = name; $('#po_name').title = puFile;
+  $('#po_info').textContent = busy ? '발주서 읽는 중' : (poInfo || '그룹웨어 결재에 첨부돼요'); $('#po_info').classList.toggle('busy', busy);
+}
+function usePoFile(f){
+  if(!f) return;
+  if(!/\.(pdf|docx|xlsx|png|jpe?g|webp)$/i.test(f)) return alertErr('발주서는 PDF·워드(.docx)·엑셀(.xlsx)·이미지 파일이어야 해요.');
+  puFile = f; poInfo = ''; puLink = null; renderUrlCard(); $('#pu_url').value = ''; renderPoChip(true);   // 발주서 파일과 제품 페이지는 둘 중 하나만
+  runJob('발주서 읽기', '/api/job/po-read', {path: puFile}, po => {
+    poInfo = `${po.vendor.name || '거래처 ?'} · 품목 ${po.items.length}건 · 합계 ${won(po.total || po.supply)}${po.vat > 0 ? ' (부가세 포함)' : ''}`;
+    const cur = purchaseData();
+    fillPurchase({ ...cur, file: puFile, vendor: { ...cur.vendor, ...Object.fromEntries(Object.entries(po.vendor).filter(([k, v]) => v && k !== 'address')) },
+      items: po.items.map(i => ({ ...i, due: $('#pu_due_all').value })),   // 문서의 납품·발송 예정일은 업체 날짜 → 납기 요청일자는 사람이 (선택)
+      vat_included: po.vat > 0, urgency: cur.urgency });   // 긴급도는 사람이 고름 (문서로 짐작하지 않음)
+    puSummary = po.summary || []; $('#pu_reason').value = withSummary($('#pu_reason').value); puRender();
+    if($('#pu_memo').value.trim()) return puDraft();   // 메모를 먼저 써 뒀으면 사유까지 바로
+    $('#pu_status').textContent = `발주서에서 품목 ${po.items.length}건을 읽었어요${puSummary.length ? ' · 구매 제품 내용을 사유에 붙였어요' : ''}. 한 줄 메모를 쓰고 [✦ 자동 작성]을 누르세요.`;
+  });
+}
+function puOnlineVatIn(){ return radio('pu_src') === 'url' && !(puLink && puLink.priceVat === 'excl'); }
+function puSrcToggle(){ const url = radio('pu_src') === 'url'; $('#po_drop').classList.toggle('hidden', url); $('#pu_urlbox').classList.toggle('hidden', !url);
+  $('#pu_hero_t').textContent = url ? '제품 주소 넣고, 한 줄 쓰면 구매의뢰서 끝' : '발주서 올리고, 한 줄 쓰면 구매의뢰서 끝';
+  $('#pu_hero_s').textContent = url ? '제품 페이지 주소를 넣으면 화면을 캡처하고 품목·가격·판매처 정보를 읽어 채워요. 무엇에 쓰려고 사는지 한 줄 쓰면 제목·사유를 써 드려요.' : '발주서·견적서를 올리면 거래처·품목·금액을 읽어 채워요. 무엇에 쓰려고 사는지 한 줄 쓰면 제목·사유를 써 드려요.'; }
+$$('input[name=pu_src]').forEach(r => r.addEventListener('change', async () => {
+  // 발주서 파일 ↔ 제품 페이지: 둘은 다른 구매라 바꾸면 새로 작성 (입력한 게 있으면 묻고)
+  const url = radio('pu_src') === 'url', d = purchaseData();
+  const dirty = puFile || puLink || d.items.length || d.vendor.name || d.reason || d.memo;
+  if(dirty && !(await confirmSubmit({ title: url ? '제품 페이지로 새로 작성할까요?' : '발주서로 새로 작성할까요?', html: '<p class="sub">발주서 파일과 제품 페이지는 둘 중 하나만 쓸 수 있어요. 바꾸면 지금까지 입력한 내용이 모두 지워지고 새로 작성해요.</p>', yes: '새로 작성' }))){ setRadio('pu_src', url ? 'file' : 'url'); return; }
+  resetPurchase(url ? 'url' : 'file');
+}));
+function renderUrlCard(){
+  const has = !!puLink; $('#url_card').classList.toggle('hidden', !has); if(!has) return;
+  $('#url_name').textContent = puLink.title || puLink.url; $('#url_name').title = puLink.url;
+  $('#url_info').textContent = puLink.info || '캡처가 사유 칸과 첨부에 들어가요';
+  $('#url_thumb').src = puLink.shot ? 'file://' + puLink.shot : '';
+  $('#pu_url').value = puLink.url;
+}
+$('#btnUrlRead').onclick = () => {
+  const url = $('#pu_url').value.trim(); if(!url) return alertErr('제품 페이지 주소를 넣어 주세요.');
+  runJob('제품 페이지 읽기', '/api/job/url-read', {url}, r => {
+    const cur = purchaseData();
+    puLink = { url: r.url, title: r.title, shot: r.shot, priceVat: r.price_vat, info: `${r.name || '제품 ?'} · ${won(r.unit_price)}${r.vendor.name ? ' · ' + r.vendor.name : ''}` };
+    puFile = ''; poInfo = ''; renderPoChip();   // 둘 중 하나만
+    const item = { name: r.name, part_no: r.part_no, unit: r.unit, qty: r.qty, unit_price: r.unit_price, amount: r.qty * r.unit_price, due: $('#pu_due_all').value, note: r.note || '' };
+    if(r.price_vat === 'excl') cur.vat_included = true;   // 'VAT 별도' 가격 → 합계는 부가세 더해서 VAT포함
+    fillPurchase({ ...cur, file: '', link: puLink, items: [...cur.items.filter(i => i.name), item], vendor: { name: cur.vendor.name || r.vendor.name, contact: cur.vendor.contact || r.vendor.name, phone: cur.vendor.phone || r.vendor.phone, email: cur.vendor.email || r.vendor.email },
+      memo: cur.memo || r.note, vat_included: cur.vat_included });
+    puSummary = r.summary || []; $('#pu_reason').value = withSummary($('#pu_reason').value); puRender();
+    if($('#pu_memo').value.trim()) return puDraft();
+    $('#pu_status').textContent = `페이지에서 ${r.name || '제품'}을(를) 읽었어요${r.note ? ` · 메모: ${r.note}` : ''}. 수량을 확인하고 한 줄 메모를 쓴 뒤 [✦ 자동 작성]을 누르세요.`;
+  });
+};
+$('#pu_url').addEventListener('keydown', e => { if(e.key === 'Enter' && !e.isComposing) $('#btnUrlRead').click(); });
+$('#btnUrlClear').onclick = () => { puLink = null; renderUrlCard(); $('#pu_url').value = ''; puRender(); };
+$('#btnPoPick').onclick = $('#btnPoChange').onclick = async () => { const {path} = await rpc('/api/pick-po'); usePoFile(path); };
+$('#btnPoClear').onclick = () => { puFile = ''; poInfo = ''; renderPoChip(); puRender(); };
+{
+  const dz = $('#po_drop');
+  ['dragenter', 'dragover'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.add('over'); }));
+  ['dragleave', 'drop'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.remove('over'); }));
+  dz.addEventListener('drop', e => { const f = e.dataTransfer.files[0]; if(f) usePoFile(window.api.pathForFile(f)); });
+}
+/** 구매 상세 사유 = AI 가 한 줄 메모로 쓴 사유 + 그 밑에 '구매 제품 내용:' (발주서·제품 페이지 요약) */
+async function puDraft(){
+  const d = purchaseData();
+  if(!d.memo) { $('#pu_memo').focus(); return alertErr('무엇에 쓰려고 사는지 한 줄 메모를 적어 주세요. 그걸로 사유를 써요.'); }
+  $('#pu_status').textContent = '사유 쓰는 중…'; $('#btnPuDraft').disabled = true;
+  try {
+    const r = await rpc('/api/purchase/draft', { memo: d.memo, purpose: d.purpose === '기타' ? d.purpose_etc : d.purpose, project: puTag(), vendor: d.vendor.name, items: d.items });
+    if(r.desc){ puDesc = r.desc; delete $('#pu_title').dataset.manual; }
+    if(r.reason) $('#pu_reason').value = withSummary(r.reason);
+    puRender(); $('#pu_status').textContent = `제목과 구매 상세 사유를 썼어요${puSummary.length ? ' (아래에 구매 제품 내용)' : ''}. 읽어 보고 고치세요.${!d.purpose || !d.project ? ' 구매목적·프로젝트명은 직접 골라 주세요.' : ''}`;
+    if(typeof setFold === 'function') setFold('#puFold', true);   // 쓴 사유를 바로 보이게
+  } catch(e){ $('#pu_status').textContent = ''; alertErr(e.message); }
+  finally { $('#btnPuDraft').disabled = false; }
+}
+$('#btnPuDraft').onclick = puDraft;
+$('#btnPurchase').onclick = async () => {
+  const d = purchaseData();
+  const need = [];
+  if(radio('pu_src') === 'url' ? !puLink : !puFile) need.push(radio('pu_src') === 'url' ? '제품 페이지 (주소를 넣고 [페이지 읽기])' : '발주서');
+  if(!d.items.length) need.push('구매 요청 내역'); if(d.items.some(i => !i.name)) need.push('품명');
+  if(!d.purpose || (d.purpose === '기타' && !d.purpose_etc)) need.push('구매목적'); if(!d.project) need.push('프로젝트명'); else if(DETAIL_REQ.includes(d.project) && !d.project_etc) need.push(`세부 프로젝트명 (${d.project})`);
+  if(!d.vendor.name) need.push('거래처'); if(!d.reason.split(SUM_HEAD)[0].trim()) need.push('구매 상세 사유 (한 줄 메모 쓰고 [✦ 자동 작성])'); if(!d.title) need.push('제목');
+  if(need.length){ $('#pu_err').textContent = '빠진 것: ' + need.join(', '); return; }
+
+  const supply = d.items.reduce((a, i) => a + (i.amount === '' ? i.qty * i.unit_price : i.amount), 0), total = d.vat_included && !d.price_vat ? Math.round(supply * 1.1) : supply;
+  const html = `<div class="cf-title">${escH(d.title)}</div>
+    <dl class="cf-grid"><dt>거래처</dt><dd>${escH([d.vendor.name, d.vendor.contact].filter((x, i, a) => x && a.indexOf(x) === i).join(' / '))}</dd><dt>구매목적</dt><dd>${escH(d.purpose === '기타' ? d.purpose_etc : d.purpose)}</dd><dt>프로젝트</dt><dd>${escH(puTag())}</dd><dt>긴급도</dt><dd>${escH(d.urgency)} · ${d.substitutable ? '대체 가능' : '대체 불가'}</dd><dt>첨부</dt><dd>${[d.file && escH(d.file.split(/[\\/]/).pop()), puLink && '제품 페이지 캡처'].filter(Boolean).join(', ') || '없음'}</dd></dl>
+    <table class="cf-tbl pu-cf"><colgroup><col><col style="width:64px"><col style="width:110px"><col style="width:92px"></colgroup><thead><tr><th>품명</th><th>수량</th><th class="n">공급가액</th><th>납기</th></tr></thead><tbody>${d.items.map(i => `<tr><td>${escH(i.name)}${i.part_no ? ' <span class="sub">' + escH(i.part_no) + '</span>' : ''}</td><td>${i.qty}${escH(i.unit)}</td><td class="n">${won(i.amount === '' ? i.qty * i.unit_price : i.amount)}</td><td>${escH(i.due || '-')}</td></tr>`).join('')}</tbody><tfoot><tr><td colspan="2">합계 (${d.vat_included ? 'VAT 포함' : 'VAT 미포함'})</td><td class="n">${won(total)}</td><td></td></tr></tfoot></table>`;
+  const warn = '<div class="cf-warn">⚠️ <b>시행자와 결재라인은 앱이 넣지 않아요.</b> 작성 창이 뜨면 이 결재 건에 맞게 <b>꼭 직접 선택</b>한 뒤 [상신]을 눌러 주세요.</div>';
+  if(!(await confirmSubmit({ title: '이대로 그룹웨어에 입력할까요?', html: html + warn, note: '본문·첨부·수신및참조까지 채워요. 시행자·결재라인 선택과 [상신]은 직접.' }))) return;
+  runJob('구매의뢰서 입력', '/api/job/purchase', {data: d}, () => { $('#pu_status').textContent = '그룹웨어 작성 창에 채웠어요. 결재선을 확인하고 [상신]을 눌러 주세요.'; loadPurchaseList(); });
+};
+
 /* ---------- 작업 패널 ---------- */
 let jobTimer = null, jobSince = 0;
 async function runJob(title, path, body, onDone, opt = {}){
@@ -908,7 +1114,7 @@ function watchJob(title, onDone, {quiet = false} = {}){
     const q = s.question;
     $('#jobShow').textContent = '작업 중인 창 열기';
     $('#jobShow').classList.toggle('hidden', !(q || s.state === 'error'));   // 사람이 손봐야 할 때(질문·실패)만 작업 창을 보여 준다
-    const what = {apply: '와니가 작성 중', report: '와니가 작성 중', fare: '와니가 교통비 조회 중', 'trip-delete': '와니가 삭제 중', 'gw-delete': '와니가 삭제 중', 'gw-list': '그룹웨어 로그인·품의 상태를 확인 중이에요', 'gw-profile': '그룹웨어에서 내 정보를 불러오는 중이에요', 'report-load': '그룹웨어에서 보고서를 불러오는 중이에요', 'refund-check': '정산 환원을 확인하는 중이에요', receipts: '와니가 영수증 읽는 중', login: '그룹웨어 로그인 상태를 확인 중이에요'}[s.kind] || '와니가 처리 중';
+    const what = {apply: '와니가 작성 중', report: '와니가 작성 중', fare: '와니가 교통비 조회 중', 'trip-delete': '와니가 삭제 중', 'gw-delete': '와니가 삭제 중', 'gw-list': '그룹웨어 로그인·품의 상태를 확인 중이에요', 'gw-profile': '그룹웨어에서 내 정보를 불러오는 중이에요', 'report-load': '그룹웨어에서 보고서를 불러오는 중이에요', 'po-read': '와니가 발주서 읽는 중', 'url-read': '와니가 제품 페이지 읽는 중', purchase: '와니가 작성 중', 'purchase-list': '구매의뢰 목록을 읽는 중이에요', 'refund-check': '정산 환원을 확인하는 중이에요', receipts: '와니가 영수증 읽는 중', login: '그룹웨어 로그인 상태를 확인 중이에요'}[s.kind] || '와니가 처리 중';
     $('#dimWhat').textContent = what; $('.wani .pen').textContent = /삭제/.test(what) ? '🧹' : /조회|확인/.test(what) ? '🔍' : '✍️';
     const textQ = q && (q.type === 'text' || q.type === 'choice');
     $('#jobAsk').style.display = q && !textQ ? 'block' : 'none';
@@ -1068,5 +1274,5 @@ window.addEventListener('focus', () => { if(Date.now() - gwChecked > 20 * 60 * 1
   if(cur && (cur.state === 'running' || cur.state === 'waiting')) watchJob(cur.title || '진행 중인 작업', cur.kind === 'fare' ? r => setFare(r) : (cur.kind === 'apply' || cur.kind === 'report') ? () => loadTrips() : null);
   $('#q_memo').focus();
   showGwSaved(); checkGw();
-  if(!META.configured || !c.name){ $$('nav button')[2].click(); $('#s_msg').textContent = '처음이면 그룹웨어에 로그인해 주세요. 이름·예산 부서는 자동으로 채워져요. 기본 출발지가 다르면 고쳐서 저장하세요.'; }
+  if(!META.configured || !c.name){ $('nav button[data-tab="settings"]').click(); $('#s_msg').textContent = '처음이면 그룹웨어에 로그인해 주세요. 이름·예산 부서는 자동으로 채워져요. 기본 출발지가 다르면 고쳐서 저장하세요.'; }
 })();

@@ -93,6 +93,12 @@ class Store {
     fs.writeFileSync(this.farePath, JSON.stringify(all, null, 2));
   }
 
+  // 구매의뢰서 기록 (이 PC 에서 작성 창까지 채운 것). 상신 여부는 그룹웨어 결재 문서 목록으로 확인
+  get purchasesPath() { return path.join(this.dir, 'purchases.json'); }
+  purchases() { try { return JSON.parse(fs.readFileSync(this.purchasesPath, 'utf8')); } catch (e) { return []; } }
+  addPurchase(rec) { const all = [rec, ...this.purchases().filter(x => x.title !== rec.title)].slice(0, 100); fs.writeFileSync(this.purchasesPath, JSON.stringify(all, null, 2)); return rec; }
+  removePurchase(title) { fs.writeFileSync(this.purchasesPath, JSON.stringify(this.purchases().filter(x => x.title !== title), null, 2)); }
+
   list() {
     return fs.readdirSync(this.tripsDir).sort().reverse().flatMap(id => {
       try {

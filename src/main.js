@@ -359,7 +359,7 @@ async function route(p, body = {}) {
   const cfg = store.config();
   switch (p) {
     case '/api/meta':
-      return { config: publicConfig(cfg), configured: store.hasConfig(), items: Object.fromEntries(Object.entries(R.BUDGET_ITEMS).map(([k, v]) => [k, v[1]])),
+      return { config: publicConfig(cfg), configured: store.hasConfig(), items: Object.fromEntries(Object.entries(R.BUDGET_ITEMS).map(([k, v]) => [k, v[1]])), purchase: { purposes: R.PURCHASE_PURPOSES, projects: R.PURCHASE_PROJECTS },
         version: app.getVersion(), dev: !app.isPackaged, providers: Object.fromEntries(Object.entries(AI.PROVIDERS).map(([k, v]) => [k, v])) };
     case '/api/config': {
       const patch = { ...body };
@@ -398,6 +398,10 @@ async function route(p, body = {}) {
     case '/api/update/install': return await updater.install();
     case '/api/copy': clipboard.writeText(String(body.text || '')); return { ok: true };
     case '/api/open': if (body.path) shell.openPath(body.path); return { ok: true };
+    case '/api/pick-po': {   // 발주서 1개: PDF·워드·엑셀·이미지
+      const r = await dialog.showOpenDialog(mainWin, { title: '발주서·견적서 선택 (PDF·워드·엑셀·이미지 1개)', properties: ['openFile'], filters: [{ name: '발주서', extensions: ['pdf', 'docx', 'xlsx', 'png', 'jpg', 'jpeg', 'webp'] }] });
+      return { path: r.canceled ? '' : r.filePaths[0] };
+    }
     case '/api/pick-proofs': {   // 정산 증빙: 이미지·PDF 1개
       const r = await dialog.showOpenDialog(mainWin, { title: body.many ? '영수증·증빙 선택 (여러 개)' : '증빙 자료 선택 (이미지·PDF 1개)', properties: body.many ? ['openFile', 'multiSelections'] : ['openFile'],
         filters: [{ name: '이미지·PDF', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'heic', 'heif', 'bmp', 'tif', 'tiff', 'pdf'] }] });
@@ -432,6 +436,58 @@ async function route(p, body = {}) {
       const md = r.date ? r.date.slice(5).split('-').map(Number).join('/') : '';
       return { memo: [md, r.memo || r.vendor].filter(Boolean).join(' '), people: r.people || 0 };
     }
+    case '/api/job/po-read': {   // 발주서(PDF·이미지) 1개 → AI 가 거래처·품목·금액 읽기
+      const ai = aiSettings(cfg); if (!ai) throw new Error('발주서 읽기는 AI 가 있어야 해요. 설정 › AI 문장 작성에서 Gemini 를 골라 주세요.');
+      const f = String(body.path || ''), ext = path.extname(f).slice(1).toLowerCase(), mime = PROOF_MIME[ext], office = ext === 'docx' || ext === 'xlsx';
+      if (!mime && !office) throw new Error('발주서는 PDF·이미지·워드(.docx)·엑셀(.xlsx) 파일이어야 해요.');
+      return startJob('po-read', async env => {
+        env.log(`발주서 읽는 중: ${path.basename(f)}`);
+        const po = office ? await AI.readPurchaseOrder(ai, null, require('./engine/office').officeText(f)) : await AI.readPurchaseOrder(ai, { mime, data: require('fs').readFileSync(f).toString('base64') });
+        env.log(`거래처 ${po.vendor.name || '?'} · 품목 ${po.items.length}건 · 합계 ${po.total.toLocaleString('ko-KR')}원`); return { ...po, file: f };
+      }, body.title);
+    }
+    case '/api/job/url-read': {   // 제품 페이지 주소 → 숨긴 창에서 열어 캡처·글자 → AI 가 품목·가격·판매처
+      const ai = aiSettings(cfg); if (!ai) throw new Error('페이지 읽기는 AI 가 있어야 해요. 설정 › AI 문장 작성에서 Gemini 를 골라 주세요.');
+      const url = String(body.url || '').trim(); if (!/^https?:\/\//i.test(url)) throw new Error('주소는 http:// 또는 https:// 로 시작해야 해요.');
+      return startJob('url-read', async env => {
+        env.log(`페이지 여는 중: ${url}`);
+        const w = new BrowserWindow({ show: false, width: 1200, height: 1400, webPreferences: { partition: 'persist:web', contextIsolation: true, sandbox: true, backgroundThrottling: false } });
+        // 쇼핑몰 페이지가 알림창(alert)·창 닫기·새 창을 띄워도 멈추지 않게: 알림은 바로 닫고, 닫기·새 창은 막는다
+        let done = false; w.on('close', e => { if (!done) e.preventDefault(); });
+        w.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+        const dbg = w.webContents.debugger; let alerts = [];
+        try {
+          dbg.attach('1.3');
+          dbg.on('message', (_e, m, p) => { if (m === 'Page.javascriptDialogOpening') { alerts.push(p.message); dbg.sendCommand('Page.handleJavaScriptDialog', { accept: true }).catch(() => {}); } });
+          dbg.sendCommand('Page.enable').catch(() => {});   // 빈 창에서 await 하면 멈춤
+        } catch (e) { /* 디버거 없이도 진행 */ }
+        try {
+          // 광고·추적 스크립트 때문에 '다 열림' 신호가 늦거나 안 오는 쇼핑몰이 많다 → 본문이 뜨면(dom-ready) 진행, 최대 20초
+          const ready = new Promise(r => w.webContents.once('dom-ready', r));
+          const load = w.loadURL(url).catch(e => { if (!/ERR_ABORTED/.test(e.message)) throw new Error(`페이지를 열 수 없어요 (${String(e.message).split(' loading')[0]})`); });
+          await Promise.race([Promise.all([ready, load]), ready.then(() => new Promise(r => setTimeout(r, 6000))), new Promise((_, j) => setTimeout(() => j(new Error('페이지가 20초 안에 안 열렸어요. 주소를 확인하거나 잠시 뒤 다시 해 주세요.')), 20000))]);
+          await new Promise(r => setTimeout(r, 2500));
+          const info = await w.webContents.executeJavaScript(`({ title: document.title, text: document.body.innerText })`);
+          if (alerts.length) env.log(`(페이지 알림: ${alerts.join(' / ').slice(0, 120)})`);
+          if (!info.text || info.text.trim().length < 30) throw new Error(`페이지 내용이 거의 없어요${alerts.length ? ` (사이트 알림: ${alerts[0].slice(0, 80)})` : ''}. 주소가 맞는지 확인해 주세요.`);
+          const fs = require('fs'), dir = path.join(store.tripsDir, '_po'); fs.mkdirSync(dir, { recursive: true });
+          const shot = path.join(dir, `제품페이지_${Date.now()}.png`);
+          fs.writeFileSync(shot, (await w.webContents.capturePage()).toPNG());
+          env.log('캡처 완료 · AI 가 읽는 중');
+          const r = await AI.readProductPage(ai, { url, title: info.title, text: info.text, shot: { mime: 'image/png', data: fs.readFileSync(shot).toString('base64') } });
+          env.log(`${r.name || '제품 ?'} · ${r.unit_price.toLocaleString('ko-KR')}원 · 판매처 ${r.vendor.name || '?'}`);
+          return { ...r, url, title: info.title, shot };
+        } finally { done = true; try { dbg.detach(); } catch (e) { /* */ } if (!w.isDestroyed()) w.destroy(); }
+      }, body.title);
+    }
+    case '/api/purchase/draft': {   // 메모 + 발주 내용 → 제목 설명·구매 상세 사유
+      const ai = aiSettings(cfg); if (!ai) throw new Error('자동 작성은 AI 가 있어야 해요. 설정 › AI 문장 작성에서 Gemini 를 골라 주세요.');
+      return AI.draftPurchase(ai, { memo: String(body.memo || ''), purpose: String(body.purpose || ''), project: String(body.project || ''), vendor: String(body.vendor || ''), items: Array.isArray(body.items) ? body.items : [] });
+    }
+    case '/api/purchase/title': return { title: R.purchaseTitle(String(body.tag || ''), String(body.desc || '')) };
+    case '/api/job/purchase-list': return startJob('purchase-list', env => runner.runPurchaseList(env, { from: String(body.from || ''), to: String(body.to || '') }), body.title);
+    case '/api/purchase/forget': store.removePurchase(String(body.title || '')); return { ok: true };
+    case '/api/job/purchase': { R.parsePurchase(body.data); return startJob('purchase', env => runner.runPurchase(env, body.data), body.title); }   // 보관·상신은 사람이
     case '/api/job/receipts': {   // 영수증·증빙 여러 개 → AI 가 예산과목·금액·날짜 분류
       const ai = aiSettings(cfg);
       if (!ai) throw new Error('영수증 자동 분류는 AI 가 있어야 해요. 설정 › AI 문장 작성에서 Gemini 를 골라 주세요.');

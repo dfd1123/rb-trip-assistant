@@ -6,7 +6,7 @@ const R = require('./rules');
 const { Amaranth } = require('./gw');
 const { lookupFare, carBasis } = require('./naver');
 const { searchPlaces } = require('./places');
-const { applyPayload, reportPayload } = require('./editorFill');
+const { applyPayload, reportPayload, purchasePayload } = require('./editorFill');
 
 function planApply(data, cfg) {
   if (!cfg.budgetDept) throw new R.InputError('설정에서 예산 부서를 골라 주세요. (그룹웨어에 로그인하면 목록을 받아와요)');
@@ -33,6 +33,37 @@ async function runFare(env, { mode, to, from, place = null }) {
   store.putFare(mode, origin, to, r);
   log(`교통비: ${r.describe}`);
   return r;
+}
+
+/** 구매의뢰서: 품의 입력 없이 결재작성 › 구매의뢰서 양식을 열어 본문을 채우고 발주서를 첨부한다. [보관]·[상신]은 사람이 */
+async function runPurchase(env, data) {
+  const { cfg, ui, log } = env;
+  const pu = R.parsePurchase(data);
+  log(`[구매의뢰서] ${pu.title}`);
+  const gw = new Amaranth({ win: env.gwWindow(), baseUrl: cfg.baseUrl, ui, log, debugDir: env.debugDir, creds: env.creds });
+  await gw.ensureLogin();
+  const popup = await gw.openForm(R.PURCHASE_FORM);
+  const fs = require('fs');
+  const shotDataUrl = pu.link && pu.link.shot && fs.existsSync(pu.link.shot) ? `data:image/png;base64,${fs.readFileSync(pu.link.shot).toString('base64')}` : '';   // 페이지 캡처는 본문에 그림으로도, 첨부로도
+  await gw.fillAndKeep(popup, { title: pu.title, probe: '구매목적', payload: purchasePayload(pu, { shotDataUrl }), attachments: [pu.file, pu.link && pu.link.shot].filter(Boolean), save: false,
+    beforeShow: () => gw.addRecipients(popup, R.PURCHASE_RECIPIENTS, { withDept: true }) });   // 수신및참조까지 다 넣고 나서 창을 띄움
+  env.store.addPurchase({ title: pu.title, created: new Date().toISOString(), data, total: pu.total, vendor: pu.vendor.name, items: pu.items.length });   // 다시 불러오기·목록용
+  return { title: pu.title };
+}
+
+/** 신청한 구매의뢰 목록: 그룹웨어 결재 문서(양식 '구매의뢰서') + 이 PC 기록(아직 상신 안 한 것) */
+async function runPurchaseList(env, { from = '', to = '' } = {}) {
+  const gw = new Amaranth({ win: env.gwWindow(), baseUrl: env.cfg.baseUrl, ui: env.ui, log: env.log, debugDir: env.debugDir, creds: env.creds });
+  const r = listRange(from, to);
+  const nz = x => String(x || '').replace(/\s/g, '');
+  let docs = [];
+  try { docs = (await gw.apiApprovalDocs(r.from.replace(/-/g, ''), r.to.replace(/-/g, ''))).filter(d => d.form === R.PURCHASE_FORM); }
+  catch (e) { env.log(`(결재 문서 목록 못 읽음: ${String(e.message).slice(0, 120)})`); }
+  const mine = env.store.purchases();
+  const rows = docs.map(d => ({ docNo: d.docNo, title: d.title, status: d.status, date: d.date, local: mine.find(m => nz(m.title) === nz(d.title)) || null }));
+  for (const m of mine) if (!rows.some(x => x.local === m)) rows.push({ docNo: '', title: m.title, status: '', date: m.created.slice(0, 10), local: m });   // 작성 창만 열고 아직 상신 안 함 (또는 기간 밖)
+  env.log(`구매의뢰서 ${docs.length}건 (그룹웨어) · 이 PC 기록 ${mine.length}건`);
+  return { rows: rows.map(x => ({ ...x, local: x.local ? { created: x.local.created, data: x.local.data } : null })), from: r.from, to: r.to };
 }
 
 /** 취소·오류로 중단: 작성 팝업 닫고 그룹웨어에 만들어 둔 품의 삭제. 취소 뒤엔 log 가 던지므로 logs 에 직접 남긴다 */
@@ -293,4 +324,4 @@ async function runDeleteTrip(env, id) {
   return { rows };
 }
 
-module.exports = { listRange, runRefundCheck, runProfile, runLoadReport, planApply, runFare, runApply, reportDraft, runReport, runLogin, runListBudget, runDeleteBudget, runDeleteTrip };
+module.exports = { listRange, runRefundCheck, runProfile, runLoadReport, planApply, runFare, runApply, runPurchase, runPurchaseList, reportDraft, runReport, runLogin, runListBudget, runDeleteBudget, runDeleteTrip };
