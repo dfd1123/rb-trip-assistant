@@ -356,3 +356,31 @@ test('수출입은행 환율: 고시 없는 날은 거슬러 가고, 키 오류�
   await assert.rejects(FX.usdRate(''), /OPEN_API_KEY/);
   assert.match(FX.proofHtml(r), /1,348\.5/);
 });
+
+test('네이버 자동완성 장소 글자 해석: 번지만 있는 두 줄도 장소', () => {
+  const { parsePlace } = require('../src/engine/naver');
+  assert.deepEqual(parsePlace('장소\n세종 집현동 1095'), { name: '세종 집현동 1095', address: '' });
+  assert.deepEqual(parsePlace('장소\n기업,빌딩\n한국항공우주산업\n경남 사천시 사남면 공단1로 78 한국항공우주산업'), { name: '한국항공우주산업', address: '경남 사천시 사남면 공단1로 78' });
+  assert.equal(parsePlace('대중교통\n출발\n세종 집현동 1095'), null);
+  assert.equal(parsePlace('장소'), null);
+});
+
+test('네이버 지역 검색: 이름·도로명 주소·좌표로 정리, 키 없으면 null', async () => {
+  const { searchPlaces } = require('../src/engine/places');
+  const fake = async () => ({ ok: true, status: 200, json: async () => ({ items: [
+    { title: '<b>한국항공우주산업</b>', address: '경상남도 사천시 사남면 유천리 802', roadAddress: '경상남도 사천시 사남면 공단1로 78 한국항공우주산업', mapx: '1280652238', mapy: '350761198', category: '서비스,산업>기업' },
+    { title: '좌표 없음', address: '', roadAddress: '', mapx: '0', mapy: '0', category: '' }] }) });
+  const r = await searchPlaces('한국항공우주산업', { keys: { id: 'a', secret: 'b' }, fetch: fake });
+  assert.deepEqual(r, [{ name: '한국항공우주산업', address: '경상남도 사천시 사남면 공단1로 78 한국항공우주산업', category: '서비스,산업>기업', lng: 128.0652238, lat: 35.0761198 }]);
+  assert.equal(await searchPlaces('x', { keys: null, fetch: fake }), null);
+  assert.deepEqual(await searchPlaces('   ', { keys: { id: 'a', secret: 'b' }, fetch: fake }), []);
+  await assert.rejects(searchPlaces('x', { keys: { id: 'a', secret: 'b' }, fetch: async () => ({ ok: false, status: 401 }) }), /키가 올바르지/);
+});
+
+test('네이버 길찾기 주소: 도착지 좌표를 주소에 넣고 출발지는 -', () => {
+  const { directionsUrl } = require('../src/engine/naver');
+  const d = { name: '한국항공우주산업', lng: 128.0652238, lat: 35.0761198 };
+  assert.equal(directionsUrl('car', null, d), 'https://map.naver.com/p/directions/-/128.0652238,35.0761198,%ED%95%9C%EA%B5%AD%ED%95%AD%EA%B3%B5%EC%9A%B0%EC%A3%BC%EC%82%B0%EC%97%85,,/-/car');
+  assert.equal(directionsUrl('transit', null, d).split('/').pop(), 'transit');
+  assert.equal(directionsUrl('car', null, { name: 'x', lng: 0, lat: 0 }), 'https://map.naver.com/p/directions/-/-/-/car');
+});

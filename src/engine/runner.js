@@ -4,7 +4,8 @@
 const path = require('path');
 const R = require('./rules');
 const { Amaranth } = require('./gw');
-const { lookupFare } = require('./naver');
+const { lookupFare, carBasis } = require('./naver');
+const { searchPlaces } = require('./places');
 const { applyPayload, reportPayload } = require('./editorFill');
 
 function planApply(data, cfg) {
@@ -18,16 +19,17 @@ function planApply(data, cfg) {
   };
 }
 
-async function runFare(env, { mode, to, from }) {
+async function runFare(env, { mode, to, from, place = null }) {
   const { cfg, store, ui, log } = env;
   if (mode !== 'car' && mode !== 'transit') return { total: 0, describe: '법인차량은 교통비를 자동 계산하지 않습니다.' };
   if (!to) throw new R.InputError('도착지를 입력해 주세요.');
   const origin = from || cfg.defaultOrigin;
   if (!origin) throw new R.InputError('출발지가 없어요. 설정의 기본 출발지나 교통·경비의 출발지를 넣어 주세요.');
   const cached = store.getFare(mode, origin, to);
-  if (cached && !env.force) { log(`교통비(최근 조회값): ${cached.describe}`); return { ...cached, source: 'cache' }; }
+  if (cached && !env.force && (mode !== 'car' || cached.basis === carBasis({ type: cfg.carType, fuel: cfg.carFuel }))) { log(`교통비(최근 조회값): ${cached.describe}`); return { ...cached, source: 'cache' }; }   // 자차는 연비 8km/L 로 조회한 값만
   const shot = path.join(store.tripsDir, '_fare', `교통비_${mode}_${Date.now()}.png`);
-  const r = await lookupFare({ makeWindow: env.makeNaverWindow, mode, origin, dest: to, shotPath: shot, ui, log, debugDir: env.debugDir, creds: env.creds });
+  const r = await lookupFare({ makeWindow: env.makeNaverWindow, mode, origin, dest: to, shotPath: shot, ui, log, debugDir: env.debugDir, creds: env.creds, car: { type: cfg.carType, fuel: cfg.carFuel },
+    destPlace: place, places: env.naverKeys ? q => searchPlaces(q, { keys: env.naverKeys, fetch: env.fetch }) : null });
   store.putFare(mode, origin, to, r);
   log(`교통비: ${r.describe}`);
   return r;
@@ -83,8 +85,9 @@ function reportDraft(store, cfg, id) {
     period: `${a.start.replace(/-/g, '.')}${a.start_time ? ' ' + a.start_time : ''} - ${a.end.replace(/-/g, '.')}${a.end_time ? ' ' + a.end_time : ''}`,
     purpose: a.purpose, report: '',
     schedule: days.map(date => ({ date, place: a.destination, detail: '' })),
-    // 교통비는 신청 때 더한 여유분 없이 실제(네이버 지도) 금액으로, 증빙은 지도 캡처
-    expenses: (r.expenses || a.expenses).map(({ item, amount, memo }) => item === 'domestic_transport' && r.fare && r.fare.total
+    transport: a.transport ? { mode: a.transport.mode, from: a.transport.from || '', to: a.transport.to || '', place: a.transport.place || (r.fare && r.fare.place && r.fare.place.lng ? r.fare.place : null) } : null,
+    // 교통비는 신청 때 더한 여유분 없이 실제(네이버 지도) 금액으로, 증빙은 지도 캡처. 자차는 휘발유 8km/L 로 조회한 것만 증빙이 됨
+    expenses: (r.expenses || a.expenses).map(({ item, amount, memo }) => item === 'domestic_transport' && r.fare && r.fare.total && (a.transport.mode !== 'car' || r.fare.basis === carBasis({ type: cfg.carType, fuel: cfg.carFuel }))
       ? { item, amount: r.fare.total, memo: memo.replace(/ \+ 여유 [\d,]+원/, ''), proofs: r.fare.screenshot ? [r.fare.screenshot] : [] }
       : { item, amount, memo, proofs: [] }),
     attachments: [],

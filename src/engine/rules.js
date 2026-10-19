@@ -119,6 +119,7 @@ function parseApply(data) {
     check: asList(t.check).length ? asList(t.check) : TRANSPORT_MODES[mode].check,
     total: (t.total === undefined || t.total === null || t.total === '') ? null : amount(t.total, 'transport.total'),
     screenshot: String(t.screenshot || ''),
+    place: t.place && Number(t.place.lng) && Number(t.place.lat) ? { name: String(t.place.name || ''), address: String(t.place.address || ''), lng: Number(t.place.lng), lat: Number(t.place.lat) } : null,   // 지역 검색으로 고른 출장지 좌표
   };
   if (TRANSPORT_MODES[mode].autoFare && transport.total === null && !transport.to)
     throw new InputError('도착지(transport.to) 또는 교통비(transport.total)가 필요합니다.');

@@ -141,9 +141,9 @@ class Job {
     this.logs.push(...String(msg).split('\n'));
     if (!app.isPackaged) { try { const d = path.join(__dirname, '..', 'debug'); require('fs').mkdirSync(d, { recursive: true }); require('fs').appendFileSync(path.join(d, 'job.log'), `${new Date().toISOString()} [${this.kind}] ${msg}\n`); } catch (e) { /* 개발용 기록 */ } }   // 개발 중엔 작업 기록을 파일로도 (원인 찾기용)
   }
-  _ask(type, text) {
+  _ask(type, text, def) {
     if (this.cancelled) return Promise.reject(new Cancelled());
-    this.state = 'waiting'; this.question = { type, text };
+    this.state = 'waiting'; this.question = { type, text, def };
     return new Promise((r, j) => {
       this._resolve = v => { this.question = null; this.state = 'running'; r(v); };
       this._reject = e => { this.question = null; j(e); };
@@ -156,6 +156,8 @@ class Job {
   async assist(msg) { this.info(`⚠ ${msg}`); await this._ask('assist', msg); }
   async confirm(text) { return Boolean(await this._ask('confirm', text)); }
   async askInt(text) { return Number(await this._ask('int', text)); }
+  async askText(text, def = '') { return String(await this._ask('text', text, def) ?? ''); }
+  async askChoice(text, options) { return this._ask('choice', text, options); }   // 고른 번호(0부터), '' 이면 안 고름
   async pause(text) { await this._ask('pause', text); }
   answer(v) { if (this._resolve) { const f = this._resolve; this._resolve = this._reject = null; f(v); } }
   snapshot(since = 0) { return { kind: this.kind, title: this.title, state: this.state, logs: this.logs.slice(since), next: this.logs.length, question: this.question, result: this.result, error: this.error }; }
@@ -167,7 +169,7 @@ function startJob(kind, fn, title) {
   else if (job && job.state === 'running' && job.kind === 'fare') job.cancel();   // 교통비 조회는 새 조회가 덮어씀 (교통편 연달아 바꿀 때)
   else if (job && job.state === 'running') throw new Error('이전 작업이 아직 진행 중이에요. 작업창의 [취소]를 누른 뒤 다시 시도해 주세요.');
   const j = job = new Job(kind, title);
-  const env = { debugDir: app.isPackaged ? path.join(app.getPath('userData'), 'debug') : path.join(__dirname, '..', 'debug'), cfg: store.config(), store, ui: j, log: m => j.info(m), gwWindow: () => gwWindow(false), showGw, makeNaverWindow, creds: gwCreds };
+  const env = { debugDir: app.isPackaged ? path.join(app.getPath('userData'), 'debug') : path.join(__dirname, '..', 'debug'), cfg: store.config(), store, ui: j, log: m => j.info(m), naverKeys: naverKeys(), fetch: net.fetch, gwWindow: () => gwWindow(false), showGw, makeNaverWindow, creds: gwCreds };
   (async () => {
     try { j.result = await fn(env); j.state = 'done'; j.info('✔ 완료'); }
     catch (e) { j.error = e instanceof R.InputError ? `입력 오류: ${e.message}` : e.message; j.state = j.cancelled ? 'cancelled' : 'error'; }
@@ -260,7 +262,9 @@ function encryptKey(key) {
 }
 // 한국수출입은행 환율 키: 개발 중엔 .env 의 OPEN_API_KEY, 배포본엔 빌드 때 builtin-key.json 에 내장 (팀 공용)
 const fxKey = () => (process.env.OPEN_API_KEY || (() => { try { return require('./engine/builtin-key.json').fxKey; } catch (e) { return ''; } })() || '').trim();
-const publicConfig = c => { const { aiKeyEnc, gwPwEnc, ...rest } = c; return { ...rest, fxKeySet: Boolean(fxKey()), aiKeySet: Boolean(aiKeyEnc) || Boolean(aiSettings(c)), aiBuiltin: !aiKeyEnc && Boolean(aiSettings(c)), gwSaved: Boolean(c.gwId && gwPwEnc) }; };
+// 네이버 지역 검색 키 (출장지 자동완성·좌표): 개발 중엔 .env, 배포본엔 builtin-key.json (팀 공용)
+const naverKeys = () => { const b = (() => { try { return require('./engine/builtin-key.json'); } catch (e) { return {}; } })(); const id = (process.env.NAVER_CLIENT_ID || b.naverId || '').trim(), secret = (process.env.NAVER_CLIENT_SECRET || b.naverSecret || '').trim(); return id && secret ? { id, secret } : null; };
+const publicConfig = c => { const { aiKeyEnc, gwPwEnc, ...rest } = c; return { ...rest, fxKeySet: Boolean(fxKey()), placesOn: Boolean(naverKeys()), aiKeySet: Boolean(aiKeyEnc) || Boolean(aiSettings(c)), aiBuiltin: !aiKeyEnc && Boolean(aiSettings(c)), gwSaved: Boolean(c.gwId && gwPwEnc) }; };
 
 /** 한 줄 메모 → 신청서. AI 가 있으면 문장/추론은 AI, 금액·출장지 이름은 항상 규칙. */
 async function quick(memo) {
@@ -385,7 +389,7 @@ async function route(p, body = {}) {
     case '/api/trips': return { trips: store.list().map(t => ({ ...t, reportMemo: R.budgetMemo(R.reportTitle(t.reason || '')), reportDocTitle: R.reportTitle(t.reason || '') })) };   // reportDocTitle: 출장보고서 결재 문서 제목 (목록에서 보고 상태 찾기)   // reportMemo: 보고 품의 적요 (연결이 끊긴 보고 품의를 찾는 데 씀)
     case '/api/draft': {   // 전에 작성한 보고서가 있으면 그대로, 없으면 신청 내용으로 초안
       const base = runner.reportDraft(store, cfg, body.id); const saved = store.load(body.id).report;
-      const d = saved ? { ...base, ...saved, trip_id: body.id } : base;
+      const d = saved ? { ...base, ...saved, trip_id: body.id, transport: base.transport } : base;
       return { draft: d, prompt: R.reportPrompt(d), resumed: !!saved };
     }
     case '/api/trip/link-report': { const rec = store.load(body.id); const r = body.row; rec.gwReport = { key: r.key, ym: r.ym, day: String(r.day), seq: String(r.seq) }; store.save(body.id, rec); return { ok: true }; }
@@ -413,7 +417,7 @@ async function route(p, body = {}) {
       store.saveConfig({ gwPwEnc: '', gwUser: null, name: '', budgetDept: '', budgetDepts: [] });
       return { ok: true };
     }
-    case '/api/gw/show': if (job && job.kind === 'fare' && showNaver()) return { ok: true }; showGw(); return { ok: true };
+    case '/api/gw/show': if (showNaver()) return { ok: true }; showGw(); return { ok: true };
     case '/api/gw/open': openGwViewer(cfg.baseUrl); return { ok: true };   // 상단 [그룹웨어 열기]: 사람이 쓰는 별도 창 (작업 창과 로그인만 공유)
     case '/api/gw/hide': hideGw(); return { ok: true };
     case '/api/job/gw-list': return startJob('gw-list', env => runner.runListBudget(env, { from: String(body.from || ''), to: String(body.to || '') }), body.title);   // 조회 기간(YYYY-MM-DD), 기본 최근 3개월·최대 1년
@@ -432,6 +436,10 @@ async function route(p, body = {}) {
       const ai = aiSettings(cfg);
       if (!ai) throw new Error('영수증 자동 분류는 AI 가 있어야 해요. 설정 › AI 문장 작성에서 Gemini 를 골라 주세요.');
       return startJob('receipts', env => readReceipts(env, ai, (body.paths || []).map(String), String(body.period || '')), body.title);
+    }
+    case '/api/places': {   // 출장지 자동완성 (네이버 지역 검색). 키가 없으면 items: null
+      const items = await require('./engine/places').searchPlaces(String(body.q || ''), { keys: naverKeys(), fetch: net.fetch });
+      return { items };
     }
     case '/api/fx/rate': {   // 한국수출입은행 USD 매매기준율 + 결재 첨부용 조회 결과 이미지
       const FX = require('./engine/fx');
@@ -454,7 +462,7 @@ async function route(p, body = {}) {
       const keep = prev ? (({ report, gwReport, reportStatus, resolutionNo }) => ({ report, gwReport, reportStatus, resolutionNo }))(store.load(id)) : {};   // 작성 중이던 보고서·보고 품의 연결·전송한 결의번호는 유지
       store.save(id, { ...keep, id, created: new Date().toISOString(), title: R.applyTitle(reason), status: '그룹웨어', gwApply: { key: r.key, ym: r.ym, day: String(r.day), seq: String(r.seq) },
         apply: { reason, destination: (f && f.destination) || '', start: (f && f.start) || pday, end: (f && f.end) || pday, start_time: (f && f.start_time) || '', end_time: (f && f.end_time) || '',
-          category: (f && f.category) || '일반', project: (f && f.project) || '', transport: { mode: (f && f.transport) || 'car', to: '', from: '', total: null },
+          category: (f && f.category) || '일반', project: (f && f.project) || '', transport: { mode: (f && f.transport) || '', to: '', from: '', total: null },   // 본문을 못 읽으면 교통편 모름 (보고서에서 자차·대중교통 둘 다 안내)
           companions: (f && f.companions) || [], companion_purpose: (f && f.companion_purpose) || '', purpose: (f && f.purpose) || '', expenses: [] } });
       return { id, filled: !!f, note };
     }

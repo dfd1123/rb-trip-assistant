@@ -8,6 +8,9 @@ const DEFAULT_CONFIG = {
   baseUrl: 'https://gw.rainbow-robotics.com',
   name: '',
   budgetDept: '',   // 그룹웨어 로그인 후 품의부서로 채움 (설정에서 사업코드 목록 중 선택)
+  hasCar: null,          // 자차 있음 (null = 아직 안 물어봄 → 로그인 뒤 한 번 물어봄)
+  carFuel: 'gasoline',   // 내 차 연료 (자차 유류대 조회): gasoline 휘발유 · diesel 경유 · lpg LPG · electric 전기
+  carType: '1',          // 내 차 차종 (네이버 차종 선택): 6 경차 · 1 1종 · 2 2종 · 3 3종 · 4 4종 · 5 5종 · 9 이륜차
   rank: 'staff',   // 출장 규정 직급: staff = 부장 이하, exec = 임원 (숙박 한도·해외 일비가 다름)
   budgetDepts: [],          // 그룹웨어 사업코드도움 목록
   defaultOrigin: '세종특별자치시 집현동 1095',   // 교통비 조회 출발지 기본값 (설정에서 바꿀 수 있음)

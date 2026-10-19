@@ -718,7 +718,7 @@ class Amaranth {
       const project = (() => { const v = next(label('구분')); const m = v && /연구과제\s*\(\s*([^)]*?)\s*\)/.exec(v.innerText || ''); return m && !/^과제명$/.test(m[1].trim()) ? m[1].trim() : ''; })();
       return { destination: text('국내'), period, start: ds[0] ? ds[0].d : '', end: ds[1] ? ds[1].d : (ds[0] ? ds[0].d : ''), start_time: ds[0] ? ds[0].t : '', end_time: ds[1] ? ds[1].t : '',
         category: cat.some(c => c.startsWith('연구과제')) ? '연구과제' : '일반', project,
-        transport: tr.some(c => c.startsWith('자차')) ? 'car' : tr.some(c => /기차|버스/.test(c)) ? 'transit' : tr.some(c => c.startsWith('법인')) ? 'corporate' : 'car',
+        transport: tr.some(c => c.startsWith('자차')) ? 'car' : tr.some(c => /기차|버스/.test(c)) ? 'transit' : tr.some(c => c.startsWith('법인')) ? 'corporate' : '',   // 아무것도 체크 안 됐으면 모름
         companions: text('동행자').split(/[,،、]\s*|\s{2,}/).map(s => s.trim()).filter(Boolean), companion_purpose: text('동행목적'), purpose: text('출장목적(상세기입)', '출장목적') };
     }, html);
   }

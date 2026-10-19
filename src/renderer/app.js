@@ -134,12 +134,13 @@ const readExp = tbody => [...tbody.querySelectorAll('tr')].map(tr => {
 }).filter(e => !e.empty);   // 금액을 비운 줄만 뺀다. 0원은 사용자가 넣은 값이라 그대로 올림
 
 /* ---------- 신청서 ---------- */
+let placeGeo = null;   // 지역 검색으로 고른 출장지 {name, address, lng, lat} — 좌표로 길찾기를 바로 연다
 function applyData(){
   const ovs = isOverseas();
   const mode = ovs ? 'overseas' : radio('a_mode');
   const t = {mode};
   if(mode==='corporate'){ if($('#a_corporate_car').value) t.corporate_car = $('#a_corporate_car').value; }
-  else if(mode !== 'overseas'){ t.to = $('#a_to').value.trim() || $('#a_destination').value.trim(); t.from = $('#a_from').value.trim(); }
+  else if(mode !== 'overseas'){ t.to = $('#a_to').value.trim() || $('#a_destination').value.trim(); t.from = $('#a_from').value.trim(); if(placeGeoValid()) t.place = placeGeo; }
   if($('#a_fare').value) t.total = num($('#a_fare').value);
   if(fareShot) t.screenshot = fareShot;
   return {
@@ -159,6 +160,7 @@ function fillApply(d){
   setRadio('a_category', d.category||'일반'); $('#a_project').value = d.project||'';
   const t = d.transport||{}; $$('input[name=a_mode]').forEach(x => x.checked = false); if(t.mode) setRadio('a_mode', t.mode);   // 교통편은 정해졌을 때만 (안 정했으면 비워 둠)
   $('#a_to').value = t.to||''; if(t.from) $('#a_from').value = t.from;
+  placeGeo = t.place && t.place.lng ? t.place : null;
   $('#a_fare').value = t.total ? Number(t.total).toLocaleString('ko-KR') : ''; fareShot = t.screenshot || ''; $('#a_fare_desc').textContent = '';
   if(t.corporate_car) $('#a_corporate_car').value = t.corporate_car;
   $('#a_companions').value = (d.companions||[]).join(', ');
@@ -219,6 +221,45 @@ $('#btnFill').onclick = async () => {
   try { fillApply((await rpc('/api/parse', {text: $('#aiPaste').value})).data); }
   catch(e){ $('#aiErr').textContent = e.message; }
 };
+/* ---------- 출장지 자동완성 (네이버 지역 검색) ---------- */
+const placeGeoValid = () => !!(placeGeo && placeGeo.lng && $('#a_destination').value.includes(placeGeo.name));   // 출장지 글자를 지우거나 바꾸면 무효
+/** 입력칸 아래 네이버 지역 검색 후보 목록. skip() 이 true 면 안 띄움, onPick(place) 로 고른 곳 전달 */
+function attachAc(input, box, { onPick, skip = () => false }){
+  let timer = null, seq = 0;
+  const hide = () => { box.classList.add('hidden'); box.innerHTML = ''; };
+  async function search(){
+    const q = input.value.trim();
+    if(q.length < 2 || !(META.config && META.config.placesOn) || skip()) return hide();
+    const my = ++seq;
+    let items = null; try { items = (await rpc('/api/places', {q})).items; } catch(e){ return hide(); }
+    if(my !== seq || document.activeElement !== input) return;   // 그새 더 쳤거나 칸을 떠남
+    box.innerHTML = '';
+    if(!items || !items.length){ const d = document.createElement('div'); d.className = 'none'; d.textContent = items ? '지도에서 못 찾았어요 — 주소를 적으면 교통비 조회 때 그 주소로 찾아요' : ''; box.appendChild(d); box.classList.toggle('hidden', !items); return; }
+    items.forEach(pl => { const b = document.createElement('button'); b.type = 'button'; b.textContent = pl.name; const sm = document.createElement('small'); sm.textContent = pl.address || pl.category || ''; b.appendChild(sm); b.onmousedown = e => { e.preventDefault(); hide(); onPick(pl); }; box.appendChild(b); });
+    box.classList.remove('hidden');
+  }
+  const later = () => { clearTimeout(timer); timer = setTimeout(search, 350); };
+  input.addEventListener('input', later);
+  input.addEventListener('focus', () => { if(!skip()) later(); });
+  input.addEventListener('blur', () => setTimeout(hide, 150));
+  input.addEventListener('keydown', e => {
+    if(box.classList.contains('hidden')) return;
+    const bs = [...box.querySelectorAll('button')]; if(!bs.length) return;
+    let i = bs.findIndex(b => b.classList.contains('on'));
+    if(e.key === 'ArrowDown'){ e.preventDefault(); i = (i + 1) % bs.length; bs.forEach((b, j) => b.classList.toggle('on', j === i)); }
+    else if(e.key === 'ArrowUp'){ e.preventDefault(); i = (i - 1 + bs.length) % bs.length; bs.forEach((b, j) => b.classList.toggle('on', j === i)); }
+    else if(e.key === 'Enter' && i >= 0 && !e.isComposing){ e.preventDefault(); e.stopPropagation(); bs[i].dispatchEvent(new MouseEvent('mousedown')); }
+    else if(e.key === 'Escape') hide();
+  });
+  return { hide };
+}
+function pickPlace(pl){
+  placeGeo = pl; $('#a_destination').value = pl.address ? `${pl.name} (${pl.address})` : pl.name; $('#a_to').value = pl.name;
+  $('#a_destination').classList.remove('need'); refreshApply();
+  const m = radio('a_mode'); if(!isOverseas() && (m === 'car' || m === 'transit')) lookupFare(true);   // 고른 곳으로 교통비 새로
+}
+attachAc($('#a_destination'), $('#a_dest_ac'), { onPick: pickPlace, skip: placeGeoValid });
+$('#a_destination').addEventListener('input', () => { placeGeo = null; });
 /** 네이버 지도에서 찾은 도착지로 출장지 칸 채우기: 검색어(예: KAI) 그대로면 '정식 이름 (주소)', 주소가 없으면 뒤에 (주소) */
 function setDestinationFromPlace(place){
   if(!place || !place.address) return;
@@ -229,7 +270,11 @@ function setDestinationFromPlace(place){
 }
 function setFare(r, label = ''){
   if(!r || !r.total) return;
+  if(r.query && r.query !== ($('#a_to').value.trim() || $('#a_destination').value.trim())){   // 조회 중에 출장지를 고쳐 줬으면 그걸로
+    $('#a_to').value = r.query; $('#a_destination').value = r.query;
+  }
   setDestinationFromPlace(r.place);
+  if(r.place && r.place.lng) placeGeo = r.place;   // 좌표까지 알았으면 다음 조회(보고서 유류대)는 바로 좌표로
   $('#a_fare').value = r.total.toLocaleString('ko-KR'); fareShot = r.screenshot||'';
   $('#a_fare_desc').innerHTML = '<b></b> <span></span> <a href="#">캡처 보기</a>';
   $('#a_fare_desc b').textContent = r.describe; $('#a_fare_desc span').textContent = label;
@@ -239,7 +284,7 @@ function setFare(r, label = ''){
 function lookupFare(force){
   const d = applyData();
   if(d.transport.mode==='corporate' || !d.transport.to) return;
-  runJob('교통비 조회 (네이버 지도)', '/api/job/fare', {mode: d.transport.mode, to: d.transport.to, from: d.transport.from, force}, r => setFare(r, r && r.source==='cache' ? '(최근 30일 내 조회값)' : ''));
+  runJob('교통비 조회 (네이버 지도)', '/api/job/fare', {mode: d.transport.mode, to: d.transport.to, from: d.transport.from, place: d.transport.place || null, force}, r => setFare(r, r && r.source==='cache' ? '(최근 30일 내 조회값)' : ''));
 }
 $('#btnFare').onclick = () => lookupFare(true);
 // 교통편을 바꾸면 이전 교통비는 무효 → 비우고 자동 재조회 (법인차량은 교통비 없음)
@@ -596,8 +641,28 @@ function fillReport(d){
   $('#r_sched tbody').innerHTML = ''; (d.schedule||[]).forEach(schedRow);
   $('#r_exp tbody').innerHTML = ''; (d.expenses||[]).forEach(e => expRow($('#r_exp tbody'), e, refreshReport));
   reportAttachments = d.attachments||[];
+  reportTransport = d.transport || null;
+  const tm = reportTransport && reportTransport.mode;
+  $('#btnFuel').classList.toggle('hidden', !(tm === 'car' || !tm));   // 교통편을 모르는 출장(그룹웨어에서 가져옴)도 자차일 수 있으니 보여 줌
+  $('#r_fuel_hint').textContent = tm === 'car' ? ' 자차 유류대 증빙은 [🚗 유류대 조회]로 네이버 지도(내 차 연료·연비 8km/L) 캡처를 넣어요.' : tm === 'corporate' ? ' 법인차량은 주유소 영수증을 증빙으로 넣어 주세요.' : tm === 'transit' ? ' 대중교통은 승차권·영수증을 증빙으로 넣어 주세요.' : ' 신청서에서 교통편을 못 읽었어요. 자차였으면 [🚗 유류대 조회], 대중교통이면 승차권 영수증을 넣어 주세요.';
   $('#r_attach').textContent = reportAttachments.length ? `첨부: ${reportAttachments.map(p=>p.split(/[\\/]/).pop()).join(', ')}` : '';
   refreshReport();
+}
+let reportTransport = null;   // 신청 때 교통편 (자차면 유류대 = 네이버 지도 8km/L 캡처가 증빙)
+$('#btnFuel').onclick = () => lookupFuel();
+function lookupFuel(){
+  // 도착지: 신청 때 지도 검색어 → 없으면(그룹웨어에서 가져온 출장) 보고서의 출장지. '이름 (주소)' 꼴이면 주소로 찾는 게 정확
+  const t = reportTransport || {}, dest = $('#r_destination').value.trim(), addr = (/\(([^)]*)\)\s*$/.exec(dest) || [])[1];
+  const to = t.to || (addr && /\d/.test(addr) ? addr : dest);
+  if(!to) return alertErr('출장지를 먼저 적어 주세요. 그 이름으로 네이버 지도에서 찾아요.');
+  runJob('유류대 조회 (네이버 지도)', '/api/job/fare', {mode: 'car', to, from: t.from, place: t.place || null, force: true}, r => {
+    if(!r || !r.total) return;
+    const tb = $('#r_exp tbody');
+    const proofName = tr => (JSON.parse(tr.dataset.proofs || '[]')[0] || '').split(/[\\/]/).pop();
+    [...tb.querySelectorAll('tr')].filter(tr => tr.querySelector('.item').value === 'domestic_transport' && /^(교통비_car.*)?$/.test(proofName(tr))).forEach(tr => tr.remove());   // 증빙 없는 교통비 줄·이전 지도 캡처 줄은 새 값으로 (영수증 붙은 줄은 그대로)
+    expRow(tb, { item: 'domestic_transport', amount: r.total, memo: `자차 왕복 유류대·통행료 (${r.basis || '휘발유 8km/L'}, 네이버 지도)`, proofs: r.screenshot ? [r.screenshot] : [] }, refreshReport);
+    refreshReport();
+  });
 }
 async function openReport(id){
   const {trips} = await rpc('/api/trips'); const t = trips.find(x => x.id === id);
@@ -614,6 +679,9 @@ async function showReport(id, r, extra = ''){
   $('#r_title').textContent = (await rpc('/api/title', {reason: r.draft.reason})).report;
   fillReport(r.draft);
   $('#tripList').classList.add('hidden'); $('#reportView').classList.remove('hidden');
+  // 자차면 유류대(네이버 지도 8km/L 캡처)를 바로 조회. 이미 증빙 캡처가 붙은 교통비 줄이 있으면 안 함
+  const hasFuel = [...$('#r_exp tbody').querySelectorAll('tr')].some(tr => tr.querySelector('.item').value === 'domestic_transport' && JSON.parse(tr.dataset.proofs || '[]').length);
+  if(reportTransport && reportTransport.mode === 'car' && !hasFuel) lookupFuel();
 }
 function reportData(){
   return {...currentTrip, category: radio('r_category'), fund: radio('r_fund') || '', project: $('#r_project').value.trim(),
@@ -621,7 +689,7 @@ function reportData(){
     visit_org: $('#r_visit_org').value.trim(), companions: list($('#r_companions').value),
     purpose: $('#r_purpose').value.trim(), report: $('#r_report').value.trim(),
     schedule: [...$('#r_sched tbody').querySelectorAll('tr')].map(tr => { const [d,p,x]=tr.querySelectorAll('input,textarea'); return {date:d.value, place:p.value, detail:x.value}; }),
-    expenses: readExp($('#r_exp tbody')), attachments: reportAttachments};
+    expenses: readExp($('#r_exp tbody')), attachments: reportAttachments, transport: reportTransport};
 }
 /* 보고서 자동 작성: 영수증 파일들 + 한 줄 메모를 다 넣은 뒤 [자동 작성] → 메모로 보고사항·일정, 영수증은 AI 로 경비 줄 */
 let rqFiles = [];
@@ -800,7 +868,7 @@ function loadAiSettings(){
   $('#s_key').value = ''; keyHint(); $('#s_ai').addEventListener('change', keyHint);
 
   const r = c.rates; $('#s_lodging').value = r.lodgingPerNight; $('#s_breakfast').value = r.breakfast; $('#s_lunch').value = r.lunch; $('#s_dinner').value = r.dinner; $('#s_fare_margin').value = r.fareMargin ?? 20000;
-  $('#s_rank').value = c.rank || 'staff';
+  $('#s_rank').value = c.rank || 'staff'; $('#s_car_fuel').value = c.carFuel || 'gasoline'; $('#s_car_type').value = c.carType || '1';
 }
 $('#s_ai').onchange = () => { const k = $('#s_ai').value; $('#s_model').placeholder = META.providers[k] ? `기본: ${META.providers[k].model}` : '비우면 기본 모델'; };
 $('#btnAiSave').onclick = async () => {
@@ -815,7 +883,7 @@ $('#btnAiTest').onclick = async () => {
 };
 $('#btnRateSave').onclick = async () => {
   const rates = {...META.config.rates, lodgingPerNight: num($('#s_lodging').value), breakfast: num($('#s_breakfast').value), lunch: num($('#s_lunch').value), dinner: num($('#s_dinner').value), fareMargin: num($('#s_fare_margin').value)};
-  await rpc('/api/config', {rates, rank: $('#s_rank').value}); META = await rpc('/api/meta'); $('#s_rate_msg').textContent = '저장됨';
+  await rpc('/api/config', {rates, rank: $('#s_rank').value, carFuel: $('#s_car_fuel').value, carType: $('#s_car_type').value}); META = await rpc('/api/meta'); $('#s_rate_msg').textContent = '저장됨';
 };
 
 /* ---------- 작업 패널 ---------- */
@@ -841,7 +909,10 @@ function watchJob(title, onDone, {quiet = false} = {}){
     $('#jobShow').classList.toggle('hidden', !(q || s.state === 'error'));   // 사람이 손봐야 할 때(질문·실패)만 작업 창을 보여 준다
     const what = {apply: '와니가 작성 중', report: '와니가 작성 중', fare: '와니가 교통비 조회 중', 'trip-delete': '와니가 삭제 중', 'gw-delete': '와니가 삭제 중', 'gw-list': '그룹웨어 로그인·품의 상태를 확인 중이에요', 'gw-profile': '그룹웨어에서 내 정보를 불러오는 중이에요', 'report-load': '그룹웨어에서 보고서를 불러오는 중이에요', 'refund-check': '정산 환원을 확인하는 중이에요', receipts: '와니가 영수증 읽는 중', login: '그룹웨어 로그인 상태를 확인 중이에요'}[s.kind] || '와니가 처리 중';
     $('#dimWhat').textContent = what; $('.wani .pen').textContent = /삭제/.test(what) ? '🧹' : /조회|확인/.test(what) ? '🔍' : '✍️';
-    $('#jobAsk').style.display = q ? 'block' : 'none';
+    const textQ = q && (q.type === 'text' || q.type === 'choice');
+    $('#jobAsk').style.display = q && !textQ ? 'block' : 'none';
+    if(textQ && !$('#askModal').classList.contains('on')) openAsk(q);
+    if(!textQ) $('#askModal').classList.remove('on');
     $('#jobSpin').classList.toggle('on', !q && s.state === 'running');   // 사람 입력 기다릴 땐 멈춤
     if(!quiet || dimQuiet) $('#dim').classList.toggle('on', !q && s.state === 'running');   // 사람 입력 기다릴 땐 딤 해제 (화면 손봐야 하니)
     if(q || s.state==='error') $('#jobPanel').style.display = 'block';
@@ -852,7 +923,7 @@ function watchJob(title, onDone, {quiet = false} = {}){
       $('#jobYes').textContent = q.type==='confirm' ? '예' : q.type==='int' ? '입력' : '계속';
     }
     if(s.state==='done' || s.state==='error' || s.state==='cancelled' || s.state==='none'){
-      clearInterval(jobTimer); $$('main .btn.primary').forEach(b => b.disabled = false); $('#btnGwList').disabled = false; $('#gwRefreshIcon').classList.remove('on'); $('#jobCancel').classList.add('hidden'); $('#jobSpin').classList.remove('on'); $('#dim').classList.remove('on'); $('#jobAsk').style.display='none';
+      clearInterval(jobTimer); jobTimer = null; $$('main .btn.primary').forEach(b => b.disabled = false); $('#btnGwList').disabled = false; $('#gwRefreshIcon').classList.remove('on'); $('#jobCancel').classList.add('hidden'); $('#jobSpin').classList.remove('on'); $('#dim').classList.remove('on'); $('#jobAsk').style.display='none';
       if(s.state==='error') $('#jobLog').textContent += '\n✖ ' + s.error + '\n';
       if(s.state==='cancelled') $('#jobLog').textContent += '\n— 취소했어요.\n';
       if(s.state==='done' && onDone) onDone(s.result);
@@ -865,6 +936,20 @@ $('#jobYes').onclick = () => {
   answer(true);
 };
 $('#jobNo').onclick = () => answer(false);
+function openAsk(q){
+  const choice = q.type === 'choice';
+  $('#askTitle').textContent = choice ? '📍 어디로 가나요?' : '📍 출장지를 다시 알려 주세요';
+  $('#askQ').textContent = q.text; $('#askInput').classList.toggle('hidden', choice); $('#askChoices').classList.toggle('hidden', !choice); $('#askGo').classList.toggle('hidden', choice);
+  $('#askSkip').textContent = choice ? '다른 이름으로 다시 찾기' : '금액 직접 입력';
+  if(choice){ $('#askChoices').innerHTML = ''; (q.def || []).forEach((label, i) => { const b = document.createElement('button'); b.type = 'button'; const [name, addr] = String(label).split(' — '); b.textContent = name; if(addr){ const sm = document.createElement('small'); sm.textContent = addr; b.appendChild(sm); } b.onclick = () => askDone(i); $('#askChoices').appendChild(b); }); }
+  else { $('#askInput').value = q.def || ''; }
+  $('#askModal').classList.add('on'); if(!choice){ $('#askInput').focus(); $('#askInput').select(); }
+}
+const askDone = v => { $('#askModal').classList.remove('on'); answer(v); };
+$('#askGo').onclick = () => { const v = $('#askInput').value.trim(); if(v) askDone(v); else $('#askInput').focus(); };
+$('#askSkip').onclick = () => askDone('');
+attachAc($('#askInput'), $('#askAc'), { onPick: pl => { $('#askInput').value = pl.name; askDone(pl.name); } });
+$('#askInput').addEventListener('keydown', e => { if(e.key === 'Enter' && !e.isComposing && !e.defaultPrevented) $('#askGo').click(); });
 $('#jobClose').onclick = () => { rpc('/api/job/cancel'); $('#jobPanel').style.display = 'none'; $('#dim').classList.remove('on'); };   // 닫기 = 진행 중이던 작업 취소(그룹웨어 품의도 삭제)
 $('#jobCancel').onclick = () => rpc('/api/job/cancel');
 $('#jobShow').onclick = () => rpc('/api/gw/show');
@@ -872,11 +957,33 @@ function alertErr(m){ $('#jobPanel').style.display='block'; $('#jobTitle').textC
 
 /* ---------- 그룹웨어 로그인 ---------- */
 let gwChecked = 0;
+// 로그인되면 한 번: 이름·예산 부서가 비었으면 그룹웨어에서 불러오고, 자차를 아직 안 물어봤으면 물어본다
+let firstLoginDone = false;
+async function whenJobIdle(){ for(;;){ const s = await rpc('/api/job', {since: 1e9}).catch(() => ({state: 'none'})); if(!jobTimer && !['running', 'waiting'].includes(s.state)) return; await new Promise(r => setTimeout(r, 800)); } }
+async function afterLogin(){
+  if(firstLoginDone) return; firstLoginDone = true;
+  await whenJobIdle();
+  const c = META.config;
+  if(!c.name || !c.budgetDept){ await new Promise(done => runJob('내 정보 불러오기', '/api/job/gw-profile', {force: false}, async () => { META = await rpc('/api/meta'); renderSettings(); done(); }, {quiet: true})); }
+  if(META.config.hasCar == null) askCar();
+}
+function askCar(){
+  $('#carPick').classList.add('hidden'); $('#carYes').textContent = '있어요'; $('#carNo').textContent = '없어요';
+  $('#car_fuel').value = META.config.carFuel || 'gasoline'; $('#car_type').value = META.config.carType || '1';
+  $('#carModal').classList.add('on');
+}
+const saveCar = async patch => { $('#carModal').classList.remove('on'); await rpc('/api/config', patch); META = await rpc('/api/meta'); renderSettings(); };
+$('#carNo').onclick = () => saveCar({hasCar: false});
+$('#carYes').onclick = () => {
+  if($('#carPick').classList.contains('hidden')){ $('#carPick').classList.remove('hidden'); $('#carYes').textContent = '저장'; $('#carNo').textContent = '자차 없어요'; return; }   // 있어요 → 연료·차종 고르기
+  saveCar({hasCar: true, carFuel: $('#car_fuel').value, carType: $('#car_type').value});
+};
 function setGwPill(st){
   const p = $('#gwPill'); p.classList.toggle('ok', st === 'ok'); p.classList.toggle('bad', st === 'bad');
   // 설정 › 그룹웨어 계정 버튼: 로그인돼 있으면 [로그아웃]만, 아니면 로그인 버튼들 (확인 중엔 그대로)
   if(st === 'ok' || st === 'bad'){ const on = st === 'ok';
     ['#btnGwLogin', '#btnLogin'].forEach(id => $(id).classList.toggle('hidden', on)); $('#btnGwLogout').classList.toggle('hidden', !on); }
+  if(st === 'ok') afterLogin();
   p.querySelector('span').textContent = st === 'ok' ? '그룹웨어 로그인됨' : st === 'bad' ? '그룹웨어 로그인 필요' : '그룹웨어 확인 중';
 }
 function showGwSaved(){ $('#s_gw').textContent = META.config.gwSaved ? `저장된 계정: ${META.config.gwId} (자동 로그인)` : '저장된 계정 없음'; $('#btnGwForget').classList.toggle('hidden', !META.config.gwSaved); }

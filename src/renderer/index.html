@@ -248,10 +248,18 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
 @keyframes hintBob{0%,100%{transform:translateY(0)}50%{transform:translateY(-2px)}}
 .tk-break span.need{background:#fff3cd;color:#7a4b00;font-weight:600}
 
-#cfmModal{position:fixed;inset:0;background:rgba(15,23,42,.45);display:none;align-items:center;justify-content:center;z-index:70;backdrop-filter:blur(2px)}
-#cfmModal.on{display:flex;animation:cfFade .18s ease-out}
+#cfmModal,#askModal,#carModal{position:fixed;inset:0;background:rgba(15,23,42,.45);display:none;align-items:center;justify-content:center;z-index:70;backdrop-filter:blur(2px)}
+#cfmModal.on,#askModal.on,#carModal.on{display:flex;animation:cfFade .18s ease-out}
 @keyframes cfFade{from{opacity:0}to{opacity:1}}
-#cfmModal .box{background:#fff;border-radius:16px;width:620px;max-width:calc(100vw - 32px);max-height:calc(100vh - 48px);display:flex;flex-direction:column;box-shadow:0 30px 70px -20px rgba(0,0,0,.45);animation:cfPop .22s cubic-bezier(.2,.9,.3,1.2)}
+/* 출장지 자동완성 (네이버 지역 검색) */
+.acwrap{position:relative;min-width:0}.acwrap input{width:100%}
+.ac{position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:30;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 12px 30px -12px rgba(0,0,0,.35);max-height:260px;overflow:auto;padding:4px}
+.ac button{display:block;width:100%;text-align:left;padding:8px 12px;border:0;border-radius:8px;background:none;font-size:14px;cursor:pointer;color:var(--ink)}
+.ac button:hover,.ac button.on{background:var(--accent-soft)}.ac button small{display:block;color:var(--muted);font-size:12px;margin-top:1px}
+.ac .none{padding:8px 12px;font-size:13px;color:var(--muted)}
+#askAc{position:static;margin-top:6px;box-shadow:none}   /* 모달 본문은 overflow:auto 라 떠 있는 목록이 잘림 → 흐름 안에 */
+#askChoices{display:flex;flex-direction:column;gap:8px}#askChoices button{text-align:left;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:#fff;font-size:14px;cursor:pointer}#askChoices button:hover{border-color:var(--accent);background:var(--accent-soft)}#askChoices button small{display:block;color:var(--muted);margin-top:2px}
+#cfmModal .box,#askModal .box,#carModal .box{background:#fff;border-radius:16px;width:620px;max-width:calc(100vw - 32px);max-height:calc(100vh - 48px);display:flex;flex-direction:column;box-shadow:0 30px 70px -20px rgba(0,0,0,.45);animation:cfPop .22s cubic-bezier(.2,.9,.3,1.2)}
 @keyframes cfPop{from{transform:translateY(8px) scale(.98);opacity:.6}to{transform:none;opacity:1}}
 .cf-head{display:flex;align-items:center;padding:18px 22px 10px;font-size:17px}.cf-head .x{margin-left:auto;border:0;background:none;font-size:16px;cursor:pointer;color:var(--muted)}
 .cf-body{padding:4px 22px 10px;overflow:auto}
@@ -339,7 +347,7 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
     <h2>출장 정보</h2>
     <p class="sub">자동으로 채운 내용을 확인하고 필요하면 고치세요.</p>
     <div class="row"><label>출장 사유</label><input id="a_reason" placeholder="예: 판교 AI 사무소 RBY1-Muscat 연동 검증"></div>
-    <div class="row"><label>출장지</label><input id="a_destination" placeholder="예: 레인보우로보틱스 판교 AI 사무소"></div>
+    <div class="row"><label>출장지</label><div class="acwrap"><input id="a_destination" placeholder="예: 레인보우로보틱스 판교 AI 사무소" autocomplete="off"><div id="a_dest_ac" class="ac hidden"></div></div></div>
     <div class="row"><label>출발</label><div class="two"><input type="date" id="a_start"><input type="time" id="a_start_time" title="출발 시각"></div></div>
     <div class="row"><label>복귀</label><div class="two"><input type="date" id="a_end"><input type="time" id="a_end_time" title="복귀 시각"></div></div>
     <div class="row"><label>구분</label>
@@ -470,7 +478,7 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
       <button class="btn small" id="btnAddDay" style="margin-top:6px">+ 일정 추가</button>
     </div>
     <div class="card">
-      <h2>정산 경비</h2><p class="sub">실제 쓴 금액으로 고쳐 주세요. 영수증은 위 [자동 작성]에 넣으면 AI 가 읽어서 채워요.</p>
+      <div class="h2row"><h2>정산 경비</h2><button class="btn small hidden" id="btnFuel" type="button" title="네이버 지도 자동차 길찾기를 내 차 연료·연비 8km/L 로 조회해 금액과 캡처(증빙)를 넣어요">🚗 유류대 조회</button></div><p class="sub">실제 쓴 금액으로 고쳐 주세요. 영수증은 위 [자동 작성]에 넣으면 AI 가 읽어서 채워요.<span id="r_fuel_hint"></span></p>
       <div class="row"><label>자금과목 <span style="color:var(--err)">*</span></label><div class="seg" id="r_fund"><label><input type="radio" name="r_fund" value="일반경비">일반경비</label><label><input type="radio" name="r_fund" value="제조경비">제조경비</label></div></div>
       <table class="ed" id="r_exp" style="table-layout:fixed"><thead><tr><th style="width:16%">예산과목</th><th style="width:13%">금액(원)</th><th style="width:11%">결제</th><th style="width:30%">인원 · 적요 <span style="font-weight:400">(= 거래처비고)</span></th><th>증빙 <span style="font-weight:400">(이미지·PDF)</span></th><th style="width:52px"></th></tr></thead><tbody></tbody></table>
       <button class="btn small" id="btnAddRExp" style="margin-top:6px">+ 경비 추가</button>
@@ -535,13 +543,15 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
     <p class="sub">신청서 경비를 자동으로 계산할 때 쓰는 금액이에요.</p>
     <ul class="sub" style="margin:4px 0 12px;padding-left:18px;line-height:1.7">
       <li><b>숙박비</b> = 1박 금액 × 잔 날 수. 예) 10/20~10/22 출장이면 2박</li>
-      <li><b>교통비</b> = 네이버 지도 왕복 + 여유분 (자차·대중교통 신청 때만, 보고서는 실제 금액)</li>
+      <li><b>교통비</b> = 네이버 지도 왕복 + 여유분 (자차·대중교통 신청 때만, 보고서는 실제 금액). 자차 유류대는 내 차 연료·연비 8km/L 로 조회한 지도 캡처가 증빙 (전기차는 네이버 기본 연비)</li>
       <li><b>식대</b> (출장여비지급규정) — 당일: 점심만, 7시 전 출발이면 아침, 20시 넘어 복귀면 저녁, 13시 넘어 출발이면 점심 빼요</li>
       <li>1박 이상: 첫날 점심·저녁 (13시 넘어 출발이면 저녁만), 중간 날 아침·점심·저녁, 마지막 날 아침·점심 (20시 넘어 복귀면 저녁도)</li>
       <li><b>임원</b>은 숙박 1박 350,000원 한도, 해외는 일비 없이 실비예요</li>
     </ul>
     <div class="rates">
       <div><label>직급</label><select id="s_rank"><option value="staff">부장 이하</option><option value="exec">임원</option></select></div>
+      <div><label>내 차 연료 (자차)</label><select id="s_car_fuel" title="자차 유류대를 네이버 지도에서 이 연료·연비 8km/L 로 조회해요"><option value="gasoline">휘발유</option><option value="diesel">경유</option><option value="lpg">LPG</option><option value="electric">전기</option></select></div>
+      <div><label>내 차 차종</label><select id="s_car_type"><option value="6">1종(경차) · 경차</option><option value="1">1종 · 승용차, 소형승합차, 소형화물차</option><option value="2">2종 · 중형승합차, 중형화물차</option><option value="3">3종 · 대형승합차, 2축 대형화물차</option><option value="4">4종 · 3축 대형화물차</option><option value="5">5종 · 4축이상 특수화물차</option><option value="9">이륜차</option></select></div>
       <div><label>숙박 1박</label><input id="s_lodging" inputmode="numeric"></div>
       <div><label>교통비 여유분</label><input id="s_fare_margin" inputmode="numeric" title="자차·대중교통 신청 때 네이버 지도 왕복 금액에 더해요"></div>
       <div><label>아침</label><input id="s_breakfast" inputmode="numeric"></div>
@@ -565,6 +575,14 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
       <button class="btn" id="jobNo">아니오</button><button class="btn primary" id="jobYes">계속</button></div></div>
 </div>
 
+<div id="carModal"><div class="box" style="width:520px"><div class="cf-head"><b>🚗 자차가 있나요?</b></div>
+  <div class="cf-body"><p class="sub" style="margin:0 0 12px">자차로 출장 가면 네이버 지도에서 내 차 기준(연비 8km/L)으로 유류대를 조회해 증빙으로 써요. 나중에 설정에서 바꿀 수 있어요.</p>
+    <div id="carPick" class="hidden"><div class="row"><label>연료</label><select id="car_fuel"><option value="gasoline">휘발유</option><option value="diesel">경유</option><option value="lpg">LPG</option><option value="electric">전기</option></select></div>
+    <div class="row"><label>차종</label><select id="car_type"><option value="6">1종(경차) · 경차</option><option value="1">1종 · 승용차, 소형승합차, 소형화물차</option><option value="2">2종 · 중형승합차, 중형화물차</option><option value="3">3종 · 대형승합차, 2축 대형화물차</option><option value="4">4종 · 3축 대형화물차</option><option value="5">5종 · 4축이상 특수화물차</option><option value="9">이륜차</option></select></div></div></div>
+  <div class="cf-foot" style="justify-content:flex-end"><button class="btn" type="button" id="carNo">없어요</button><button class="btn primary" type="button" id="carYes">있어요</button></div></div></div>
+<div id="askModal"><div class="box" style="width:520px"><div class="cf-head"><b id="askTitle">📍 출장지를 다시 알려 주세요</b></div>
+  <div class="cf-body"><p id="askQ" style="white-space:pre-line;margin:0 0 12px;line-height:1.6"></p><div class="acwrap"><input id="askInput" autocomplete="off"><div id="askAc" class="ac hidden"></div></div><div id="askChoices" class="hidden"></div></div>
+  <div class="cf-foot" style="justify-content:flex-end"><button class="btn" type="button" id="askSkip">금액 직접 입력</button><button class="btn primary" type="button" id="askGo">다시 조회</button></div></div></div>
 <div id="cfmModal"><div class="box"><div class="cf-head"><b id="cfTitle">이대로 보낼까요?</b><button class="x" type="button" id="cfX">✕</button></div>
   <div class="cf-body" id="cfBody"></div>
   <div class="cf-foot"><span class="cf-note" id="cfNote"></span><button class="btn" type="button" id="cfNo">고칠게요</button><button class="btn primary glow" type="button" id="cfYes">보내기 ✦</button></div></div></div>
