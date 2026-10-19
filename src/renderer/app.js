@@ -403,13 +403,14 @@ $('#btnApply').onclick = async () => {
 let gwMap = null;            // 그룹웨어 품의 상태 (key → 행). [그룹웨어 상태 확인] 후 채워짐
 let gwAll = [];
 /* 상태는 그룹웨어 기준: 품의가 그룹웨어에 있으면 그 결재상태, 없으면 '그룹웨어에 없음', 연결 자체가 없으면 '미입력' */
+const DONE = /완료|종결/;   // 결재 끝남 (출장보고서 결재 문서는 '종결'로 옴)
 const REJECTED = /반려|문서삭제/;   // 결재반려·반려취소, 또는 결재 문서가 지워져 품의만 남은 상태
+const stWord = st => DONE.test(st) ? '승인' : REJECTED.test(st) ? '반려' : /상신대기|미상신|^$/.test(st || '') ? '상신 전' : '결재 중';   // 그룹웨어 결재상태 → 쉬운 말
+const pill = (label, st, tip) => `<span class="pill ${DONE.test(st) ? 'ok' : REJECTED.test(st) ? 'bad' : ''}" title="${escH(tip || st || '')}">${label} ${stWord(st)}</span>`;
 const gwPill = (label, link) => {
   if(!link) return '';
   const r = gwMap && gwMap[link.key];
-  if(!r) return `<span class="pill">${label} 순번 ${link.seq}</span>`;
-  const cls = REJECTED.test(r.status || '') ? 'bad' : r.locked ? 'ok' : '';
-  return `<span class="pill ${cls}">${label} 순번 ${link.seq} · ${r.status || '-'}</span>`;
+  return pill(label, r ? r.status || '' : '', `순번 ${link.seq}${r && r.status ? ' · ' + r.status : ''}${r && r.docNo ? ' · ' + r.docNo : ''}`);
 };
 async function loadTrips(){
   let {trips} = await rpc('/api/trips');
@@ -425,14 +426,28 @@ async function loadTrips(){
     if(t){ t.gwReport = { key: r.key, ym: r.ym, day: r.day, seq: r.seq }; byReport[r.key] = t; rpc('/api/trip/link-report', {id: t.id, row: r}); }
   }
   const stOf = k => ((gwMap[k] || {}).status || '');
+  const rows0 = () => gwAll.filter(r => (r.trip ? r.trip === 'apply' : /출장/.test(r.memo || '')) && !byReport[r.key]);   // 결재양식이 '출장신청…'인 품의 (상신 전엔 적요로)
+  const applyDay = r => r.ym.replace('-', '') + String(r.day).padStart(2, '0');
   const isRejected = r => { const t = byApply[r.key]; return REJECTED.test(stOf(r.key)) || !!(t && t.gwReport && REJECTED.test(stOf(t.gwReport.key))); };
   // 정산(결의서전송)됨 = 그룹웨어 품의의 결의금액 > 0 또는 이 PC 기록의 결의번호. 예전 방식의 '보고 품의'는 이때 무시한다
   const settled = r => { const t = byApply[r.key]; return ((gwMap[r.key] || {}).sent || 0) > 0 || !!(t && t.resolutionNo); };
   const nz = x => String(x || '').replace(/\s/g, '');
-  const reportDoc = r => { const t = byApply[r.key]; return t ? gwReportDocs.find(d => nz(d.title) === nz(t.reportDocTitle)) : null; };   // 올라간 출장보고서 결재 문서
+  // 올라간 출장보고서 결재 문서: 이 PC에서 올린 건 제목으로. 그룹웨어에서 직접 올린 건(이 PC 기록 없음)은 출장 이름이 같고 신청 뒤에 올라간 보고서를 짝지음
+  // (목록 API가 결의 전송 금액을 주지 않아 정산 여부로는 알 수 없음). 같은 이름 출장이 여러 번이면 최근 신청부터 그 뒤 가장 이른 보고서를 하나씩
+  // ponytail: 같은 이름 출장 중 앞의 것만 보고서를 늦게 올리면 짝이 바뀔 수 있음 — 결의서입력 API로 품의↔결의를 직접 잇게 되면 그걸로
+  const core = x => nz(x).replace(/^(\([^)]*\)|\[[^\]]*\])+/, '').replace(/(로인한)?출장(보고)?(의건)?$/, '');   // '(결재라인수정)[양식] KAI 기술 지원 출장의 건' → 'KAI기술지원'
+  const dnum = x => String(x || '').replace(/\D/g, '').slice(0, 8);
+  const mine = new Set(), paired = {};
+  rows0().forEach(r => { const t = byApply[r.key]; const d = t && gwReportDocs.find(d => nz(d.title) === nz(t.reportDocTitle)); if(d){ paired[r.key] = d; mine.add(d); } });
+  rows0().filter(r => !paired[r.key] && DONE.test(stOf(r.key))).sort((a, b) => applyDay(b).localeCompare(applyDay(a))).forEach(r => {
+    const c = core(r.docTitle || r.memo);
+    const d = c && gwReportDocs.filter(d => !mine.has(d) && core(d.title) === c && dnum(d.date) >= applyDay(r)).sort((a, b) => dnum(a.date).localeCompare(dnum(b.date)))[0];
+    if(d){ paired[r.key] = d; mine.add(d); }
+  });
+  const reportDoc = r => paired[r.key] || null;
   const reportOpened = r => { const t = byApply[r.key]; return !!reportDoc(r) || !!(t && /작성 창 열림|상신/.test(t.reportStatus || '')); };   // 출장보고서 결재 창까지 띄움 → 나머지(결재라인·상신)는 사람
-  const allDone = r => { const t = byApply[r.key]; const d = reportDoc(r); if(d) return /완료/.test(d.status) && /완료/.test(stOf(r.key)); return !!(t && t.gwReport && /완료/.test(stOf(r.key)) && /완료/.test(stOf(t.gwReport.key))); };   // 신청·보고 결재 둘 다 끝남
-  let rows = gwAll.filter(r => (r.trip ? r.trip === 'apply' : /출장/.test(r.memo || '')) && !byReport[r.key])   // 결재양식이 '출장신청…'인 품의 (상신 전엔 적요로)
+  const allDone = r => { const t = byApply[r.key]; const d = reportDoc(r); if(d) return DONE.test(d.status) && DONE.test(stOf(r.key)); return !!(t && t.gwReport && DONE.test(stOf(r.key)) && DONE.test(stOf(t.gwReport.key))); };   // 신청·보고 결재 둘 다 끝남
+  let rows = rows0()
     .sort((a, b) => (b.ym + b.day.padStart(2, '0') + b.seq.padStart(5, '0')).localeCompare(a.ym + a.day.padStart(2, '0') + a.seq.padStart(5, '0')))
     .sort((a, b) => Number(isRejected(b)) - Number(isRejected(a)));   // 반려된 출장이 맨 위
   const done = rows.filter(allDone);
@@ -443,10 +458,10 @@ async function loadTrips(){
     const el = document.createElement('div'); el.className = 'item';
     const links = t ? [t.gwApply, t.gwReport].filter(Boolean) : [{ key: r.key, seq: r.seq }];
     const locked = links.some(l => gwMap[l.key] && gwMap[l.key].locked);
-    const approved = /완료/.test(stOf(r.key));   // 신청 결재가 종결(결재완료)돼야 보고서를 쓸 수 있다
+    const approved = DONE.test(stOf(r.key));   // 신청 결재가 종결(결재완료)돼야 보고서를 쓸 수 있다
     const applyRejected = REJECTED.test(stOf(r.key));
     const reportSt = t && t.gwReport ? stOf(t.gwReport.key) : '';
-    const reportRejected = REJECTED.test(reportSt), reportDone = /완료/.test(reportSt);
+    const reportRejected = REJECTED.test(reportSt), reportDone = DONE.test(reportSt);
     // 신청 반려 → 고쳐서 [다시 신청]. 보고 반려 → [보고서 다시 올리기](전에 쓴 내용 그대로 열림, 이전 보고 품의는 지우고 새로)
     const rdoc = reportDoc(r);   // 출장보고서 결재가 올라갔으면 그 상태를 보여 주고, 반려가 아니면 버튼은 안 보임
     const rdocRejected = !!rdoc && REJECTED.test(rdoc.status);
@@ -454,11 +469,12 @@ async function loadTrips(){
     // 정산 결의를 이미 전송했으면 경비를 다시 쓰지 않는다 → 다음 할 일은 출장보고서 결재 창 올리기(결의서입력 → 결재상신)
     const repLabel = isSettled ? '출장보고서 결재 올리기' : reportRejected ? '보고서 고쳐서 다시 올리기' : t && t.report ? '보고서 이어서 작성' : '보고서 작성';
     if(applyRejected || reportRejected) el.classList.add('rejected');
-    el.innerHTML = `<div><b></b>${gwPill('신청', links[0])}${rdoc ? `<span class="pill ${/완료/.test(rdoc.status) ? 'ok' : rdocRejected ? 'bad' : ''}">보고 ${rdoc.status || '-'} · ${rdoc.docNo}</span>` : isSettled ? `<span class="pill ok">정산 결의 전송됨${t && t.resolutionNo ? ' · ' + t.resolutionNo : ''}</span>` : t && (t.gwReport || t.report) ? gwPill('보고', t.gwReport) : ''}
+    el.innerHTML = `<div><b></b>${gwPill('신청', links[0])}${rdoc ? pill('보고', rdoc.status || '', `${rdoc.status || ''} · ${rdoc.docNo}`) : isSettled ? `<span class="pill ok" title="${escH(t && t.resolutionNo || '')}">정산 전송됨</span>` : t && (t.gwReport || t.report) ? gwPill('보고', t.gwReport) : ''}
       <div class="sub" style="margin:2px 0 0"></div>${applyRejected ? '<div class="err" style="margin-top:4px">신청이 반려됐어요. 반려 사유를 그룹웨어에서 확인하고 [다시 신청]으로 고쳐 올리세요. 반려된 품의는 [삭제]로 지울 수 있어요.</div>' : reportRejected ? '<div class="err" style="margin-top:4px">보고서가 반려됐어요. 반려 사유를 확인하고 고쳐서 다시 올리세요.</div>' : ''}</div>
       <div class="inline"><button class="btn small danger del">삭제</button>${t ? `<button class="btn again ${applyRejected ? 'primary' : ''}">다시 신청</button>` : ''}${approved && !reportDone && (!rdoc || rdocRejected) && !(isSettled && reportOpened(r) && !rdocRejected) ? `<button class="btn primary rep">${rdocRejected ? '보고서 고쳐서 다시 올리기' : repLabel}</button>` : ''}</div>`;
     el.querySelector('b').textContent = (r.docTitle || r.memo || '').replace(/^\[[^\]]*\]\s*/, '');
-    el.querySelector('.sub').textContent = t ? `${t.start} ~ ${t.end} · ${r.total}원` : `${r.ym} ${r.day}일 품의 · ${r.total}원${r.docNo ? ' · ' + r.docNo : ''}`;
+    const md = d => d ? `${Number(d.slice(5, 7))}월 ${Number(d.slice(8, 10))}일` : '';
+    el.querySelector('.sub').textContent = t ? `${md(t.start)}${t.end && t.end !== t.start ? ' ~ ' + md(t.end) : ' 당일'} 출장 · ${r.total}원` : `${Number(r.ym.slice(5, 7))}월 ${r.day}일 신청 · ${r.total}원`;
     if(t) el.querySelector('.again').onclick = () => repeatTrip(t.id, applyRejected);
     if(el.querySelector('.rep')) el.querySelector('.rep').onclick = async () => {   // 이 PC 기록이 없거나 그룹웨어에서 들여온 기록이면 결재 문서 본문을 (다시) 읽어 채운다
       if(t && t.status !== '그룹웨어') return openReport(t.id);
@@ -467,8 +483,8 @@ async function loadTrips(){
       openReport(id);
     };
     const del = el.querySelector('.del');
-    if(locked){ del.disabled = true; del.title = '결재가 진행 중이거나 끝난 품의가 있어 삭제할 수 없어요'; }
-    del.onclick = () => t ? deleteTrip(t, links) : deleteGwRows([r]);
+    if(locked) del.remove();   // 결재가 진행 중이거나 끝난 품의는 지울 수 없으니 버튼도 안 보임
+    else del.onclick = () => t ? deleteTrip(t, links) : deleteGwRows([r]);
     $('#trips').appendChild(el);
   });
   if(done.length){
@@ -477,7 +493,7 @@ async function loadTrips(){
     a.onclick = e => { e.preventDefault(); showDone = !showDone; loadTrips(); };
     p.appendChild(a); $('#trips').appendChild(p);
   }
-  renderOrphans(trips, new Set(rows.map(r => r.key)));
+  renderOrphans(trips, new Set(rows0().map(r => r.key)));
 }
 let showDone = false;   // 신청·보고 결재가 모두 끝난 출장은 기본으로 숨김
 function deleteTrip(t, links){
@@ -500,7 +516,7 @@ try { if(localStorage.gw_rows) setGw(JSON.parse(localStorage.gw_rows), JSON.pars
 function renderOrphans(trips, shown = new Set()){
   if(!gwMap){ $('#gwOrphans').classList.add('hidden'); return; }
   const linked = new Set(trips.flatMap(t => [t.gwApply, t.gwReport].filter(Boolean).map(l => l.key)));
-  const rows = gwAll.filter(r => !linked.has(r.key) && !shown.has(r.key) && (r.trip || /출장/.test(r.memo || '')));   // 출장 관련(결재양식·적요)인데 위 목록에 안 붙은 품의만. 적요 없는 다른 품의는 건드리지 않음
+  const rows = gwAll.filter(r => !r.locked && !linked.has(r.key) && !shown.has(r.key) && (r.trip || /출장/.test(r.memo || '')));   // 결재가 걸린 품의는 못 지우니 안 보여 줌   // 출장 관련(결재양식·적요)인데 위 목록에 안 붙은 품의만. 적요 없는 다른 품의는 건드리지 않음
   $('#gwOrphans').classList.toggle('hidden', !rows.length);
   const box = $('#gwRows'); gwRows = rows;
   box.innerHTML = '<table class="gw"><thead><tr><th style="width:28px"><input type="checkbox" id="gwAllCb" style="width:auto"></th><th>품의일</th><th>순번</th><th>적요</th><th class="num">총금액</th><th>결재상태</th></tr></thead><tbody></tbody></table>';

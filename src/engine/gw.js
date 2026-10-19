@@ -521,7 +521,7 @@ class Amaranth {
         const rym = String(x.getDtYymm || '').replace(/^(\d{4})(\d{2})$/, '$1-$2'), rday = String(Number(x.getDtDd || day)), seq = String(x.getSq);
         const status = x.approStateNm || Amaranth.APPRO_STATE[String(x.approState)] || '';
         out.set([rym, rday, seq].join('|'), { key: [rym, rday, seq].join('|'), ym: rym, day: rday, seq, kind: String(x.getFg) === '1' ? '지출' : String(x.getFg) === '2' ? '수입' : '',
-          memo: x.rmkDc || '', total: Math.round(Number(x.unitSumam) || 0).toLocaleString('ko-KR'), status, docNo: x.noDoc || '', locked: Amaranth.locked(status), sent: Math.round(Number(x.sendUnitAm) || 0), refund: Math.round(Number(x.refundUnitAm) || 0), remain: Math.round(Number(x.remainUnitAm) || 0) });   // sent: 결의서전송한 금액(>0 이면 정산 결의 전송됨)
+          memo: x.rmkDc || '', total: Math.round(Number(x.unitSumam) || 0).toLocaleString('ko-KR'), status, docNo: x.noDoc || '', locked: Amaranth.locked(status), sent: Math.round(Number(x.sendUnitAm) || 0), refund: Math.round(Number(x.refundUnitAm) || 0), remain: Math.round(Number(x.remainUnitAm) || 0) });   // sent·refund·remain: 이 API(0BN00001)엔 없어 늘 0 (품의서승인 화면 그리드에만 있음)
       }
     };
     const covered = new Set();

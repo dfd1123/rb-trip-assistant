@@ -227,7 +227,9 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
 .fold{border:1px solid var(--line);border-radius:var(--radius);background:var(--panel);margin-bottom:16px}
 .fold-head{width:100%;display:flex;align-items:center;gap:10px;padding:14px 18px;background:none;border:0;cursor:pointer;text-align:left;font:inherit;color:var(--ink)}
 .fold-head .fh-t{font-weight:700;font-size:15px}.fold-head .fh-s{color:var(--muted);font-size:12.5px;flex:1}
-.fold-head .fh-i{transition:transform .25s;color:var(--muted)}
+.fold-head .fh-i{flex:none;margin-left:auto;width:34px;height:34px;border-radius:50%;background:#eef3fa;display:grid;place-items:center;transition:transform .25s,background .2s}
+.fold-head .fh-i::before{content:'';width:9px;height:9px;border:solid var(--accent,#1b4f8f);border-width:0 2.5px 2.5px 0;transform:translateY(-2px) rotate(45deg)}
+.fold-head:hover .fh-i{background:#dfe9f6}
 .fold.open .fold-head .fh-i{transform:rotate(180deg)}
 .fold-head .fh-badge{background:#fff3e0;color:var(--warn);border-radius:999px;padding:2px 8px;font-size:12px;font-weight:600}
 .fold-body{display:none;padding:0 16px 4px}.fold.open .fold-body{display:block;animation:foldIn .25s ease-out}
@@ -331,7 +333,7 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
   </div>
 </div>
 <div class="fold" id="aFold">
-  <button class="fold-head" type="button"><span class="fh-t">세부 내용 확인·수정</span><span class="fh-s">AI가 채운 출장 정보·교통·경비예요. 고칠 게 있을 때만 펼치세요</span><span class="fh-i">▾</span></button>
+  <button class="fold-head" type="button"><span class="fh-t">세부 내용 확인·수정</span><span class="fh-s">AI가 채운 출장 정보·교통·경비예요. 고칠 게 있을 때만 펼치세요</span><span class="fh-i" aria-hidden="true"></span></button>
   <div class="fold-body">
   <div class="card">
     <h2>출장 정보</h2>
@@ -402,12 +404,12 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
 <section id="tab-trips" class="hidden">
   <div class="card list" id="tripList">
     <div class="inline" style="justify-content:space-between;align-items:flex-start;gap:12px"><div><h2 style="margin:0">신청한 출장 <span id="gwVia" class="pill hidden" title="개발용: 목록을 어떻게 읽었는지"></span></h2>
-      <p class="sub" style="margin:2px 0 0">그룹웨어에 올라간 출장 품의와 결재 상태예요. 상신 전이거나 반려된 건은 [삭제]로 그룹웨어 품의까지 지울 수 있어요. 신청·보고 결재가 모두 끝난 출장은 아래로 숨겨요.</p></div>
+      <p class="sub" style="margin:2px 0 0">출장마다 지금 상태와 다음에 할 일만 보여 줘요. 다 끝난 출장은 숨겨요.</p></div>
       <button class="btn small" id="btnGwList" title="그룹웨어에서 다시 읽기" style="flex:none"><span id="gwRefreshIcon" style="display:inline-block">↻</span> 새로고침</button></div>
     <div id="gwRange" title="조회 기간 (기본 최근 3개월, 최대 1년)"><span class="lbl">조회 기간</span><span class="quickr"><button class="btn small" data-m="1">1개월</button><button class="btn small" data-m="3">3개월</button><button class="btn small" data-m="6">6개월</button></span><span class="dates"><input type="date" id="gwFrom"><span class="tilde">~</span><input type="date" id="gwTo"></span></div>
     <div id="trips" style="margin-top:8px"></div>
     <div id="gwOrphans" class="hidden" style="margin-top:18px">
-      <div class="inline" style="justify-content:space-between"><div><b>앱 기록에 없는 품의</b><p class="sub" style="margin:2px 0 0">출장 품의인데 위 목록의 출장과 연결되지 않은 건이에요 (예: 신청 기록이 없는 보고서 품의).</p></div>
+      <div class="inline" style="justify-content:space-between"><div><b>정리할 품의</b><p class="sub" style="margin:2px 0 0">어느 출장에도 연결되지 않은 출장 품의예요. 필요 없으면 지우세요.</p></div>
         <button class="btn danger" id="btnGwDel" disabled>선택 삭제</button></div>
       <div id="gwRows" style="margin-top:8px"></div>
     </div>
@@ -443,7 +445,7 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
     </div>
   </div>
   <div class="fold" id="rFold">
-    <button class="fold-head" type="button"><span class="fh-t">세부 내용 확인·수정</span><span class="fh-s">보고서 본문·출장일정·정산 경비예요. 고칠 게 있을 때만 펼치세요</span><span class="fh-i">▾</span></button>
+    <button class="fold-head" type="button"><span class="fh-t">세부 내용 확인·수정</span><span class="fh-s">보고서 본문·출장일정·정산 경비예요. 고칠 게 있을 때만 펼치세요</span><span class="fh-i" aria-hidden="true"></span></button>
     <div class="fold-body">
     <div class="card">
       <h2 id="r_heading">출장 보고서</h2>
