@@ -1201,8 +1201,9 @@ async function whenJobIdle(){ for(;;){ const s = await rpc('/api/job', {since: 1
 async function afterLogin(){
   if(firstLoginDone) return; firstLoginDone = true;
   await whenJobIdle();
-  const c = META.config;
-  if(!c.name || !c.budgetDept){ await new Promise(done => runJob('내 정보 불러오기', '/api/job/gw-profile', {force: false}, async () => { META = await rpc('/api/meta'); renderSettings(); done(); }, {quiet: true})); }
+  META = await rpc('/api/meta');   // 로그인 창에서 다른 계정으로 들어왔을 수 있으니 새로
+  const c = META.config, who = c.lastLoginId || c.gwId, other = !!(who && c.profileOf && who !== c.profileOf);   // 내 정보가 다른 계정 것
+  if(!c.name || !c.budgetDept || other){ await new Promise(done => runJob('내 정보 불러오기', '/api/job/gw-profile', {force: other}, async () => { META = await rpc('/api/meta'); renderSettings(); done(); }, {quiet: true})); }
   if(META.config.hasCar == null) askCar();
 }
 function askCar(){
@@ -1262,6 +1263,7 @@ $('#btnGwLogout').onclick = async () => {
   try { await rpc('/api/gw/logout'); } catch(e){ alertErr(e.message); return; }
   try { localStorage.removeItem('gw_rows'); } catch(e){ /* */ }
   gwMap = null; gwAll = []; META = await rpc('/api/meta'); renderSettings(); setGwPill('bad'); showGwSaved();
+  firstLoginDone = false;   // 다시 로그인하면 그 계정 정보를 새로 불러오고 자차도 다시 물어봄
   $('#s_msg').textContent = '로그아웃했어요';
   openLogin('로그아웃했어요. 다시 로그인해 주세요.');
 };

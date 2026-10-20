@@ -233,6 +233,7 @@ async function gwLogin({ id, pw, save }) {
     if (!(await gw.autoLogin(id, pw))) return { loggedIn: false, error: '로그인에 실패했어요. 아이디·비밀번호를 확인하거나 [그룹웨어 창에서 직접 로그인]을 써 주세요.' };
   }
   let note = '';
+  store.saveConfig({ lastLoginId: id });   // 지금 로그인한 계정 (비밀번호 저장 안 해도) — 내 정보가 이 계정 것인지 비교용
   if (save) {
     if (safeStorage.isEncryptionAvailable()) { store.saveConfig({ gwId: id, gwPwEnc: safeStorage.encryptString(pw).toString('base64') }); sessionCreds = null; }
     else { sessionCreds = { id, pw }; note = '이 PC는 보안 저장소를 쓸 수 없어서 앱을 끄면 잊어버려요.'; }
@@ -418,7 +419,7 @@ async function route(p, body = {}) {
       const ses = session.fromPartition('persist:gw');
       await ses.clearStorageData(); await ses.clearCache();
       sessionCreds = null;
-      store.saveConfig({ gwPwEnc: '', gwUser: null, name: '', budgetDept: '', budgetDepts: [] });
+      store.saveConfig({ gwPwEnc: '', gwUser: null, name: '', budgetDept: '', budgetDepts: [], profileOf: '', hasCar: null });   // 자차 여부도 사람마다 다르니 다시 물어봄
       return { ok: true };
     }
     case '/api/gw/show': if (showNaver()) return { ok: true }; showGw(); return { ok: true };

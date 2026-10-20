@@ -217,7 +217,7 @@ async function runProfile(env, { force = false } = {}) {
   let depts = [];
   try { depts = await gw.budgetDeptList(); } catch (e) { log(`(사업코드 목록을 못 읽었어요: ${e.message})`); }
   if (me.deptName && !depts.includes(me.deptName)) depts.unshift(me.deptName);
-  const patch = { budgetDepts: depts };
+  const patch = { budgetDepts: depts, profileOf: env.store.config().lastLoginId || env.store.config().gwId || '' };   // 어느 계정의 정보인지 (다른 계정으로 로그인하면 다시 불러옴)
   if (me.empName && (force || !cfg.name)) patch.name = me.empName;
   if (me.deptName && (force || !cfg.budgetDept)) patch.budgetDept = me.deptName;
   if (me.coCd && me.deptCd && me.empCd) patch.gwUser = { coCd: me.coCd, deptCd: me.deptCd, empCd: me.empCd };
