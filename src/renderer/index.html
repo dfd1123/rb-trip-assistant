@@ -275,6 +275,12 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
 .pp-sums{display:grid;gap:3px;margin-bottom:6px;font-size:12.5px;color:var(--muted)}.pp-sums div{display:flex;justify-content:space-between}
 .pp-tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}.pp-tags span{font-size:11.5px;background:var(--accent-soft);color:var(--accent);padding:3px 9px;border-radius:999px}.pp-tags span.hot{background:#fee2e2;color:#b91c1c}.pp-tags span.need{background:#fff3cd;color:#7a4b00}
 .pu-view,.trip-view{margin:0 0 14px}.trip-view label.on span{background:#fff;color:var(--accent);box-shadow:0 4px 12px -6px rgba(27,79,143,.5)}
+/* 출장 신청: 처음엔 한 줄 칸만, 자동 작성하면 티켓·제출 준비·세부 내용이 펼쳐짐 */
+#tab-apply.pre .result,#tab-apply.pre #aFold,#reportView.pre .result,#reportView.pre #rFold,#puNew.pre .result,#puNew.pre #puFold{display:none}
+#tab-apply:not(.pre) #aManual,#reportView:not(.pre) #rManual,#puNew:not(.pre) #puManual{display:none}
+#tab-apply.reveal .result,#tab-apply.reveal #aFold,#reportView.reveal .result,#reportView.reveal #rFold,#puNew.reveal .result,#puNew.reveal #puFold{animation:revealUp .45s cubic-bezier(.2,.8,.2,1) both}
+@keyframes revealUp{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+.pre-skip{display:inline-block;margin-top:10px;font-size:13px;color:var(--muted);text-decoration:none}.pre-skip:hover{color:var(--accent);text-decoration:underline}
 /* 처음 들어온 사람용 가이드 (화면 짚어 주기) */
 #guide{position:fixed;inset:0;z-index:90}
 .gd-hole{position:fixed;border-radius:12px;box-shadow:0 0 0 9999px rgba(15,23,42,.55),0 0 0 3px #2bb3c9;transition:all .28s cubic-bezier(.2,.8,.2,1);pointer-events:none}
@@ -339,7 +345,7 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
     <span id="updText"></span><button class="btn small" id="updBtn" style="margin-left:auto"></button></div></div>
 <main>
 <!-- ================= 신청 ================= -->
-<section id="tab-apply">
+<section id="tab-apply" class="pre">
 <div class="scope trip-view"><label data-go="apply" class="on"><span>✍️ 출장 신청</span></label><label data-go="trips"><span>📋 출장 보고</span></label></div>
 <div class="card quick hero" id="applyHero">
   <div class="h2row"><h2><span class="spark">✦</span> 한 줄이면 끝</h2><span class="inline" style="gap:6px"><button class="btn small" data-guide="apply" title="이 화면 쓰는 법을 처음부터 다시 보여 줘요">❓ 가이드</button><button class="btn small" id="btnNewApply" title="입력 중인 신청서 내용을 모두 비움">새로 작성</button></span></div>
@@ -349,6 +355,7 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
     <button class="btn primary glow" id="btnQuick">✦ 자동 작성</button></div>
   <div class="chips"><select id="q_hist" class="btn small" title="이전에 입력한 문장 (최근 30개)"><option value="">이전 문장…</option></select></div>
   <div class="qstatus" id="q_status"></div>
+  <a href="#" class="pre-skip" id="aManual">직접 하나씩 입력할게요 ›</a>
 </div>
 <div class="result">
 <div class="ticket" id="aTicket">
@@ -448,7 +455,7 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
   <div class="card list" id="tripList">
     <div class="inline" style="justify-content:space-between;align-items:flex-start;gap:12px"><div><h2 style="margin:0">신청한 출장 <span id="gwVia" class="pill hidden" title="개발용: 목록을 어떻게 읽었는지"></span></h2>
       <p class="sub" style="margin:2px 0 0">출장마다 지금 상태와 다음에 할 일만 보여 줘요. 다 끝난 출장은 숨겨요.</p></div>
-      <button class="btn small" data-guide="trips" title="이 화면 쓰는 법을 처음부터 다시 보여 줘요" style="flex:none">❓ 가이드</button><button class="btn small" id="btnGwList" title="그룹웨어에서 다시 읽기" style="flex:none"><span id="gwRefreshIcon" style="display:inline-block">↻</span> 새로고침</button></div>
+      <span class="inline" style="gap:6px;flex:none"><button class="btn small" data-guide="trips" title="이 화면 쓰는 법을 처음부터 다시 보여 줘요">❓ 가이드</button><button class="btn small" id="btnGwList" title="그룹웨어에서 다시 읽기"><span id="gwRefreshIcon" style="display:inline-block">↻</span> 새로고침</button></span></div>
     <div id="gwRange" title="조회 기간 (기본 최근 3개월, 최대 1년)"><span class="lbl">조회 기간</span><span class="quickr"><button class="btn small" data-m="1">1개월</button><button class="btn small" data-m="3">3개월</button><button class="btn small" data-m="6">6개월</button></span><span class="dates"><input type="date" id="gwFrom"><span class="tilde">~</span><input type="date" id="gwTo"></span></div>
     <div id="trips" style="margin-top:8px"></div>
     <div id="gwOrphans" class="hidden" style="margin-top:18px">
@@ -460,13 +467,14 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
 
   <div id="reportView" class="hidden">
   <div class="card quick hero" id="reportHero">
-    <h2><span class="spark">✦</span> 영수증 던지고, 한 줄 쓰면 보고서 끝</h2>
+    <div class="h2row"><h2><span class="spark">✦</span> 영수증 던지고, 한 줄 쓰면 보고서 끝</h2><button class="btn small" data-guide="report" title="이 화면 쓰는 법을 처음부터 다시 보여 줘요">❓ 가이드</button></div>
     <div class="stepper" id="rSteps"><div class="st" data-s="1"><i>1</i><span>영수증 넣기<small>선택</small></span></div><div class="st-line"></div><div class="st" data-s="2"><i>2</i><span>한 일 한 줄</span></div><div class="st-line"></div><div class="st" data-s="3"><i>3</i><span>자동 작성</span></div></div>
     <div id="r_drop"><b>① 영수증·증빙을 여기에 끌어다 놓기 (선택)</b><span>이미지·PDF 여러 개 한꺼번에 — 정산할 게 없으면 비워 두세요</span><button class="btn small" id="btnPickReceipts">파일 고르기</button></div>
     <div class="chips" id="rq_files" style="margin:0 0 10px"></div>
     <div class="qrow"><textarea id="rq_memo" data-examples="SDK 래핑 완료, 실기에서 제어·상태조회 검증 통과. 그리퍼 토크 이슈는 다음주 재검증 예정|KAI 로봇 정비 완료, 감속기 교체 후 정상 동작 확인|고객사 데모 진행, 추가 요구사항 3건 받아옴" placeholder="② 예: SDK 래핑 완료, 실기에서 제어·상태조회 검증 통과. 그리퍼 토크 이슈는 다음주 재검증 예정"></textarea>
       <button class="btn primary glow" id="btnRQuick" disabled>✦ 자동 작성</button></div>
     <div class="qstatus" id="rq_status"></div>
+    <a href="#" class="pre-skip" id="rManual">직접 하나씩 입력할게요 ›</a>
   </div>
   <div class="result">
 <div class="receipt" id="rReceipt">
@@ -536,18 +544,19 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
 <!-- ================= 설정 ================= -->
 <section id="tab-purchase" class="hidden">
 <div class="scope pu-view" id="pu_view_seg"><label><input type="radio" name="pu_view" value="new" checked><span>✍️ 새 구매의뢰</span></label><label><input type="radio" name="pu_view" value="list"><span>📋 신청한 구매의뢰</span></label></div>
-<div id="puNew">
+<div id="puNew" class="pre">
 <div class="card quick hero">
   <div class="h2row"><h2><span class="spark">✦</span> <span id="pu_hero_t">발주서 올리고, 한 줄 쓰면 구매의뢰서 끝</span></h2><span class="inline" style="gap:6px"><button class="btn small" data-guide="purchase" title="이 화면 쓰는 법을 처음부터 다시 보여 줘요">❓ 가이드</button><button class="btn small" id="btnNewPurchase" title="입력 중인 내용을 모두 비움">새로 작성</button></span></div>
   <p class="sub" id="pu_hero_s">발주서·견적서를 올리면 거래처·품목·금액을 읽어 채워요. 무엇에 쓰려고 사는지 한 줄 쓰면 제목·사유를 써 드려요.</p>
   <div class="scope" id="pu_src_seg"><label><input type="radio" name="pu_src" value="file" checked><span>📄 발주서 파일</span></label><label><input type="radio" name="pu_src" value="url"><span>🔗 제품 페이지 주소</span></label></div>
   <div id="po_drop" class="drop"><div class="empty"><b>① 발주서를 여기에 끌어다 놓기</b><span>PDF · 워드(.docx) · 엑셀(.xlsx) · 이미지 1개</span><button class="btn small" id="btnPoPick" type="button">파일 고르기</button></div>
     <div class="pofile hidden" id="po_card"><span class="ico" id="po_ico">📄</span><div class="meta"><b id="po_name"></b><small id="po_info"></small></div><span class="acts"><button class="btn small" id="btnPoChange" type="button">바꾸기</button><button class="btn small" id="btnPoClear" type="button" title="발주서 빼기">✕</button></span></div></div>
-  <div id="pu_urlbox" class="hidden"><div class="qrow"><input id="pu_url" placeholder="① 제품 페이지 주소 (예: https://www.rfmart.co.kr/...)" autocomplete="off"><button class="btn" id="btnUrlRead" type="button">페이지 읽기</button></div>
+  <div id="pu_urlbox" class="hidden"><div class="qrow"><input id="pu_url" placeholder="① 제품 페이지 주소 (예: https://www.rfmart.co.kr/...) — [✦ 자동 작성]을 누르면 읽어요" autocomplete="off"></div>
     <div class="pofile hidden" id="url_card" style="margin:8px 0 2px"><img id="url_thumb" class="thumb" alt=""><div class="meta"><b id="url_name"></b><small id="url_info"></small></div><span class="acts"><button class="btn small" id="btnUrlClear" type="button" title="빼기">✕</button></span></div></div>
   <div class="qrow cmd"><textarea id="pu_memo" data-examples="양팔로봇 시험 장비 제어용 모션 컨트롤러, 디스플레이 2차 과제에 씀|KAI 납품 로봇 정비용 감속기 교체 부품|모바일로봇 배터리 팩 소모품, 생산 운영" placeholder="② 예: 양팔로봇 시험 장비 제어용 모션 컨트롤러, 디스플레이 2차 과제에 씀"></textarea>
     <button class="btn primary glow" id="btnPuDraft">✦ 자동 작성</button></div>
   <div class="qstatus" id="pu_status"></div>
+  <a href="#" class="pre-skip" id="puManual">직접 하나씩 입력할게요 ›</a>
 </div>
 <div class="result">
   <div class="card pu-info" id="puInfo">

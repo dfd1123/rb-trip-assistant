@@ -180,10 +180,10 @@ function fillApply(d){
   if(ov){ if(!$('#a_uber').value) $('#a_uber').value = (META.config.rates && META.config.rates.uberUsdPerDay) || ''; recalcOverseas(); if(!d.rate && META.config.fxKeySet) lookupRate(); }
 }
 /** 신청서 전체 비우기 ([새로 작성], 그룹웨어 입력이 끝났을 때) */
-function resetApply(){
+function resetApply(scope = '국내'){
   fillApply({}); autoExp = true; fareShot = '';
   $('#q_memo').value = ''; $('#q_status').textContent = ''; $('#a_err').textContent = '';
-  ['#a_air', '#a_hotel', '#a_roam', '#a_ins'].forEach(id => $(id).value = ''); setRadio('a_scope', '국내'); refreshApply();
+  ['#a_air', '#a_hotel', '#a_roam', '#a_ins'].forEach(id => $(id).value = ''); setRadio('a_scope', scope); refreshApply();
   markNeed([]); showMealPlan(null);
 }
 $('#btnNewApply').onclick = () => { resetApply(); $('#q_memo').focus(); };
@@ -344,7 +344,14 @@ async function recalcOverseas(){
 }
 ['#a_air', '#a_hotel', '#a_uber', '#a_roam', '#a_ins'].forEach(id => $(id).addEventListener('input', () => { if(['#a_air', '#a_hotel', '#a_roam', '#a_ins'].includes(id)){ const x = $(id); x.value = x.value ? num(x.value).toLocaleString('ko-KR') : ''; } clearTimeout(ovTimer); ovTimer = setTimeout(recalcOverseas, 300); }));
 $$('input[name=a_grade]').forEach(r => r.addEventListener('change', () => { $('#a_grade_seg').classList.remove('need'); recalcOverseas(); }));
-$$('input[name=a_scope]').forEach(r => r.addEventListener('change', () => {
+// 국내 ↔ 해외 = 다른 신청서 → 새로 작성. 쓰던 게 있으면 묻고, [고칠게요]면 원래 쪽으로 되돌림
+const applyDirty = () => ['#q_memo', '#a_reason', '#a_destination', '#a_start', '#a_purpose', '#a_companions'].some(id => $(id).value.trim()) || !!$('#a_exp tbody tr');
+$$('input[name=a_scope]').forEach(r => r.addEventListener('change', async () => {
+  const now = radio('a_scope');
+  if(applyDirty()){
+    if(!(await confirmSubmit({ title: `${now} 출장으로 새로 작성할까요?`, html: `<p class="sub">국내 출장과 해외 출장은 신청서가 달라요. 바꾸면 지금까지 입력한 내용이 모두 지워지고 ${now} 출장으로 새로 작성해요.</p>`, yes: '새로 작성' }))){ setRadio('a_scope', now === '해외' ? '국내' : '해외'); refreshApply(); return; }
+    resetApply(now);
+  }
   $('#a_exp tbody').innerHTML = ''; $('#a_meal_plan').textContent = '';
   if(isOverseas()){ if(!$('#a_uber').value) $('#a_uber').value = (META.config.rates && META.config.rates.uberUsdPerDay) || ''; if(!radio('a_grade')){ const g = /미국|유럽|캐나다|싱가포르|영국|프랑스|독일|이탈리아|스페인|네덜란드|스위스/.test($('#a_destination').value) ? '가' : ''; if(g) setRadio('a_grade', g); } recalcOverseas(); if(!$('#a_rate').value && META.config.fxKeySet) lookupRate(); }
   else recalcExpenses();
@@ -655,6 +662,13 @@ function fillReport(d){
 }
 let reportTransport = null;   // 신청 때 교통편 (자차면 유류대 = 네이버 지도 8km/L 캡처가 증빙)
 $('#btnFuel').onclick = () => lookupFuel();
+/** 자차면 유류대(네이버 지도 8km/L 캡처)를 조회. 이미 증빙 캡처가 붙은 교통비 줄이 있으면 안 함 */
+function maybeFuel(){
+  const hasFuel = [...$('#r_exp tbody').querySelectorAll('tr')].some(tr => tr.querySelector('.item').value === 'domestic_transport' && JSON.parse(tr.dataset.proofs || '[]').length);
+  if(reportTransport && reportTransport.mode === 'car' && !hasFuel) lookupFuel();
+}
+function revealReport(){ const v = $('#reportView'); if(!v.classList.contains('pre')) return; v.classList.remove('pre'); v.classList.add('reveal'); setTimeout(() => v.classList.remove('reveal'), 600); }
+$('#rManual').onclick = e => { e.preventDefault(); revealReport(); maybeFuel(); };
 function lookupFuel(){
   // 도착지: 신청 때 지도 검색어 → 없으면(그룹웨어에서 가져온 출장) 보고서의 출장지. '이름 (주소)' 꼴이면 주소로 찾는 게 정확
   const t = reportTransport || {}, dest = $('#r_destination').value.trim(), addr = (/\(([^)]*)\)\s*$/.exec(dest) || [])[1];
@@ -684,9 +698,8 @@ async function showReport(id, r, extra = ''){
   $('#r_title').textContent = (await rpc('/api/title', {reason: r.draft.reason})).report;
   fillReport(r.draft);
   $('#tripList').classList.add('hidden'); $('#reportView').classList.remove('hidden');
-  // 자차면 유류대(네이버 지도 8km/L 캡처)를 바로 조회. 이미 증빙 캡처가 붙은 교통비 줄이 있으면 안 함
-  const hasFuel = [...$('#r_exp tbody').querySelectorAll('tr')].some(tr => tr.querySelector('.item').value === 'domestic_transport' && JSON.parse(tr.dataset.proofs || '[]').length);
-  if(reportTransport && reportTransport.mode === 'car' && !hasFuel) lookupFuel();
+  $('#reportView').classList.toggle('pre', !r.resumed);   // 처음 쓰는 보고서: 영수증·한 줄 칸만 → [✦ 자동 작성]하면 아래가 펼쳐짐
+  if(r.resumed) maybeFuel();
 }
 function reportData(){
   return {...currentTrip, category: radio('r_category'), fund: radio('r_fund') || '', project: $('#r_project').value.trim(),
@@ -731,14 +744,16 @@ $('#btnRQuick').onclick = async () => {
     const r = await rpc('/api/report-quick', {id: currentTrip.trip_id, memo: $('#rq_memo').value});
     const cur = reportData();
     fillReport({...cur, ...r.data, expenses: cur.expenses.length ? cur.expenses : r.data.expenses, attachments: cur.attachments});   // 화면에서 고친 경비·증빙은 유지
+    revealReport();
     const how = (r.source === 'template' ? '템플릿으로 작성' : `${r.source}로 작성`) + (r.note ? ` · ${r.note}` : '');
     $('#rq_status').textContent = how + ' · 영수증 읽는 중…';
     const paths = rqFiles;
-    if(!paths.length){ $('#rq_status').textContent = how + ' · 영수증 없이 작성 · 확인 후 [그룹웨어에 정산 입력하기]'; return; }
+    if(!paths.length){ $('#rq_status').textContent = how + ' · 영수증 없이 작성 · 확인 후 [그룹웨어에 정산 입력하기]'; maybeFuel(); return; }   // 자차면 이어서 유류대 조회
     runJob(`영수증 ${paths.length}개 읽기`, '/api/job/receipts', {paths, period: receiptPeriod()}, res => {
       applyReceipts(res.results || []);
       rqFiles = []; renderRqFiles(); syncRQuick(true);
       $('#rq_status').textContent = how + ` · 영수증 ${paths.length}개 반영 · 확인 후 [그룹웨어에 입력하기]`;
+      maybeFuel();   // 영수증 다 읽은 뒤 (작업은 하나씩) 자차면 유류대 조회
     });
   } catch(e){ $('#rq_status').textContent = e.message; }
   finally { delete btn.dataset.busy; syncRQuick(true); }
@@ -910,7 +925,7 @@ function loadPurchaseList(){
       el.querySelector('b').textContent = x.title.replace(/^\[[^\]]*\]\s*/, '');
       el.querySelector('.sub').textContent = `${x.date || ''}${x.docNo ? ' · ' + x.docNo : ''}${x.local ? ` · 이 PC에서 작성` : ''}`;
       const btns = el.querySelector('.inline');
-      if(x.local && x.local.data){ const b = document.createElement('button'); b.className = 'btn small'; b.textContent = '다시 불러오기'; b.title = '그때 입력한 내용을 아래 칸에 다시 채워요'; b.onclick = () => { puView('new'); fillPurchase(x.local.data); $('#pu_status').textContent = '전에 작성한 내용을 불러왔어요.'; }; btns.appendChild(b); }
+      if(x.local && x.local.data){ const b = document.createElement('button'); b.className = 'btn small'; b.textContent = '다시 불러오기'; b.title = '그때 입력한 내용을 아래 칸에 다시 채워요'; b.onclick = () => { puView('new'); fillPurchase(x.local.data); puRead = (x.local.data.link && x.local.data.link.url) || x.local.data.file || ''; revealPurchase(); $('#pu_status').textContent = '전에 작성한 내용을 불러왔어요.'; }; btns.appendChild(b); }
       if(x.local && !x.docNo){ const d = document.createElement('button'); d.className = 'btn small danger'; d.textContent = '기록 삭제'; d.onclick = async () => { await rpc('/api/purchase/forget', {title: x.title}); loadPurchaseList(); }; btns.appendChild(d); }
       box.appendChild(el);
     });
@@ -924,7 +939,7 @@ function initPurchase(){
   loadPurchaseList();
   const opt = (sel, list) => { sel.innerHTML = '<option value="">고르세요</option>' + list.map(v => `<option>${escH(v)}</option>`).join(''); };
   opt($('#pu_purpose'), META.purchase.purposes); opt($('#pu_project'), META.purchase.projects);
-  try { const d = JSON.parse(localStorage.pu_draft || 'null'); if(d) fillPurchase(d); } catch(e){ /* 없음 */ }
+  try { const d = JSON.parse(localStorage.pu_draft || 'null'); if(d){ fillPurchase(d); if(d.items && d.items.some(i => i.name)){ puRead = (d.link && d.link.url) || d.file || ''; revealPurchase(); } } } catch(e){ /* 없음 */ }
   puRender();
 }
 function puItemRow(it = {}){
@@ -991,7 +1006,7 @@ $$('input[name=pu_urgency],input[name=pu_sub]').forEach(r => r.addEventListener(
 $('#pu_title').addEventListener('input', () => { $('#pu_title').dataset.manual = $('#pu_title').value.trim() ? '1' : ''; puRender(); });
 $('#pu_due_all').addEventListener('change', () => { $$('#pu_items .due').forEach(i => i.value = $('#pu_due_all').value); puRender(); });
 $('#btnPuAddItem').onclick = () => { puItemRow({ due: $('#pu_due_all').value }); puRender(); };
-function resetPurchase(src = 'file'){ puDesc = ''; puSummary = []; delete $('#pu_title').dataset.manual; poInfo = ''; fillPurchase({ items: [] }); setRadio('pu_src', src); puSrcToggle(); $('#pu_due_all').value = ''; $('#pu_url').value = ''; $('#pu_status').textContent = ''; }
+function resetPurchase(src = 'file'){ puDesc = ''; puSummary = []; puRead = ''; $('#puNew').classList.add('pre'); delete $('#pu_title').dataset.manual; poInfo = ''; fillPurchase({ items: [] }); setRadio('pu_src', src); puSrcToggle(); $('#pu_due_all').value = ''; $('#pu_url').value = ''; $('#pu_status').textContent = ''; }
 $('#btnNewPurchase').onclick = () => resetPurchase(radio('pu_src') || 'file');
 let poInfo = '';   // 발주서 카드 아래 줄 (읽는 중 / 읽은 결과)
 function renderPoChip(busy = false){
@@ -1005,16 +1020,20 @@ function renderPoChip(busy = false){
 function usePoFile(f){
   if(!f) return;
   if(!/\.(pdf|docx|xlsx|png|jpe?g|webp)$/i.test(f)) return alertErr('발주서는 PDF·워드(.docx)·엑셀(.xlsx)·이미지 파일이어야 해요.');
-  puFile = f; poInfo = ''; puLink = null; renderUrlCard(); $('#pu_url').value = ''; renderPoChip(true);   // 발주서 파일과 제품 페이지는 둘 중 하나만
+  puFile = f; poInfo = '[✦ 자동 작성]을 누르면 읽어요'; puRead = ''; puLink = null; renderUrlCard(); $('#pu_url').value = ''; renderPoChip(); puRender();   // 발주서 파일과 제품 페이지는 둘 중 하나만
+}
+let puRead = '';   // 마지막으로 읽은 발주서 파일·제품 주소 (같은 걸 다시 읽지 않음)
+/** 발주서·견적서 읽기 → 거래처·품목·구매 제품 내용 채우고 next() */
+function readPo(next){
   runJob('발주서 읽기', '/api/job/po-read', {path: puFile}, po => {
+    puRead = puFile;
     poInfo = `${po.vendor.name || '거래처 ?'} · 품목 ${po.items.length}건 · 합계 ${won(po.total || po.supply)}${po.vat > 0 ? ' (부가세 포함)' : ''}`;
     const cur = purchaseData();
     fillPurchase({ ...cur, file: puFile, vendor: { ...cur.vendor, ...Object.fromEntries(Object.entries(po.vendor).filter(([k, v]) => v && k !== 'address')) },
       items: po.items.map(i => ({ ...i, due: $('#pu_due_all').value })),   // 문서의 납품·발송 예정일은 업체 날짜 → 납기 요청일자는 사람이 (선택)
       vat_included: po.vat > 0, urgency: cur.urgency });   // 긴급도는 사람이 고름 (문서로 짐작하지 않음)
-    puSummary = po.summary || []; $('#pu_reason').value = withSummary($('#pu_reason').value); puRender();
-    if($('#pu_memo').value.trim()) return puDraft();   // 메모를 먼저 써 뒀으면 사유까지 바로
-    $('#pu_status').textContent = `발주서에서 품목 ${po.items.length}건을 읽었어요${puSummary.length ? ' · 구매 제품 내용을 사유에 붙였어요' : ''}. 한 줄 메모를 쓰고 [✦ 자동 작성]을 누르세요.`;
+    puSummary = po.summary || []; $('#pu_reason').value = withSummary($('#pu_reason').value); renderPoChip(); puRender();
+    next();
   });
 }
 function puOnlineVatIn(){ return radio('pu_src') === 'url' && !(puLink && puLink.priceVat === 'excl'); }
@@ -1035,9 +1054,10 @@ function renderUrlCard(){
   $('#url_thumb').src = puLink.shot ? 'file://' + puLink.shot : '';
   $('#pu_url').value = puLink.url;
 }
-$('#btnUrlRead').onclick = () => {
-  const url = $('#pu_url').value.trim(); if(!url) return alertErr('제품 페이지 주소를 넣어 주세요.');
+function readUrl(next){
+  const url = $('#pu_url').value.trim();
   runJob('제품 페이지 읽기', '/api/job/url-read', {url}, r => {
+    puRead = url;
     const cur = purchaseData();
     puLink = { url: r.url, title: r.title, shot: r.shot, priceVat: r.price_vat, info: `${r.name || '제품 ?'} · ${won(r.unit_price)}${r.vendor.name ? ' · ' + r.vendor.name : ''}` };
     puFile = ''; poInfo = ''; renderPoChip();   // 둘 중 하나만
@@ -1046,11 +1066,10 @@ $('#btnUrlRead').onclick = () => {
     fillPurchase({ ...cur, file: '', link: puLink, items: [...cur.items.filter(i => i.name), item], vendor: { name: cur.vendor.name || r.vendor.name, contact: cur.vendor.contact || r.vendor.name, phone: cur.vendor.phone || r.vendor.phone, email: cur.vendor.email || r.vendor.email },
       memo: cur.memo || r.note, vat_included: cur.vat_included });
     puSummary = r.summary || []; $('#pu_reason').value = withSummary($('#pu_reason').value); puRender();
-    if($('#pu_memo').value.trim()) return puDraft();
-    $('#pu_status').textContent = `페이지에서 ${r.name || '제품'}을(를) 읽었어요${r.note ? ` · 메모: ${r.note}` : ''}. 수량을 확인하고 한 줄 메모를 쓴 뒤 [✦ 자동 작성]을 누르세요.`;
+    next();
   });
-};
-$('#pu_url').addEventListener('keydown', e => { if(e.key === 'Enter' && !e.isComposing) $('#btnUrlRead').click(); });
+}
+$('#pu_url').addEventListener('keydown', e => { if(e.key === 'Enter' && !e.isComposing){ e.preventDefault(); $('#pu_memo').focus(); } });
 $('#btnUrlClear').onclick = () => { puLink = null; renderUrlCard(); $('#pu_url').value = ''; puRender(); };
 $('#btnPoPick').onclick = $('#btnPoChange').onclick = async () => { const {path} = await rpc('/api/pick-po'); usePoFile(path); };
 $('#btnPoClear').onclick = () => { puFile = ''; poInfo = ''; renderPoChip(); puRender(); };
@@ -1074,7 +1093,19 @@ async function puDraft(){
   } catch(e){ $('#pu_status').textContent = ''; alertErr(e.message); }
   finally { $('#btnPuDraft').disabled = false; }
 }
-$('#btnPuDraft').onclick = puDraft;
+/** [✦ 자동 작성]: 발주서·제품 페이지를 (아직 안 읽었으면) 읽고 → 메모로 제목·사유 → 아래 펼침 */
+function puAuto(){
+  const url = radio('pu_src') === 'url', src = url ? $('#pu_url').value.trim() : puFile;
+  if(!src){ (url ? $('#pu_url') : $('#po_drop')).scrollIntoView({block: 'center'}); return alertErr(url ? '제품 페이지 주소를 넣어 주세요.' : '발주서·견적서 파일을 먼저 올려 주세요.'); }
+  if(url && !/^https?:\/\//i.test(src)) return alertErr('주소는 http:// 또는 https:// 로 시작해야 해요.');
+  if(!$('#pu_memo').value.trim()){ $('#pu_memo').focus(); return alertErr('무엇에 쓰려고 사는지 한 줄 메모를 적어 주세요. 그걸로 사유를 써요.'); }
+  const draft = async () => { await puDraft(); revealPurchase(); };
+  if(puRead === src) return draft();
+  (url ? readUrl : readPo)(draft);
+}
+$('#btnPuDraft').onclick = puAuto;
+function revealPurchase(){ const v = $('#puNew'); if(!v.classList.contains('pre')) return; v.classList.remove('pre'); v.classList.add('reveal'); setTimeout(() => v.classList.remove('reveal'), 600); }
+$('#puManual').onclick = e => { e.preventDefault(); revealPurchase(); };
 $('#btnPurchase').onclick = async () => {
   const d = purchaseData();
   const need = [];

@@ -49,6 +49,11 @@ function wrapFill(name, root){
   window[name] = function(...a){ const b = snapshot(root); const r = orig.apply(this, a); requestAnimationFrame(() => sparkleChanged(root, b)); return r; };
 }
 wrapFill('fillApply', '#tab-apply');
+// 출장 신청 펼치기: 내용이 채워지면(자동 작성·다시 신청·전에 쓰던 신청서) 아래 칸을 보여 줌
+function revealApply(){ const t = $('#tab-apply'); if(!t.classList.contains('pre')) return; t.classList.remove('pre'); t.classList.add('reveal'); setTimeout(() => t.classList.remove('reveal'), 600); setTimeout(() => { if(typeof maybeGuide === 'function') maybeGuide(); }, 300); }
+{ const f = window.fillApply; window.fillApply = function(d = {}, ...a){ const r = f.call(this, d, ...a); const dt = d.dates || {}; if(d.reason || d.destination || dt.start || d.start) revealApply(); return r; }; }
+$('#aManual').onclick = e => { e.preventDefault(); revealApply(); };
+if($('#a_reason').value.trim() || $('#a_destination').value.trim() || $('#a_start').value) revealApply();
 wrapFill('fillReport', '#reportView');
 wrapFill('applyReceipts', '#reportView');
 wrapFill('fillPurchase', '#tab-purchase');
@@ -199,7 +204,7 @@ function updateReport(){
 setInterval(() => { try { updateApply(); updateReport(); foldBadge('#aFold'); foldBadge('#rFold'); foldBadge('#puFold'); updateFab(); } catch(e){ /* 화면 준비 전 */ } }, 350);
 // 다른 출장 보고서를 열거나 새로 작성하면 다시 접음
 const _showReport = window.showReport; if(typeof _showReport === 'function') window.showReport = async function(...a){ setFold('#rFold', false); return _showReport.apply(this, a); };
-const _resetApply = window.resetApply; if(typeof _resetApply === 'function') window.resetApply = function(...a){ setFold('#aFold', false); return _resetApply.apply(this, a); };
+const _resetApply = window.resetApply; if(typeof _resetApply === 'function') window.resetApply = function(...a){ setFold('#aFold', false); const r = _resetApply.apply(this, a); $('#tab-apply').classList.add('pre'); return r; };   // 새로 작성 = 다시 한 줄 칸만
 
 /* ---------- 화면을 새로 그려도(개발 중 코드 반영 등) 보던 탭 유지 ---------- */
 $$('nav button').forEach(b => b.addEventListener('click', () => { try { sessionStorage.ta_tab = b.dataset.tab; } catch(e){ /* */ } }));
@@ -210,10 +215,13 @@ const GUIDES = {
   apply: [
     ['#a_scope_seg', '국내 / 해외', '먼저 국내 출장인지 해외 출장인지 고르세요. 해외면 환율·항공권 칸이 따로 나와요.'],
     ['#q_memo', '한 줄로 쓰기', '언제 · 어디 · 무슨 일인지만 쓰세요. 예) "다음주 화~목 판교 RBY1 연동 검증, 자차"'],
-    ['#btnQuick', '✦ 자동 작성', '누르면 날짜·출장지·사유·목적·경비를 회사 규정대로 채워요.'],
+    ['#btnQuick', '✦ 자동 작성', '누르면 날짜·출장지·사유·목적·경비를 회사 규정대로 채우고, 아래에 출장 티켓과 제출 준비가 펼쳐져요.'],
+    ['#aManual', '직접 입력', 'AI 없이 칸을 하나씩 채우고 싶으면 이걸 누르세요.'],
+  ],
+  applyResult: [
     ['#aTicket', '출장 티켓', '교통편(자차·대중교통·법인차량)을 여기서 고르면 교통비를 바로 계산해요. 합계도 여기서 보여요.'],
     ['#tab-apply .card.ready', '제출 준비', '빠진 게 있으면 여기에 남아요. 항목을 누르면 그 칸으로 데려가요.'],
-    ['#aFold', '세부 내용', 'AI 가 채운 내용을 고치고 싶을 때만 펼치세요.'],
+    ['#aFold .fold-head', '세부 내용', 'AI 가 채운 내용을 고치고 싶을 때만 펼치세요.'],
     ['#btnApply', '그룹웨어에 입력하기', '품의 입력과 결재 문서 본문까지 채워 작성 창을 띄워요. 결재선 확인과 [상신]은 직접 눌러 주세요.'],
   ],
   trips: [
@@ -224,20 +232,28 @@ const GUIDES = {
   report: [
     ['#r_drop', '① 영수증 넣기', '영수증·증빙(사진·PDF)을 끌어다 놓으면 AI 가 과목·금액·날짜를 읽어 채워요. 정산할 게 없으면 건너뛰세요.'],
     ['#rq_memo', '② 한 일 한 줄', '출장에서 한 일을 한 줄로 쓰세요. 보고서 본문을 써 드려요.'],
-    ['#btnRQuick', '✦ 자동 작성', '영수증과 한 줄로 보고서와 정산 경비를 채워요.'],
-    ['#rFold', '세부 내용', '자금과목(일반경비·제조경비)과 경비 줄을 여기서 확인하세요.'],
+    ['#btnRQuick', '✦ 자동 작성', '영수증과 한 줄로 보고서와 정산 경비를 채우고, 자차였으면 유류대(네이버 지도 캡처)까지 조회해요. 그러면 아래가 펼쳐져요.'],
+    ['#rManual', '직접 입력', 'AI 없이 칸을 하나씩 채우고 싶으면 이걸 누르세요.'],
+  ],
+  reportResult: [
+    ['#rReceipt', '정산 영수증', '과목별 정산 금액과 증빙이 몇 개 붙었는지 보여요.'],
+    ['#rFold .fold-head', '세부 내용', '자금과목(일반경비·제조경비)과 경비 줄을 여기서 확인하세요.'],
     ['#btnReport', '그룹웨어에 정산 입력하기', '결의서 전송과 출장보고서 결재 창까지 띄워요. [상신]은 직접.'],
   ],
   purchase: [
     ['#pu_src_seg', '발주서 / 제품 주소', '발주서·견적서 파일이 있으면 [발주서 파일], 온라인에서 살 거면 [제품 페이지 주소]. 둘 중 하나만 써요.'],
-    ['#po_drop:not(.hidden), #pu_urlbox:not(.hidden)', '① 올리기', '파일을 끌어다 놓거나, 제품 주소를 넣고 [페이지 읽기]. 거래처·품목·금액과 구매 제품 내용을 읽어 와요.'],
+    ['#po_drop:not(.hidden), #pu_urlbox:not(.hidden)', '① 올리기', '발주서·견적서 파일을 끌어다 놓거나, 제품 페이지 주소를 넣으세요.'],
     ['#pu_memo', '② 한 줄 메모', '무엇에 쓰려고 사는지 한 줄. 예) "협동로봇 주변기기 개발용 카메라"'],
-    ['#btnPuDraft', '✦ 자동 작성', '메모로 제목과 구매 상세 사유를 쓰고, 그 밑에 구매 제품 내용을 붙여요.'],
+    ['#btnPuDraft', '✦ 자동 작성', '발주서·페이지를 읽어 거래처·품목·금액을 채우고, 메모로 제목과 구매 상세 사유(밑에 구매 제품 내용)를 써요. 그러면 아래가 펼쳐져요.'],
+    ['#puManual', '직접 입력', 'AI 없이 칸을 하나씩 채우고 싶으면 이걸 누르세요.'],
+  ],
+  purchaseResult: [
     ['#puInfo', '구매 정보', '구매목적·프로젝트명·긴급도·대체 가능 여부·납기는 직접 고르세요. 정부과제·기타는 세부 프로젝트명이 꼭 필요해요.'],
     ['#puReady', '제출 준비', '빠진 게 있으면 여기에 남아요. 다 되면 [그룹웨어에 입력하기].'],
     ['#btnPurchase', '그룹웨어에 입력하기', '본문·첨부·수신및참조까지 채워 작성 창을 띄워요. 시행자·결재라인은 꼭 직접 선택하고 [상신]을 눌러 주세요.'],
   ],
 };
+GUIDES.applyAll = [...GUIDES.apply.filter(x => x[0] !== '#aManual'), ...GUIDES.applyResult];   // [❓ 가이드]를 펼친 뒤에 누르면 전부
 let gd = null;
 const seenGuide = k => { try { return localStorage['guide_' + k] === '1'; } catch(e){ return true; } };
 const markGuide = k => { try { localStorage['guide_' + k] = '1'; } catch(e){ /* */ } };
@@ -246,9 +262,10 @@ function gdShow(){
   while(gd && gd.i < gd.steps.length && !visible(gd.steps[gd.i][0])) gd.i += gd.dir;   // 지금 안 보이는 칸은 건너뜀
   if(!gd || gd.i < 0 || gd.i >= gd.steps.length) return gdEnd();
   const [sel, title, text] = gd.steps[gd.i], el = visible(sel);
-  el.scrollIntoView({ block: 'center' });
+  const tall = el.getBoundingClientRect().height > innerHeight * 0.55;   // 화면보다 큰 칸은 윗부분만 짚음
+  el.scrollIntoView({ block: tall ? 'start' : 'center' }); if(tall) scrollBy(0, -90);
   requestAnimationFrame(() => {
-    const r = el.getBoundingClientRect(), pad = 6, hole = $('#gdHole'), card = $('#gdCard');
+    const b = el.getBoundingClientRect(), r = tall ? { top: b.top, left: b.left, width: b.width, height: Math.min(b.height, 220), bottom: b.top + Math.min(b.height, 220) } : b, pad = 6, hole = $('#gdHole'), card = $('#gdCard');
     Object.assign(hole.style, { top: r.top - pad + 'px', left: r.left - pad + 'px', width: r.width + pad * 2 + 'px', height: r.height + pad * 2 + 'px' });
     $('#gdStep').textContent = `${gd.i + 1} / ${gd.steps.length}`; $('#gdTitle').textContent = title; $('#gdText').textContent = text;
     $('#gdPrev').disabled = gd.i === 0; $('#gdNext').textContent = gd.i === gd.steps.length - 1 ? '시작하기 ✦' : '다음';
@@ -267,12 +284,17 @@ $('#gdPrev').onclick = () => { if(!gd) return; gd.dir = -1; gd.i--; gdShow(); };
 $('#gdSkip').onclick = gdEnd;
 addEventListener('keydown', e => { if(!gd) return; if(e.key === 'Escape') gdEnd(); else if(e.key === 'ArrowRight' || e.key === 'Enter') $('#gdNext').click(); else if(e.key === 'ArrowLeft') $('#gdPrev').click(); });
 addEventListener('resize', () => { if(gd) gdShow(); });
-$$('[data-guide]').forEach(b => b.addEventListener('click', () => gdStart(b.dataset.guide, true)));
+GUIDES.reportAll = [...GUIDES.report.filter(x => x[0] !== '#rManual'), ...GUIDES.reportResult];
+GUIDES.purchaseAll = [...GUIDES.purchase.filter(x => x[0] !== '#puManual'), ...GUIDES.purchaseResult];
+const ALL = { apply: ['#tab-apply', 'applyAll'], report: ['#reportView', 'reportAll'], purchase: ['#puNew', 'purchaseAll'] };   // 펼친 뒤 [❓ 가이드] = 전부
+$$('[data-guide]').forEach(b => b.addEventListener('click', () => { const a = ALL[b.dataset.guide]; gdStart(a && !$(a[0]).classList.contains('pre') ? a[1] : b.dataset.guide, true); }));
+// 보고서가 펼쳐지면(자동 작성 뒤) 펼친 부분 가이드
+for (const id of ['#reportView', '#puNew']) { const v = $(id); new MutationObserver(() => { if(!v.classList.contains('pre') && !v.classList.contains('hidden')) maybeGuide(); }).observe(v, { attributes: true, attributeFilter: ['class'] }); }
 // 화면에 처음 들어올 때: 지금 보이는 화면의 가이드 (작업 중 딤·모달이 떠 있으면 다음 기회에)
 function currentGuide(){
-  if(!$('#tab-apply').classList.contains('hidden')) return 'apply';
-  if(!$('#tab-trips').classList.contains('hidden')) return $('#reportView').classList.contains('hidden') ? 'trips' : 'report';
-  if(!$('#tab-purchase').classList.contains('hidden') && !$('#puNew').classList.contains('hidden')) return 'purchase';
+  if(!$('#tab-apply').classList.contains('hidden')) return $('#tab-apply').classList.contains('pre') ? 'apply' : (seenGuide('apply') ? 'applyResult' : 'apply');
+  if(!$('#tab-trips').classList.contains('hidden')) return $('#reportView').classList.contains('hidden') ? 'trips' : $('#reportView').classList.contains('pre') ? 'report' : (seenGuide('report') ? 'reportResult' : 'report');
+  if(!$('#tab-purchase').classList.contains('hidden') && !$('#puNew').classList.contains('hidden')) return $('#puNew').classList.contains('pre') ? 'purchase' : (seenGuide('purchase') ? 'purchaseResult' : 'purchase');
   return '';
 }
 function maybeGuide(){ setTimeout(() => { const busy = $('#dim').classList.contains('on') || $$('#cfmModal.on, #askModal.on, #carModal.on, #loginModal.on').length; const k = currentGuide(); if(k && !busy) gdStart(k); }, 600); }
