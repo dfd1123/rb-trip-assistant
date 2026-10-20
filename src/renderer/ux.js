@@ -204,3 +204,78 @@ const _resetApply = window.resetApply; if(typeof _resetApply === 'function') win
 /* ---------- 화면을 새로 그려도(개발 중 코드 반영 등) 보던 탭 유지 ---------- */
 $$('nav button').forEach(b => b.addEventListener('click', () => { try { sessionStorage.ta_tab = b.dataset.tab; } catch(e){ /* */ } }));
 try { const t = sessionStorage.ta_tab; const b = t && t !== 'apply' && $(`nav button[data-tab="${t}"]`); if(b) setTimeout(() => b.click(), 0); } catch(e){ /* */ }
+
+/* ---------- 처음 들어온 사람용 가이드: 화면을 하나씩 짚어 준다. 본 화면은 기억 (❓ 가이드로 다시) ---------- */
+const GUIDES = {
+  apply: [
+    ['#a_scope_seg', '국내 / 해외', '먼저 국내 출장인지 해외 출장인지 고르세요. 해외면 환율·항공권 칸이 따로 나와요.'],
+    ['#q_memo', '한 줄로 쓰기', '언제 · 어디 · 무슨 일인지만 쓰세요. 예) "다음주 화~목 판교 RBY1 연동 검증, 자차"'],
+    ['#btnQuick', '✦ 자동 작성', '누르면 날짜·출장지·사유·목적·경비를 회사 규정대로 채워요.'],
+    ['#aTicket', '출장 티켓', '교통편(자차·대중교통·법인차량)을 여기서 고르면 교통비를 바로 계산해요. 합계도 여기서 보여요.'],
+    ['#tab-apply .card.ready', '제출 준비', '빠진 게 있으면 여기에 남아요. 항목을 누르면 그 칸으로 데려가요.'],
+    ['#aFold', '세부 내용', 'AI 가 채운 내용을 고치고 싶을 때만 펼치세요.'],
+    ['#btnApply', '그룹웨어에 입력하기', '품의 입력과 결재 문서 본문까지 채워 작성 창을 띄워요. 결재선 확인과 [상신]은 직접 눌러 주세요.'],
+  ],
+  trips: [
+    ['#gwRange', '조회 기간', '그룹웨어에 올린 출장 품의를 이 기간으로 읽어요 (기본 3개월).'],
+    ['#trips', '출장 목록', '출장마다 신청·보고 결재 상태가 보여요. 신청이 승인되면 [보고서 작성]을 누르세요.'],
+    ['#btnGwList', '새로고침', '그룹웨어에서 상태를 다시 읽어요. 결재가 끝난 출장은 아래로 숨겨져요.'],
+  ],
+  report: [
+    ['#r_drop', '① 영수증 넣기', '영수증·증빙(사진·PDF)을 끌어다 놓으면 AI 가 과목·금액·날짜를 읽어 채워요. 정산할 게 없으면 건너뛰세요.'],
+    ['#rq_memo', '② 한 일 한 줄', '출장에서 한 일을 한 줄로 쓰세요. 보고서 본문을 써 드려요.'],
+    ['#btnRQuick', '✦ 자동 작성', '영수증과 한 줄로 보고서와 정산 경비를 채워요.'],
+    ['#rFold', '세부 내용', '자금과목(일반경비·제조경비)과 경비 줄을 여기서 확인하세요.'],
+    ['#btnReport', '그룹웨어에 정산 입력하기', '결의서 전송과 출장보고서 결재 창까지 띄워요. [상신]은 직접.'],
+  ],
+  purchase: [
+    ['#pu_src_seg', '발주서 / 제품 주소', '발주서·견적서 파일이 있으면 [발주서 파일], 온라인에서 살 거면 [제품 페이지 주소]. 둘 중 하나만 써요.'],
+    ['#po_drop:not(.hidden), #pu_urlbox:not(.hidden)', '① 올리기', '파일을 끌어다 놓거나, 제품 주소를 넣고 [페이지 읽기]. 거래처·품목·금액과 구매 제품 내용을 읽어 와요.'],
+    ['#pu_memo', '② 한 줄 메모', '무엇에 쓰려고 사는지 한 줄. 예) "협동로봇 주변기기 개발용 카메라"'],
+    ['#btnPuDraft', '✦ 자동 작성', '메모로 제목과 구매 상세 사유를 쓰고, 그 밑에 구매 제품 내용을 붙여요.'],
+    ['#puInfo', '구매 정보', '구매목적·프로젝트명·긴급도·대체 가능 여부·납기는 직접 고르세요. 정부과제·기타는 세부 프로젝트명이 꼭 필요해요.'],
+    ['#puReady', '제출 준비', '빠진 게 있으면 여기에 남아요. 다 되면 [그룹웨어에 입력하기].'],
+    ['#btnPurchase', '그룹웨어에 입력하기', '본문·첨부·수신및참조까지 채워 작성 창을 띄워요. 시행자·결재라인은 꼭 직접 선택하고 [상신]을 눌러 주세요.'],
+  ],
+};
+let gd = null;
+const seenGuide = k => { try { return localStorage['guide_' + k] === '1'; } catch(e){ return true; } };
+const markGuide = k => { try { localStorage['guide_' + k] = '1'; } catch(e){ /* */ } };
+function gdShow(){
+  const visible = sel => [...document.querySelectorAll(sel)].find(el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; });
+  while(gd && gd.i < gd.steps.length && !visible(gd.steps[gd.i][0])) gd.i += gd.dir;   // 지금 안 보이는 칸은 건너뜀
+  if(!gd || gd.i < 0 || gd.i >= gd.steps.length) return gdEnd();
+  const [sel, title, text] = gd.steps[gd.i], el = visible(sel);
+  el.scrollIntoView({ block: 'center' });
+  requestAnimationFrame(() => {
+    const r = el.getBoundingClientRect(), pad = 6, hole = $('#gdHole'), card = $('#gdCard');
+    Object.assign(hole.style, { top: r.top - pad + 'px', left: r.left - pad + 'px', width: r.width + pad * 2 + 'px', height: r.height + pad * 2 + 'px' });
+    $('#gdStep').textContent = `${gd.i + 1} / ${gd.steps.length}`; $('#gdTitle').textContent = title; $('#gdText').textContent = text;
+    $('#gdPrev').disabled = gd.i === 0; $('#gdNext').textContent = gd.i === gd.steps.length - 1 ? '시작하기 ✦' : '다음';
+    const ch = card.offsetHeight || 160, below = r.bottom + 14 + ch < innerHeight;
+    card.style.top = Math.max(12, below ? r.bottom + 14 : r.top - ch - 14) + 'px';
+    card.style.left = Math.min(innerWidth - card.offsetWidth - 16, Math.max(16, r.left)) + 'px';
+  });
+}
+function gdStart(key, force = false){
+  if(!GUIDES[key] || (!force && seenGuide(key)) || gd) return;
+  gd = { key, steps: GUIDES[key], i: 0, dir: 1 }; $('#guide').classList.remove('hidden'); gdShow();
+}
+function gdEnd(){ if(gd) markGuide(gd.key); gd = null; $('#guide').classList.add('hidden'); }
+$('#gdNext').onclick = () => { if(!gd) return; gd.dir = 1; gd.i++; gdShow(); };
+$('#gdPrev').onclick = () => { if(!gd) return; gd.dir = -1; gd.i--; gdShow(); };
+$('#gdSkip').onclick = gdEnd;
+addEventListener('keydown', e => { if(!gd) return; if(e.key === 'Escape') gdEnd(); else if(e.key === 'ArrowRight' || e.key === 'Enter') $('#gdNext').click(); else if(e.key === 'ArrowLeft') $('#gdPrev').click(); });
+addEventListener('resize', () => { if(gd) gdShow(); });
+$$('[data-guide]').forEach(b => b.addEventListener('click', () => gdStart(b.dataset.guide, true)));
+// 화면에 처음 들어올 때: 지금 보이는 화면의 가이드 (작업 중 딤·모달이 떠 있으면 다음 기회에)
+function currentGuide(){
+  if(!$('#tab-apply').classList.contains('hidden')) return 'apply';
+  if(!$('#tab-trips').classList.contains('hidden')) return $('#reportView').classList.contains('hidden') ? 'trips' : 'report';
+  if(!$('#tab-purchase').classList.contains('hidden') && !$('#puNew').classList.contains('hidden')) return 'purchase';
+  return '';
+}
+function maybeGuide(){ setTimeout(() => { const busy = $('#dim').classList.contains('on') || $$('#cfmModal.on, #askModal.on, #carModal.on, #loginModal.on').length; const k = currentGuide(); if(k && !busy) gdStart(k); }, 600); }
+$$('nav button, .trip-view label, input[name=pu_view]').forEach(b => b.addEventListener(b.tagName === 'INPUT' ? 'change' : 'click', maybeGuide));
+if(typeof window.showReport === 'function'){ const _sr = window.showReport; window.showReport = async function(...a){ const r = await _sr.apply(this, a); maybeGuide(); return r; }; }
+maybeGuide();
