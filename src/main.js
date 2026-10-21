@@ -135,7 +135,7 @@ function showNaver() { if (naverWin && !naverWin.isDestroyed()) { unpark(naverWi
 // ---------- 작업 1건 (사람 확인 포함) ----------
 class Cancelled extends Error { constructor() { super('취소했어요.'); } }
 class Job {
-  constructor(kind, title) { this.kind = kind; this.title = title || kind; this.logs = []; this.state = 'running'; this.result = null; this.error = ''; this.question = null; this._resolve = null; this._reject = null; this.cancelled = false; }
+  constructor(kind, title) { this.startedAt = Date.now(); this.reported = new Set(); this.kind = kind; this.title = title || kind; this.logs = []; this.state = 'running'; this.result = null; this.error = ''; this.question = null; this._resolve = null; this._reject = null; this.cancelled = false; }
   info(msg) {
     if (this.cancelled) throw new Cancelled();
     this.logs.push(...String(msg).split('\n'));
@@ -153,7 +153,7 @@ class Job {
     this.cancelled = true;
     if (this._reject) { const f = this._reject; this._resolve = this._reject = null; f(new Cancelled()); }
   }
-  async assist(msg) { this.info(`⚠ ${msg}`); await this._ask('assist', msg); }
+  async assist(msg) { this.info(`⚠ ${msg}`); reportJob(this, 'stuck', msg); await this._ask('assist', msg); }   // 사람에게 넘긴 지점 = 자동화가 막힌 곳 → 개발자에게
   async confirm(text) { return Boolean(await this._ask('confirm', text)); }
   async askInt(text) { return Number(await this._ask('int', text)); }
   async askText(text, def = '') { return String(await this._ask('text', text, def) ?? ''); }
@@ -172,10 +172,48 @@ function startJob(kind, fn, title) {
   const env = { debugDir: app.isPackaged ? path.join(app.getPath('userData'), 'debug') : path.join(__dirname, '..', 'debug'), cfg: store.config(), store, ui: j, log: m => j.info(m), naverKeys: naverKeys(), fetch: net.fetch, gwWindow: () => gwWindow(false), showGw, makeNaverWindow, creds: gwCreds };
   (async () => {
     try { j.result = await fn(env); j.state = 'done'; j.info('✔ 완료'); }
-    catch (e) { j.error = e instanceof R.InputError ? `입력 오류: ${e.message}` : e.message; j.state = j.cancelled ? 'cancelled' : 'error'; }
+    catch (e) { j.error = e instanceof R.InputError ? `입력 오류: ${e.message}` : e.message; j.state = j.cancelled ? 'cancelled' : 'error';
+      if (j.state === 'error' && !(e instanceof R.InputError)) reportJob(j, 'error', e.stack || e.message); }   // 입력 검증 오류는 사람 실수라 안 보냄
     finally { if (j.state !== 'done' && mainWin && !mainWin.isDestroyed()) mainWin.focus(); }   // 성공 시엔 작성 팝업이 앞
   })();
   return { ok: true };
+}
+
+// ---------- 실패·막힘 기록을 개발자 슬랙으로 (끌 수 없음. 설정 화면에 알림) ----------
+const slackKeys = () => { const b = (() => { try { return require('./engine/builtin-key.json'); } catch (e) { return {}; } })();
+  return { token: (process.env.SLACK_BOT_TOKEN || b.slackToken || '').trim(), channel: (process.env.SLACK_CHANNEL || b.slackChannel || '').trim() }; };
+/** 지금 열린 창들(작업용 그룹웨어·작성 창·네이버 지도) 캡처 + 화면 HTML */
+async function captureWindows() {
+  const { scrubHtml } = require('./engine/errreport');
+  const wins = [['gw', gwWin], ...[...gwPopups].map((w, i) => [`popup${i + 1}`, w]), ['naver', naverWin]].filter(([, w]) => w && !w.isDestroyed());
+  const out = [];
+  for (const [name, w] of wins) {
+    try { out.push({ name: `${name}.png`, data: (await w.webContents.capturePage()).toPNG() }); } catch (e) { /* 캡처 실패 */ }
+    try {
+      const frames = await w.webContents.executeJavaScript(`[document.documentElement.outerHTML, ...[...document.querySelectorAll('iframe')].map(f => { try { return f.contentDocument.documentElement.outerHTML; } catch (e) { return ''; } })]`);
+      out.push({ name: `${name}.html`, data: scrubHtml(`<!-- ${w.webContents.getURL()} -->\n` + frames.filter(Boolean).join('\n<!-- ===== iframe ===== -->\n')) });
+    } catch (e) { /* HTML 실패 */ }
+  }
+  return out;
+}
+/** kind: 'error'(작업 실패) | 'stuck'(사람에게 넘김). 같은 작업에서 같은 내용은 한 번만 */
+async function reportJob(j, kind, detail) {
+  try {
+    const { token, channel } = slackKeys(); if (!token || !channel) return;
+    const key = `${kind}:${String(detail).slice(0, 200)}`; if (j.reported.has(key) || j.reported.size >= 5) return; j.reported.add(key);
+    const fs = require('fs'), cfg = store.config(), dir = app.isPackaged ? path.join(app.getPath('userData'), 'debug') : path.join(__dirname, '..', 'debug');
+    let dumps = [];
+    try { dumps = fs.readdirSync(dir).map(n => path.join(dir, n)).filter(f => /\.(png|html|json)$/.test(f) && fs.statSync(f).mtimeMs >= j.startedAt - 1000 && fs.statSync(f).size < 8e6)
+      .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs).slice(0, 12).map(f => ({ name: path.basename(f), data: fs.readFileSync(f) })); } catch (e) { /* 진단 폴더 없음 */ }
+    const head = `${kind === 'error' ? '🚨 작업 실패' : '⚠️ 자동화가 막힘 (사람에게 넘김)'} · ${j.title}\n`
+      + `${cfg.name || '(이름 없음)'} · ${cfg.budgetDept || '-'} · 계정 ${cfg.lastLoginId || cfg.gwId || '-'} · v${app.getVersion()} · ${process.platform} ${process.arch}\n`
+      + `${kind === 'error' ? '오류' : '안내'}: ${String(detail).split('\n')[0].slice(0, 500)}\n`
+      + '```' + j.logs.slice(-15).join('\n').slice(-1800) + '```';
+    const files = [{ name: 'job-log.txt', data: `${j.title} (${j.kind}) · ${new Date(j.startedAt).toISOString()}\n\n${j.logs.join('\n')}\n\n--- ${kind} ---\n${detail}` },
+      ...(await captureWindows()), ...dumps];
+    const r = await require('./engine/errreport').sendReport({ token, channel, fetch: net.fetch, text: head, files });
+    if (r && r.ts) j.logs.push(kind === 'error' ? '✉ 오류 기록을 개발자에게 보냈어요 (고치는 데 써요)' : '✉ 막힌 곳 기록을 개발자에게 보냈어요');
+  } catch (e) { console.log('[report] 보내기 실패:', e.message); }
 }
 
 // ---------- 영수증 자동 분류 ----------
@@ -299,7 +337,9 @@ async function quick(memo) {
   data.scope = '국내';
   // 교통편은 메모에 적혀 있을 때만 정한다 (자차·대중교통·법인차량). 아니면 비워 두고 사람이 고르면 그때 교통비를 계산
   const said = Q.parseMode(memo);
-  if (!said.mode) data.transport = { ...data.transport, mode: '', corporate_car: undefined };
+  const noCar = cfg.hasCar === false;   // 자차 없음(설정·첫 로그인 질문) → 기본 대중교통, 자차는 못 고름
+  if (noCar && said.mode === 'car') said.mode = 'transit';
+  if (!said.mode) data.transport = noCar ? { ...data.transport, mode: 'transit', corporate_car: undefined } : { ...data.transport, mode: '', corporate_car: undefined };
   else if (said.mode !== data.transport.mode) data.transport = { ...data.transport, mode: said.mode, ...(said.corporate_car ? { corporate_car: said.corporate_car } : {}) };
   const missing = [];
   if (!data.transport.mode) missing.push('교통편');

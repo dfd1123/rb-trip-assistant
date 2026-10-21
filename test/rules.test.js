@@ -436,3 +436,19 @@ test('구매의뢰서 거래처 담당자 칸: 거래처명 / 담당자명, 하�
   assert.equal(mk({ name: '알에프씨엠', contact: '' }), '알에프씨엠');
   assert.equal(mk({ name: '알에프씨엠', contact: '알에프씨엠' }), '알에프씨엠');
 });
+
+test('오류 기록 슬랙 전송: 메시지 → 파일 올리기 → 스레드에 묶기, 비밀번호 칸 지움, 키 없으면 건너뜀', async () => {
+  const { sendReport, scrubHtml } = require('../src/engine/errreport');
+  const calls = [];
+  const fake = async (url, opt) => { calls.push([url.replace('https://slack.com/api/', ''), opt.body]);
+    if (url.endsWith('chat.postMessage')) return { ok: true, json: async () => ({ ok: true, ts: '1.2', channel: 'C1' }) };
+    if (url.endsWith('files.getUploadURLExternal')) return { ok: true, json: async () => ({ ok: true, upload_url: 'https://up/1', file_id: 'F1' }) };
+    if (url === 'https://up/1') return { ok: true };
+    return { ok: true, json: async () => ({ ok: true }) }; };
+  const r = await sendReport({ token: 't', channel: 'C1', fetch: fake, text: '실패', files: [{ name: 'log.txt', data: 'hello' }, { name: 'empty.txt', data: '' }] });
+  assert.deepEqual(r, { ts: '1.2', files: 1 });
+  assert.deepEqual(calls.map(c => c[0]), ['chat.postMessage', 'files.getUploadURLExternal', 'https://up/1', 'files.completeUploadExternal']);
+  assert.deepEqual(JSON.parse(calls[3][1]), { files: [{ id: 'F1', title: 'log.txt' }], channel_id: 'C1', thread_ts: '1.2' });
+  assert.equal(scrubHtml('<input type="password" name="pw" value="secret1">'), '<input type="password" name="pw" value="***">');
+  assert.deepEqual(await sendReport({ token: '', channel: 'C1', fetch: fake, text: 'x' }), { skipped: true });
+});

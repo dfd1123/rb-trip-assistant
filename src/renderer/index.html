@@ -280,6 +280,7 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
 #tab-apply:not(.pre) #aManual,#reportView:not(.pre) #rManual,#puNew:not(.pre) #puManual{display:none}
 #tab-apply.reveal .result,#tab-apply.reveal #aFold,#reportView.reveal .result,#reportView.reveal #rFold,#puNew.reveal .result,#puNew.reveal #puFold{animation:revealUp .45s cubic-bezier(.2,.8,.2,1) both}
 @keyframes revealUp{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+.seg label.disabled,#tkModes button:disabled{opacity:.4;cursor:not-allowed}
 .pre-skip{display:inline-block;margin-top:10px;font-size:13px;color:var(--muted);text-decoration:none}.pre-skip:hover{color:var(--accent);text-decoration:underline}
 /* 처음 들어온 사람용 가이드 (화면 짚어 주기) */
 #guide{position:fixed;inset:0;z-index:90}
@@ -626,6 +627,7 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
   <div class="card">
     <h2>그룹웨어 계정</h2>
     <p class="sub">저장해 두면 앱을 켤 때·입력할 때 로그인이 풀려 있으면 알아서 로그인해요. 비밀번호는 이 PC의 OS 보안 저장소(macOS 키체인 등)로 암호화돼 저장되고 밖으로 나가지 않아요.</p>
+    <p class="sub" style="margin-top:6px">📮 작업이 실패하거나 자동화가 막혀 직접 손봐야 할 때는 고치는 데 쓰려고 <b>작업 기록·그룹웨어 화면 캡처·화면 HTML</b>이 개발자 슬랙으로 자동 전송돼요 (비밀번호 칸 값은 빼고).</p>
     <div class="inline" style="gap:8px"><span id="s_gw" style="flex:1;color:var(--muted)"></span>
       <button class="btn" id="btnGwLogin">계정 입력 / 로그인</button>
       <button class="btn" id="btnGwForget">저장된 계정 삭제</button>
@@ -662,6 +664,7 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
     </ul>
     <div class="rates">
       <div><label>직급</label><select id="s_rank"><option value="staff">부장 이하</option><option value="exec">임원</option></select></div>
+      <div><label>자차</label><select id="s_has_car" title="자차가 없으면 출장 신청에서 자차를 못 고르고 대중교통이 기본이에요"><option value="yes">있음</option><option value="no">없음</option></select></div>
       <div><label>내 차 연료 (자차)</label><select id="s_car_fuel" title="자차 유류대를 네이버 지도에서 이 연료로 조회해요 (휘발유·경유·LPG 는 연비 8km/L, 전기는 네이버 기본 전비)"><option value="gasoline">휘발유</option><option value="diesel">경유</option><option value="lpg">LPG</option><option value="electric">전기</option></select></div>
       <div><label>내 차 차종</label><select id="s_car_type"><option value="6">1종(경차) · 경차</option><option value="1">1종 · 승용차, 소형승합차, 소형화물차</option><option value="2">2종 · 중형승합차, 중형화물차</option><option value="3">3종 · 대형승합차, 2축 대형화물차</option><option value="4">4종 · 3축 대형화물차</option><option value="5">5종 · 4축이상 특수화물차</option><option value="9">이륜차</option></select></div>
       <div><label>숙박 1박</label><input id="s_lodging" inputmode="numeric"></div>

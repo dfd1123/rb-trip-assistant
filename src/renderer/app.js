@@ -44,7 +44,7 @@ $$('nav button').forEach(b => b.onclick = () => {
   if(b.dataset.tab==='purchase') initPurchase();
   if(b.dataset.tab==='trips'){ $('#tripList').classList.remove('hidden'); $('#reportView').classList.add('hidden'); loadTrips(); autoGwCheck(true); }   // 탭에 들어올 때마다 그룹웨어에서 다시 읽기 (저장된 목록은 먼저 보여줌)
   if(b.dataset.tab==='settings'){ ['#s_msg', '#s_ai_msg', '#s_rate_msg'].forEach(id => $(id).textContent = ''); rpc('/api/meta').then(m => { META = m; renderSettings(); }); }   // 저장된 값으로 다시 그림, '저장됨' 같은 알림은 지움
-  if(b.dataset.tab==='apply') rpc('/api/meta').then(m => { META = m; syncApplyDefaults(); });          // 쓰던 신청서는 그대로, 설정에서 온 값만 맞춤
+  if(b.dataset.tab==='apply') rpc('/api/meta').then(m => { META = m; syncApplyDefaults(); applyCarRule(); });          // 쓰던 신청서는 그대로, 설정에서 온 값만 맞춤
   window.scrollTo(0, 0);   // 메뉴를 바꾸면 맨 위부터
 });
 
@@ -178,6 +178,7 @@ function fillApply(d){
   if(d.rate) setRate({ rate: d.rate, date: d.rate_date, screenshot: d.rate_shot });
   refreshApply();
   if(ov){ if(!$('#a_uber').value) $('#a_uber').value = (META.config.rates && META.config.rates.uberUsdPerDay) || ''; recalcOverseas(); if(!d.rate && META.config.fxKeySet) lookupRate(); }
+  applyCarRule();
 }
 /** 신청서 전체 비우기 ([새로 작성], 그룹웨어 입력이 끝났을 때) */
 function resetApply(scope = '국내'){
@@ -225,6 +226,17 @@ $('#btnFill').onclick = async () => {
   try { fillApply((await rpc('/api/parse', {text: $('#aiPaste').value})).data); }
   catch(e){ $('#aiErr').textContent = e.message; }
 };
+/* ---------- 자차 없음: 자차는 못 고르고 대중교통이 기본 ---------- */
+function applyCarRule(){
+  const noCar = !!(META && META.config && META.config.hasCar === false);
+  const car = $('input[name=a_mode][value=car]'), tk = $('#tkModes button[data-m=car]');
+  if(car){ car.disabled = noCar; const l = car.closest('label'); if(l){ l.classList.toggle('disabled', noCar); l.title = noCar ? '설정에서 자차 없음으로 되어 있어요' : ''; } }
+  if(tk){ tk.disabled = noCar; tk.title = noCar ? '설정에서 자차 없음으로 되어 있어요 (설정 › 내 차에서 바꿀 수 있어요)' : ''; }
+  if(noCar && !isOverseas() && (!radio('a_mode') || radio('a_mode') === 'car')){
+    const t = $('input[name=a_mode][value=transit]'); if(t){ t.checked = true; t.dispatchEvent(new Event('change', {bubbles: true})); }
+  }
+}
+
 /* ---------- 출장지 자동완성 (네이버 지역 검색) ---------- */
 const placeGeoValid = () => !!(placeGeo && placeGeo.lng && $('#a_destination').value.includes(placeGeo.name));   // 출장지 글자를 지우거나 바꾸면 무효
 /** 입력칸 아래 네이버 지역 검색 후보 목록. skip() 이 true 면 안 띄움, onPick(place) 로 고른 곳 전달 */
@@ -888,7 +900,7 @@ function loadAiSettings(){
   $('#s_key').value = ''; keyHint(); $('#s_ai').addEventListener('change', keyHint);
 
   const r = c.rates; $('#s_lodging').value = r.lodgingPerNight; $('#s_breakfast').value = r.breakfast; $('#s_lunch').value = r.lunch; $('#s_dinner').value = r.dinner; $('#s_fare_margin').value = r.fareMargin ?? 20000;
-  $('#s_rank').value = c.rank || 'staff'; $('#s_car_fuel').value = c.carFuel || 'gasoline'; $('#s_car_type').value = c.carType || '1';
+  $('#s_rank').value = c.rank || 'staff'; $('#s_car_fuel').value = c.carFuel || 'gasoline'; $('#s_car_type').value = c.carType || '1'; $('#s_has_car').value = c.hasCar === false ? 'no' : 'yes';
 }
 $('#s_ai').onchange = () => { const k = $('#s_ai').value; $('#s_model').placeholder = META.providers[k] ? `기본: ${META.providers[k].model}` : '비우면 기본 모델'; };
 $('#btnAiSave').onclick = async () => {
@@ -903,7 +915,7 @@ $('#btnAiTest').onclick = async () => {
 };
 $('#btnRateSave').onclick = async () => {
   const rates = {...META.config.rates, lodgingPerNight: num($('#s_lodging').value), breakfast: num($('#s_breakfast').value), lunch: num($('#s_lunch').value), dinner: num($('#s_dinner').value), fareMargin: num($('#s_fare_margin').value)};
-  await rpc('/api/config', {rates, rank: $('#s_rank').value, carFuel: $('#s_car_fuel').value, carType: $('#s_car_type').value}); META = await rpc('/api/meta'); $('#s_rate_msg').textContent = '저장됨';
+  await rpc('/api/config', {rates, rank: $('#s_rank').value, carFuel: $('#s_car_fuel').value, carType: $('#s_car_type').value, hasCar: $('#s_has_car').value === 'yes'}); META = await rpc('/api/meta'); applyCarRule(); $('#s_rate_msg').textContent = '저장됨';
 };
 
 /* ---------- 구매 의뢰 (구매의뢰서) ---------- */
@@ -1211,7 +1223,7 @@ function askCar(){
   $('#car_fuel').value = META.config.carFuel || 'gasoline'; $('#car_type').value = META.config.carType || '1';
   $('#carModal').classList.add('on');
 }
-const saveCar = async patch => { $('#carModal').classList.remove('on'); await rpc('/api/config', patch); META = await rpc('/api/meta'); renderSettings(); };
+const saveCar = async patch => { $('#carModal').classList.remove('on'); await rpc('/api/config', patch); META = await rpc('/api/meta'); renderSettings(); applyCarRule(); };
 $('#carNo').onclick = () => saveCar({hasCar: false});
 $('#carYes').onclick = () => {
   if($('#carPick').classList.contains('hidden')){ $('#carPick').classList.remove('hidden'); $('#carYes').textContent = '저장'; $('#carNo').textContent = '자차 없어요'; return; }   // 있어요 → 연료·차종 고르기
@@ -1275,7 +1287,7 @@ window.addEventListener('focus', () => { if(Date.now() - gwChecked > 20 * 60 * 1
   META = await rpc('/api/meta');
   const c = META.config; $('#ver').textContent = 'v' + META.version;
   renderSettings();
-  lastOrigin = ''; syncApplyDefaults();
+  lastOrigin = ''; syncApplyDefaults(); applyCarRule();
   // 업데이트: 켤 때·창에 다시 들어올 때 최신 버전 확인 → 있으면 물어보고 → [업데이트]면 받아서 설치·재시작
   let updLater = '', updTimer = null;
   const askUpdate = async (force) => {
