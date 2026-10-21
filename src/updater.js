@@ -56,6 +56,20 @@ async function download(url, file) {
     if (!out.write(chunk)) await new Promise(r => out.once('drain', r));
   }
   await new Promise((r, j) => out.end(e => e ? j(e) : r()));
+  if (total && got !== total) throw new Error(`다운로드가 중간에 끊겼어요 (${got}/${total} bytes). 다시 시도해 주세요.`);
+}
+
+/** 받은 설치 파일 실행. Windows 는 방금 받은 exe 를 백신이 검사하는 동안 잠가 둬서 spawn EBUSY 가 난다 → 잠깐씩 기다리며 다시 시도 */
+async function launchDetached(cmd, args = []) {
+  let last;
+  for (let i = 0; i < 20; i++) {
+    try {
+      const c = spawn(cmd, args, { detached: true, stdio: 'ignore' });
+      await new Promise((r, j) => { c.once('spawn', r); c.once('error', j); });
+      c.unref(); return;
+    } catch (e) { last = e; if (!/EBUSY|EPERM|EACCES/.test(String(e.code || e.message))) throw e; await new Promise(r => setTimeout(r, 1000)); }
+  }
+  throw new Error(`설치 파일을 실행하지 못했어요 (${last && (last.code || last.message)}). 백신이 검사 중일 수 있어요 — 잠시 뒤 [업데이트]를 다시 눌러 주세요.`);
 }
 
 /** macOS: zip 받기 → 풀기 → 앱이 꺼지면 .app 교체 후 다시 열기 */
@@ -115,9 +129,9 @@ async function installDownload() {
   state.status = 'downloading'; state.percent = 0;
   await download(asset.browser_download_url, file);
   state.status = 'installing';
-  const launch = (cmd, args = []) => { spawn(cmd, args, { detached: true, stdio: 'ignore' }).unref(); setTimeout(() => app.quit(), 300); };
-  if (kind === 'exe') launch(file, ['/S', '--force-run']);   // 조용히 설치하고 실행
-  else if (kind === 'appimage') { fs.chmodSync(file, 0o755); fs.copyFileSync(file, process.env.APPIMAGE); launch(process.env.APPIMAGE); }
+  const launch = async (cmd, args = []) => { await launchDetached(cmd, args); setTimeout(() => app.quit(), 300); };
+  if (kind === 'exe') await launch(file, ['/S', '--force-run']);   // 조용히 설치하고 실행
+  else if (kind === 'appimage') { fs.chmodSync(file, 0o755); fs.copyFileSync(file, process.env.APPIMAGE); await launch(process.env.APPIMAGE); }
   else await installPackage(kind, file);
 }
 
