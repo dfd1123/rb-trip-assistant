@@ -293,12 +293,24 @@ class Amaranth {
     await sleep(800);
     if (await this.isLoginPage()) { await this.ensureLogin(); await p.goto(this.baseUrl + BUDGET_PATH); }   // 세션 만료
     await p.waitFor(() => !!grid('품의구분'), [], { timeout: 30000, message: '품의서입력 화면이 열리지 않았습니다.' });
-    await sleep(700);
+    // 목록은 화면이 뜬 뒤 따로 불러오고, 다 불러와야 맨 아래 빈 행(새 입력 줄)이 생긴다. 느린 PC·품의가 많은 사람은 몇 초 걸림
+    const blankReady = async () => { const n = await this.rowCount('품의구분'); return n > 0 && !(await this.rowVals('품의구분', n - 1))['순번']; };
+    const waitBlank = async ms => { const end = Date.now() + ms; while (Date.now() < end) { if (await blankReady()) return true; await sleep(500); } return false; };
+    if (!(await waitBlank(15000))) {
+      this.log('(품의 목록이 늦게 떠서 [조회]를 다시 눌러요)');
+      try { await p.clickWhere(() => all('button').filter(b => vis(b) && norm(b.textContent) === '조회')[0]); } catch (e) { /* 조회 버튼 없음 */ }
+      if (!(await waitBlank(15000))) await this.debugDump('budget-noblank', '품의서입력');
+    }
 
     let row = (await this.rowCount('품의구분')) - 1;
     if (row < 0 || (await this.rowVals('품의구분', row))['순번']) {
-      await ui.assist('품의 목록 맨 아래에 빈 행이 없습니다. 빈 행을 만든 뒤 [계속]을 눌러주세요.');
+      // 사람에게 맡겨도 [계속]만 누르고 넘어올 수 있다 → 빈 행이 생길 때까지 다시 묻는다 (행 번호 -1 로 진행하면 엉뚱한 실패가 이어짐)
+      for (let i = 0; i < 5 && !(await blankReady()); i++) {
+        await ui.assist('품의 목록이 아직 안 떴거나 맨 아래 빈 행이 없어요. [작업 중인 창 열기]에서 [조회]를 눌러 목록과 맨 아래 빈 행이 보이면 [계속]을 눌러 주세요.');
+        await waitBlank(5000);
+      }
       row = (await this.rowCount('품의구분')) - 1;
+      if (!(await blankReady())) throw new Error('품의 목록에 새 입력 줄(빈 행)이 없어 품의를 만들 수 없어요. 그룹웨어에서 품의서입력(복수) 화면이 정상인지 확인해 주세요.');
     }
 
     const seqBefore = await p.eval(() => { const g = grid('품의구분'); return rows(g).map((_, i) => (rowVals(g, i) || {})['순번']).filter(Boolean); });

@@ -80,7 +80,7 @@ function gwWindow(show = false) {
     webPreferences: { partition: 'persist:gw', contextIsolation: true, sandbox: true, backgroundThrottling: false },
   });
   // 결재 작성 팝업(window.open)도 숨긴 채 같은 세션으로 연다
-  gwWin.webContents.setWindowOpenHandler(() => ({
+  gwWin.webContents.setWindowOpenHandler(({ url }) => /[?&](art_seq_no|boardNo)=|portlet=true/.test(String(url)) ? { action: 'deny' } : ({   // 로그인 뒤 뜨는 공지사항 팝업은 막음 (작업 창과 섞이고 포커스를 뺏음)
     action: 'allow',
     overrideBrowserWindowOptions: { show: false, width: 1100, height: 1000, icon: ICON, autoHideMenuBar: true, webPreferences: { backgroundThrottling: false } },
   }));
@@ -200,6 +200,8 @@ async function captureWindows() {
 async function reportJob(j, kind, detail) {
   try {
     const { token, channel } = slackKeys(); if (!token || !channel) return;
+    // 정상 안내는 안 보냄: 로그인이 안 돼 있어 사람에게 로그인 맡김 (비밀번호 미저장·세션 만료는 고칠 게 아님)
+    if (kind === 'stuck' && /로그인되어 있지 않아요|직접 로그인해 주세요|로그인이 필요/.test(String(detail))) return;
     const key = `${kind}:${String(detail).slice(0, 200)}`; if (j.reported.has(key) || j.reported.size >= 5) return; j.reported.add(key);
     const fs = require('fs'), cfg = store.config(), dir = app.isPackaged ? path.join(app.getPath('userData'), 'debug') : path.join(__dirname, '..', 'debug');
     let dumps = [];
