@@ -55,7 +55,8 @@ async function download(url, file) {
     got += chunk.length; if (total) state.percent = Math.round(got / total * 100);
     if (!out.write(chunk)) await new Promise(r => out.once('drain', r));
   }
-  await new Promise((r, j) => out.end(e => e ? j(e) : r()));
+  // end 콜백은 'finish'(다 썼음)에 불리고 파일 핸들은 그 뒤 'close' 에 닫힌다. Windows 는 쓰기 핸들이 열린 exe 를 실행하면 EBUSY → close 까지 기다림
+  await new Promise((r, j) => { out.once('error', j); out.once('close', r); out.end(); });
   if (total && got !== total) throw new Error(`다운로드가 중간에 끊겼어요 (${got}/${total} bytes). 다시 시도해 주세요.`);
 }
 
