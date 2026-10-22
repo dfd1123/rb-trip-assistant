@@ -292,6 +292,45 @@ test('정산은 품의 금액까지만', () => {
   assert.deepEqual(R.capToBudget([l(110000, 'card')], 66000).map(x => [x.amount, x.supply]), [[66000, 60000]]);   // 법인카드: 합계 66,000 = 공급 60,000 + 부가세 6,000
 });
 
+test('예산과목비고에 날짜가 있는 예산 줄: 그 날짜 영수증만, 넘쳐도 다른 날 줄로 안 넘김', () => {
+  const budgets = [
+    { 예산과목: '여비교통비(판)_식대', 예산과목비고: '10/19 (9시 본사 출발) 식대', 품의금액: '30,000', 미지출액: '30,000' },
+    { 예산과목: '여비교통비(판)_식대', 예산과목비고: '10/20 (7시 출발 예정) 식대', 품의금액: '38,000', 미지출액: '38,000' },
+    { 예산과목: '여비교통비(판)_국내숙박비', 예산과목비고: '10/19 ~ 20 숙박 예정', 품의금액: '70,000', 미지출액: '70,000' },
+    { 예산과목: '여비교통비(판)_국내교통비', 예산과목비고: 'ktx, 버스이용 복귀', 품의금액: '100,000', 미지출액: '100,000' },
+  ];
+  const L = (label, memo, amount, date = '') => ({ label: `여비교통비(판)_${label}`, pay: 'personal', amount, supply: amount, memo, date });
+  const { plan } = R.planPayees(budgets, [L('식대', '10/19 3인 석식', 42000, '2026-10-19'), L('식대', '10/20 1인 조식·중식·석식 3건', 36900, '2026-10-20'), L('국내숙박비', '10/19 숙박 1박', 70000), L('국내교통비', '출장 대중교통비 (왕복)', 45000)]);
+  assert.deepEqual(plan.map(pb => pb.lines.map(l => [l.memo, l.amount, l.cut])), [
+    [['10/19 3인 석식', 30000, 12000]],   // 19일 줄 한도까지, 나머지는 깎음 (20일 줄로 안 감)
+    [['10/20 1인 조식·중식·석식 3건', 36900, 0]],
+    [['10/19 숙박 1박', 70000, 0]],
+    [['출장 대중교통비 (왕복)', 45000, 0]],   // 날짜 없는 줄엔 날짜 없는 영수증
+  ]);
+  // 날짜 줄 한도가 0이면 그 줄 dropped
+  const z = R.planPayees([{ ...budgets[0], 미지출액: '0', 품의금액: '0' }], [L('식대', '10/19 1인 석식', 15000, '2026-10-19')]);
+  assert.equal(z.plan[0].dropped, 1);
+});
+
+test('같은 과목 예산 줄이 여러 개(비고에 날짜 없음): 영수증은 한 번만, 앞 줄부터 채우고 넘치면 다음 줄로', () => {
+  const budgets = [
+    { 예산과목: '여비교통비(판)_식대', 품의금액: '30,000', 미지출액: '30,000' },
+    { 예산과목: '여비교통비(판)_식대', 품의금액: '38,000', 미지출액: '38,000' },
+    { 예산과목: '여비교통비(판)_국내숙박비', 품의금액: '70,000', 미지출액: '70,000' },
+  ];
+  const meal = (memo, amount) => ({ label: '여비교통비(판)_식대', pay: 'personal', amount, supply: amount, memo });
+  const { plan } = R.planPayees(budgets, [meal('3인 석식', 42000), meal('1인 조식·중식·석식 3건', 36900), { label: '여비교통비(판)_국내숙박비', pay: 'personal', amount: 70000, supply: 70000, memo: '10/19 숙박 1박' }]);
+  assert.deepEqual(plan.map(pb => pb.lines.map(l => [l.memo, l.amount, l.cut])), [
+    [['3인 석식', 30000, 0]],
+    [['3인 석식', 12000, 0], ['1인 조식·중식·석식 3건', 26000, 10900]],
+    [['10/19 숙박 1박', 70000, 0]],
+  ]);
+  assert.equal(plan[0].lines[0].amount + plan[1].lines[0].amount, 42000);   // 두 번 청구 안 됨
+  assert.deepEqual(plan.map(pb => pb.dropped), [0, 0, 0]);
+  const two = R.planPayees(budgets.slice(0, 1), [meal('a', 30000), meal('b', 5000), meal('c', 0)]);   // 한도 다 쓰면 뒤 영수증은 dropped, 0원은 안 셈
+  assert.deepEqual(two.plan[0].lines.map(l => l.memo), ['a']); assert.equal(two.plan[0].dropped, 1);
+});
+
 test('식대 여러 번(4일 출장): 예산 줄 하나 아래 채주 여러 줄, 한도까지', () => {
   const budgets = [
     { 예산과목: '여비교통비(판)_국내교통비', 품의금액: '60,000', 미지출액: '60,000' },
@@ -463,4 +502,44 @@ test('결재 문서 출장일 글자 읽기: 여러 꼴, 연도 없으면 품의
   assert.deepEqual(P('1/6~1/12', '2026-12-20'), { start: '2027-01-06', end: '2027-01-12', start_time: '', end_time: '' });   // 해 넘김
   assert.deepEqual(P('10.22', '2026-10-21'), { start: '2026-10-22', end: '2026-10-22', start_time: '', end_time: '' });
   assert.deepEqual(P('', '2026-10-14'), { start: '', end: '', start_time: '', end_time: '' });
+});
+
+test('같은 날 식대 영수증은 한 줄로 (10/19~21 네이버페이 영수증 9장, 2026-10-22)', () => {
+  const rc = (path, item, amount, date, memo, vendor, people = 0) => ({ path, item, amount, date, memo, vendor, people, proofs: [path] });
+  const rows = [
+    rc('a.png', 'meal', 13500, '2026-10-21', '1인 중식', '키오스크_스마트로_A', 1),
+    rc('b.png', 'meal', 8300, '2026-10-21', '1인 조식', '씨유인계중앙점', 1),
+    rc('c.png', 'meal', 15000, '2026-10-20', '1인 석식', '양복점 인계점', 1),
+    rc('d.png', 'domestic_lodging', 65000, '2026-10-20', '숙박 1박', '여기어때컴퍼니'),
+    rc('e.png', 'meal', 15000, '2026-10-20', '1인 중식', '윤돈', 1),
+    rc('f.png', 'meal', 6900, '2026-10-20', '1인 조식', 'GS25 수원다모아점', 1),
+    rc('g.png', 'meal', 42000, '2026-10-19', '3인 석식', '계화정', 3),
+    rc('h.png', 'domestic_lodging', 70000, '2026-10-19', '숙박 1박', '아늑 료칸 호텔 수원 인계'),
+    rc('i.png', 'meal', 15000, '2026-10-20', '1인 중식', '윤돈', 1),   // 같은 영수증 두 번 올림 → 금액은 합쳐지고 증빙 2개 (사람이 표에서 확인)
+  ];
+  const m = R.mergeMealRows(rows);
+  assert.deepEqual(m.map(r => [r.date, r.item, r.amount, r.memo, r.people, r.proofs.length]), [
+    ['2026-10-21', 'meal', 21800, '1인 조식·중식 2건', 1, 2],
+    ['2026-10-20', 'meal', 51900, '1인 조식·중식·석식 4건', 1, 4],
+    ['2026-10-20', 'domestic_lodging', 65000, '숙박 1박', 0, 1],
+    ['2026-10-19', 'meal', 42000, '3인 석식', 3, 1],   // 하루 한 장이면 그대로
+    ['2026-10-19', 'domestic_lodging', 70000, '숙박 1박', 0, 1],
+  ]);
+  assert.deepEqual(m[0].proofs, ['a.png', 'b.png']);
+  assert.equal(m[1].vendor, '양복점 인계점, 윤돈, GS25 수원다모아점');
+  assert.equal(m[1].dup, 4);
+  // 화면 표 줄(적요 "10/20 1인 조식")을 채주로 묶을 때: 날짜·인원은 첫 줄 적요에서, 결제수단 다르면 따로
+  const scr = [
+    { item: 'meal', amount: 6900, date: '2026-10-20', memo: '10/20 1인 조식', pay: 'personal', proofs: ['a'] },
+    { item: 'meal', amount: 15000, date: '2026-10-20', memo: '10/20 1인 중식', pay: 'personal', proofs: ['b'] },
+    { item: 'meal', amount: 15000, date: '2026-10-20', memo: '10/20 1인 석식', pay: 'card', proofs: ['c'] },
+  ];
+  assert.deepEqual(R.mergeMealRows(scr).map(r => [r.amount, r.memo, r.pay, r.proofs]), [[21900, '10/20 1인 조식·중식 2건', 'personal', ['a', 'b']], [15000, '10/20 1인 석식', 'card', ['c']]]);
+  // 끼니는 AI 가 읽은 meal 필드가 적요 글자보다 우선 (적요를 사람이 고쳐도 됨)
+  const byField = [{ item: 'meal', amount: 1000, date: '2026-10-20', memo: '10/20 1인 편의점', meal: '조식', proofs: ['a'] }, { item: 'meal', amount: 2000, date: '2026-10-20', memo: '10/20 1인 윤돈', meal: '중식', proofs: ['b'] }];
+  assert.equal(R.mergeMealRows(byField)[0].memo, '10/20 1인 조식·중식 2건');
+  // 날짜를 못 읽은 식대·실패한 줄은 안 묶음
+  const n = R.mergeMealRows([rc('x', 'meal', 1000, '', '중식', ''), rc('y', 'meal', 2000, '', '석식', ''), { path: 'z', item: '', amount: 0, failed: '못 읽음', date: '2026-10-20', proofs: ['z'] }]);
+  assert.equal(n.length, 3);
+  assert.deepEqual(n[2].proofs, ['z']);
 });

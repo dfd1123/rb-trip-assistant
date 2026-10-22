@@ -212,15 +212,16 @@ function parseReport(data) {
     attachments: (data.attachments || []).map(String),
   };
   if (!out.schedule.length || out.schedule.some(r => !r.detail)) throw new InputError('출장일정의 세부 활동 내용은 날짜마다 필수예요.');
-  // 정산할 경비가 없을 수도 있다(전액 환원). 증빙도 없을 수 있다 — 화면에서 두 번 확인받고 넘어온다. 줄마다 증빙은 0~1개, 이미지·PDF만
+  // 정산할 경비가 없을 수도 있다(전액 환원). 증빙도 없을 수 있다 — 화면에서 두 번 확인받고 넘어온다. 줄마다 증빙 여러 개 가능(채주 한 줄에 다 붙임), 이미지·PDF만
   (data.expenses || []).forEach((e, i) => {
     const proofs = (e.proofs || []).map(String).filter(Boolean);
-    if (proofs.length > 1) throw new InputError(`정산 경비 ${i + 1}번째 줄에는 증빙을 1개만 붙여 주세요.`);
     const bad = proofs.find(p => !PROOF_EXT.test(p));
     if (bad) throw new InputError(`증빙은 이미지나 PDF만 돼요: ${bad.split(/[\\/]/).pop()}`);
     out.expenses[i].proofs = proofs;
     out.expenses[i].pay = e.pay === 'card' ? 'card' : 'personal';
     out.expenses[i].noVat = noVatOf({ ...out.expenses[i], noVat: e.noVat });   // 법인카드 면세·불공제 (화면에서 고친 값 우선)
+    out.expenses[i].date = /^\d{4}-\d{2}-\d{2}$/.test(String(e.date || '')) ? String(e.date) : '';   // AI 가 영수증에서 읽은 날짜·끼니 (채주 묶기·예산 줄 맞추기)
+    out.expenses[i].meal = /^(조식|중식|석식)$/.test(String(e.meal || '')) ? String(e.meal) : '';
   });
   out.fund = String(data.fund || '');   // 자금과목: 일반경비 / 제조경비 (출장마다 사람이 고름)
   if (!FUNDS.includes(out.fund)) throw new InputError('자금과목(일반경비·제조경비)을 골라 주세요.');
@@ -263,19 +264,50 @@ function capToBudget(lines, limit) {   // 한도는 합계(부가세 포함) 기
   let left = Math.max(0, Number(limit) || 0);
   return lines.map(l => { const amount = Math.min(l.amount, left); left -= amount; return { ...l, amount, supply: supplyAmount(amount, l.pay, l.noVat), vat: vatAmount(amount, l.pay, l.noVat), cut: l.amount - amount }; }).filter(l => l.amount > 0);
 }
-/** 예산 줄마다 넣을 채주: 같은 예산과목 영수증을 모아 품의 한도까지 → [{ index, label, lines, cut }]. 예산에 없는 과목은 left 로
- *  budgets: [{ 예산과목, 품의금액, 미지출액 }] (결의서전송 창 예산내역 그대로) */
+/** 예산 줄마다 넣을 채주 → [{ index, label, limit, lines, dropped }]. 예산에 없는 과목은 left 로
+ *  budgets: [{ 예산과목, 예산과목비고, 품의금액, 미지출액 }] (결의서전송 창 예산내역 그대로)
+ *  ① 예산과목비고가 "10/19 …"처럼 날짜로 시작하는 예산 줄엔 그 날짜 영수증만 (19일 식대가 20일 줄에 들어가면 안 됨 — 2026-10-22). 한도 넘치면 깎고 다른 날 줄로 안 넘김
+ *  ② 날짜가 없거나 맞는 줄이 없는 영수증은 같은 과목 줄을 앞에서부터 차례로, 한 장이 넘치면 나머지를 다음 줄에 (같은 영수증을 예산 줄마다 또 넣지 않음) */
 function planPayees(budgets, lines) {
   const n = s => String(s || '').replace(/\s/g, '');
   const num = v => Number(String(v || '').replace(/[^\d]/g, '')) || 0;
-  const plan = budgets.map((b, index) => {
-    const mine = lines.filter(l => n(l.label) === n(b['예산과목']));
-    const limit = num(b['미지출액']) || num(b['품의금액']);
-    const capped = capToBudget(mine, limit);
-    return { index, label: b['예산과목'], limit, lines: capped, dropped: mine.length - capped.length };
-  });
-  const left = lines.filter(l => !budgets.some(b => n(b['예산과목']) === n(l.label)));
+  const md = s => { const m = /^(\d{1,2})\/(\d{1,2})/.exec(String(s || '').trim()); return m ? `${+m[1]}/${+m[2]}` : ''; };
+  const lineMd = l => /^\d{4}-\d{2}-\d{2}$/.test(l.date || '') ? `${+l.date.slice(5, 7)}/${+l.date.slice(8, 10)}` : md(l.memo);
+  const rows = budgets.map((b, index) => { const limit = num(b['미지출액']) || num(b['품의금액']); return { index, label: b['예산과목'], lab: n(b['예산과목']), md: md(b['예산과목비고']), limit, room: limit, lines: [], dropped: 0 }; });
+  const items = lines.map(l => ({ src: l, left: l.amount, last: null, row: null, lab: n(l.label), md: lineMd(l) })).filter(m => rows.some(r => r.lab === m.lab));
+  const put = (r, m) => { const amount = Math.min(m.left, r.room); if (amount <= 0) return; m.left -= amount; r.room -= amount;
+    r.lines.push(m.last = { ...m.src, amount, supply: supplyAmount(amount, m.src.pay, m.src.noVat), vat: vatAmount(amount, m.src.pay, m.src.noVat), cut: 0 }); };
+  for (const m of items) { const r = m.md && rows.find(r => r.lab === m.lab && r.md === m.md); if (r) { m.row = r; put(r, m); } }
+  for (const m of items.filter(m => !m.row)) for (const r of rows.filter(r => r.lab === m.lab)) { if (m.left <= 0) break; put(r, m); }
+  // 못 넣은 금액은 그 영수증의 마지막 조각에 cut 으로, 아예 못 넣은 영수증은 (날짜 줄이면 그 줄, 아니면 그 과목 마지막 줄의) dropped 로
+  for (const m of items) { if (m.left <= 0) continue; if (m.last) m.last.cut = m.left; else if (m.src.amount > 0) (m.row || [...rows].reverse().find(r => r.lab === m.lab)).dropped++; }
+  const plan = rows.map(({ index, label, limit, lines, dropped }) => ({ index, label, limit, lines, dropped }));
+  const left = lines.filter(l => !rows.some(r => r.lab === n(l.label)));
   return { plan, left };
+}
+
+/** 영수증 줄 묶기: 같은 날 식대 여러 장(조식·중식·석식)은 한 줄로 — 금액 합산, 인원은 가장 많은 끼니, 증빙은 전부 그 줄에.
+ *  채주내역 한 줄 = 하루 식대 (사용자 요청 2026-10-22). 화면 표는 영수증마다 한 줄이고 채주 넣을 때만 묶는다. 날짜 없는 식대·다른 과목·결제수단 다른 건 그대로.
+ *  rows: [{ item, amount, date, memo, vendor, people, pay, proofs }] → 같은 모양. 묶인 줄 memo "10/20 1인 조식·중식 2건" (날짜·인원은 적요에서), dup: 묶인 장수 */
+const MEAL_KINDS = [['조식', /조식|아침|breakfast/i], ['중식', /중식|점심|lunch/i], ['석식', /석식|저녁|dinner/i]];
+function mergeMealRows(rows) {
+  const out = [], byDay = {};
+  for (const r of rows) {
+    const day = r.item === 'meal' && !r.failed && /^\d{4}-\d{2}-\d{2}$/.test(r.date || '') ? `${r.date}|${r.pay || ''}|${r.noVat ? 1 : 0}` : '';
+    if (!day) { out.push({ ...r, proofs: [...(r.proofs || [])] }); continue; }
+    if (!byDay[day]) out.push(byDay[day] = { ...r, amount: 0, people: 0, proofs: [], parts: [] });
+    const g = byDay[day];
+    g.amount += Number(r.amount) || 0; g.people = Math.max(g.people, Number(r.people) || 0);
+    (r.proofs || []).forEach(p => { if (!g.proofs.includes(p)) g.proofs.push(p); });
+    g.parts.push(r);
+  }
+  return out.map(({ parts, ...r }) => {
+    if (!parts || parts.length < 2) return r;
+    const kinds = MEAL_KINDS.map(([k, re]) => parts.some(p => p.meal ? p.meal === k : re.test(p.memo || '')) ? k : '').filter(Boolean);   // 끼니 필드 우선, 없으면 적요 글자
+    const head = (/^(\d{1,2}\/\d{1,2})?\s*(\d+\s*인)?/.exec(parts[0].memo || '') || [])[0] || '';   // 첫 줄 적요의 "10/20 1인" 그대로
+    const memo = `${head.trim()} ${kinds.length ? kinds.join('·') : '식대'} ${parts.length}건`.trim();
+    return { ...r, memo, vendor: [...new Set(parts.map(p => p.vendor).filter(Boolean))].join(', '), dup: parts.length };
+  });
 }
 
 /** 신청 교통비 = 네이버 지도 왕복 + 여유분(자차·대중교통, 기본 2만원). 보고서 정산은 실제 금액으로 */
@@ -427,5 +459,5 @@ module.exports = {
   InputError, ro, applyTitle, reportTitle, budgetMemo, parseCarText, parseTransitText, roundTrip,
   parseApply, parseReport, parseExpenses, transportExpense, fuelOnlyExpense, applyPrompt, reportPrompt, extractYaml,
   OVERSEAS_GRADES, OVERSEAS_RATES, OVERSEAS_RATES_EXEC, overseasGuess, overseasExpenses,
-  FUNDS, PAY_MODES, fundPlanDate, supplyAmount, vatAmount, noVatOf, capToBudget, planPayees,
+  FUNDS, PAY_MODES, fundPlanDate, supplyAmount, vatAmount, noVatOf, capToBudget, planPayees, mergeMealRows,
 };

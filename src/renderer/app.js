@@ -78,8 +78,8 @@ function expRow(tbody, e={}, onchange){
     ppl.oninput = () => { ppl.value = ppl.value.replace(/[^\d]/g, '').slice(0, 2); if(ppl.value) memo.value = withPeople(memo.value, Number(ppl.value)); };
     sel.addEventListener('change', show); show();
   }
-  if(proofCell){   // 정산 경비 증빙: 줄마다 1개 이상, 전부 보고서 첨부로 올라감
-    let proofs = (e.proofs || []).slice(0, 1);   // 경비 한 줄에 증빙 1개
+  if(proofCell){   // 정산 경비 증빙: 줄마다 여러 개 가능(하루 식대 묶음), 전부 그 채주 줄 첨부로 올라감
+    let proofs = (e.proofs || []).slice();
     const draw = () => {
       const box = tr.querySelector('.files'); box.innerHTML = '';
       if(!proofs.length){ const s = document.createElement('div'); s.className = 'empty'; s.textContent = '영수증 사진이나 PDF (없으면 비워 둠)'; box.appendChild(s); }
@@ -90,11 +90,12 @@ function expRow(tbody, e={}, onchange){
         chip.append(nm, x); box.appendChild(chip);
       });
       tr.dataset.proofs = JSON.stringify(proofs);
-      const add = tr.querySelector('.add'); add.classList.toggle('hidden', proofs.length > 0); add.classList.remove('need');
+      const add = tr.querySelector('.add'); add.textContent = proofs.length ? '+ 더 첨부' : '+ 증빙 첨부'; add.classList.remove('need');
     };
-    tr.querySelector('.add').onclick = async () => { const {paths} = await rpc('/api/pick-proofs'); if(paths.length){ proofs = [paths[0]]; draw(); fillMemo(tr); } };
+    tr.querySelector('.add').onclick = async () => { const {paths} = await rpc('/api/pick-proofs', {many: true}); const add = (paths || []).filter(p => !proofs.includes(p)); if(add.length){ proofs.push(...add); draw(); fillMemo(tr); } };
     draw();
   }
+  if(e.date) tr.dataset.date = e.date; if(e.meal) tr.dataset.meal = e.meal;   // AI 가 영수증에서 읽은 날짜·끼니 (적요 글자 말고 이걸로 묶음)
   sel.value = e.item || (tid==='a_exp' ? 'domestic_lodging' : 'domestic_transport');
   amt.value = (e.amount === 0 || e.amount) && e.amount !== '' ? Number(e.amount).toLocaleString('ko-KR') : '';   // 0원도 그대로 보임
   memo.value = e.memo || '';
@@ -124,6 +125,7 @@ async function fillMemo(tr){
     const r = await rpc('/api/receipt-memo', {path: proof, item: tr.querySelector('.item').value, period: $('#r_period').value});
     if(ppl && meal && !ppl.value) ppl.value = r.people || guessPeople(num(tr.querySelector('.amt').value), r.memo || '');
     if(r.memo && !memo.value.trim()) memo.value = meal && ppl.value ? withPeople(r.memo, Number(ppl.value)) : r.memo;
+    if(r.date) tr.dataset.date = r.date; if(r.meal) tr.dataset.meal = r.meal;
   } catch(e){ if(ppl && meal && !ppl.value) ppl.value = guessPeople(num(tr.querySelector('.amt').value), memo.value); }   // AI 없음·실패 → 인원만 금액으로, 적요는 직접
   finally { memo.placeholder = '날짜·내용 (예: 9/28 1인 석식)'; }
 }
@@ -133,6 +135,7 @@ const readExp = tbody => [...tbody.querySelectorAll('tr')].map(tr => {
   if(pay){ e.pay = pay.value; if(pay.value === 'card') e.noVat = tr.querySelector('.nv').checked; }
   const ppl = tr.querySelector('.ppl'); if(ppl && sel.value === 'meal' && ppl.value) e.people = Number(ppl.value);
   if(tr.dataset.proofs) e.proofs = JSON.parse(tr.dataset.proofs);
+  if(tr.dataset.date) e.date = tr.dataset.date; if(tr.dataset.meal) e.meal = tr.dataset.meal;
   if(amt.value.trim() === '') e.empty = true;
   return e;
 }).filter(e => !e.empty);   // 금액을 비운 줄만 뺀다. 0원은 사용자가 넣은 값이라 그대로 올림
@@ -498,7 +501,7 @@ async function loadTrips(){
   const applyDay = r => r.ym.replace('-', '') + String(r.day).padStart(2, '0');
   const isRejected = r => { const t = byApply[r.key]; return REJECTED.test(stOf(r.key)) || !!(t && t.gwReport && REJECTED.test(stOf(t.gwReport.key))); };
   // 정산(결의서전송)됨 = 그룹웨어 품의의 결의금액 > 0 또는 이 PC 기록의 결의번호. 예전 방식의 '보고 품의'는 이때 무시한다
-  const settled = r => { const t = byApply[r.key]; return ((gwMap[r.key] || {}).sent || 0) > 0 || !!(t && t.resolutionNo); };
+  const settled = r => ((gwMap[r.key] || {}).sent || 0) > 0;   // 그룹웨어 API 값만 (이 PC 기록으로 판단하지 않음 — 2026-10-22)
   const nz = x => String(x || '').replace(/\s/g, '');
   // 올라간 출장보고서 결재 문서: 이 PC에서 올린 건 제목으로. 그룹웨어에서 직접 올린 건(이 PC 기록 없음)은 출장 이름이 같고 신청 뒤에 올라간 보고서를 짝지음
   // (목록 API가 결의 전송 금액을 주지 않아 정산 여부로는 알 수 없음). 같은 이름 출장이 여러 번이면 최근 신청부터 그 뒤 가장 이른 보고서를 하나씩
@@ -513,7 +516,6 @@ async function loadTrips(){
     if(d){ paired[r.key] = d; mine.add(d); }
   });
   const reportDoc = r => paired[r.key] || null;
-  const reportOpened = r => { const t = byApply[r.key]; return !!reportDoc(r) || !!(t && /작성 창 열림|상신/.test(t.reportStatus || '')); };   // 출장보고서 결재 창까지 띄움 → 나머지(결재라인·상신)는 사람
   const allDone = r => { const t = byApply[r.key]; const d = reportDoc(r); if(d) return DONE.test(d.status) && DONE.test(stOf(r.key)); return !!(t && t.gwReport && DONE.test(stOf(r.key)) && DONE.test(stOf(t.gwReport.key))); };   // 신청·보고 결재 둘 다 끝남
   let rows = rows0()
     .sort((a, b) => (b.ym + b.day.padStart(2, '0') + b.seq.padStart(5, '0')).localeCompare(a.ym + a.day.padStart(2, '0') + a.seq.padStart(5, '0')))
@@ -535,11 +537,11 @@ async function loadTrips(){
     const rdocRejected = !!rdoc && REJECTED.test(rdoc.status);
     const isSettled = settled(r) || !!rdoc;
     // 정산 결의를 이미 전송했으면 경비를 다시 쓰지 않는다 → 다음 할 일은 출장보고서 결재 창 올리기(결의서입력 → 결재상신)
-    const repLabel = isSettled ? '출장보고서 결재 올리기' : reportRejected ? '보고서 고쳐서 다시 올리기' : t && t.report ? '보고서 이어서 작성' : '보고서 작성';
+    const repLabel = '보고서 작성';   // 상태와 상관없이 같은 버튼. 눌렀을 때 결의 전송·보고 상신 여부는 그룹웨어에서 보고 이어서 함
     if(applyRejected || reportRejected) el.classList.add('rejected');
-    el.innerHTML = `<div><b></b>${gwPill('신청', links[0])}${rdoc ? pill('보고', rdoc.status || '', `${rdoc.status || ''} · ${rdoc.docNo}`) : isSettled ? `<span class="pill ok" title="${escH(t && t.resolutionNo || '')}">정산 전송됨</span>` : t && (t.gwReport || t.report) ? gwPill('보고', t.gwReport) : ''}
+    el.innerHTML = `<div><b></b>${gwPill('신청', links[0])}${rdoc ? pill('보고', rdoc.status || '', `${rdoc.status || ''} · ${rdoc.docNo}`) : isSettled ? '<span class="pill ok">정산 전송됨</span>' : t && t.gwReport ? gwPill('보고', t.gwReport) : ''}
       <div class="sub" style="margin:2px 0 0"></div>${applyRejected ? '<div class="err" style="margin-top:4px">신청이 반려됐어요. 반려 사유를 그룹웨어에서 확인하고 [다시 신청]으로 고쳐 올리세요. 반려된 품의는 [삭제]로 지울 수 있어요.</div>' : reportRejected ? '<div class="err" style="margin-top:4px">보고서가 반려됐어요. 반려 사유를 확인하고 고쳐서 다시 올리세요.</div>' : ''}</div>
-      <div class="inline"><button class="btn small danger del">삭제</button>${t ? `<button class="btn again ${applyRejected ? 'primary' : ''}">다시 신청</button>` : ''}${approved && !reportDone && (!rdoc || rdocRejected) && !(isSettled && reportOpened(r) && !rdocRejected) ? `<button class="btn primary rep">${rdocRejected ? '보고서 고쳐서 다시 올리기' : repLabel}</button>` : ''}</div>`;
+      <div class="inline"><button class="btn small danger del">삭제</button>${t ? `<button class="btn again ${applyRejected ? 'primary' : ''}">다시 신청</button>` : ''}${approved && !reportDone && (!rdoc || rdocRejected) ? `<button class="btn primary rep">${repLabel}</button>` : ''}</div>`;
     el.querySelector('b').textContent = (r.docTitle || r.memo || '').replace(/^\[[^\]]*\]\s*/, '');
     const md = d => d ? `${Number(d.slice(5, 7))}월 ${Number(d.slice(8, 10))}일` : '';
     el.querySelector('.sub').textContent = t ? `${md(t.start)}${t.end && t.end !== t.start ? ' ~ ' + md(t.end) : ' 당일'} 출장 · ${r.total}원` : `${Number(r.ym.slice(5, 7))}월 ${r.day}일 신청 · ${r.total}원`;
@@ -622,13 +624,21 @@ function gwRange(){
   const lim = new Date(`${to}T00:00:00`); lim.setFullYear(lim.getFullYear() - 1);
   if(from < ymd(lim)) from = ymd(lim);   // 최대 1년
   $('#gwFrom').value = from; $('#gwTo').value = to;
-  try { localStorage.gw_from = from; localStorage.gw_to = to; } catch(e){ /* */ }
+  try { localStorage.gw_from = from; localStorage.gw_to = to; localStorage.gw_saved_on = ymd(today); } catch(e){ /* */ }
   // 빠른 버튼 표시: 끝이 오늘이고 시작이 정확히 n개월 전이면 그 버튼을 켬
   $$('#gwRange .quickr .btn').forEach(b => { const d = new Date(today); d.setMonth(d.getMonth() - Number(b.dataset.m)); b.classList.toggle('on', to === ymd(today) && from === ymd(d)); });
   return {from, to};
 }
 $$('#gwRange .quickr .btn').forEach(b => b.onclick = () => { const today = new Date(), d = new Date(today); d.setMonth(d.getMonth() - Number(b.dataset.m)); $('#gwFrom').value = ymd(d); $('#gwTo').value = ymd(today); gwRange(); $('#btnGwList').click(); });
-try { if(localStorage.gw_from && localStorage.gw_to){ $('#gwFrom').value = localStorage.gw_from; $('#gwTo').value = localStorage.gw_to; } } catch(e){ /* */ }
+// 저장한 기간 되살리기: 끝이 '그날 오늘'이었으면(기본·1/3/6개월) 오늘 기준으로 같은 길이만큼 밀어 줌. 끝을 직접 고른 기간만 그대로
+// (예전엔 끝 날짜가 저장된 날에 멈춰 있어서 그 뒤에 올린 품의가 목록에서 빠졌음)
+try {
+  const f = localStorage.gw_from, t = localStorage.gw_to, on = localStorage.gw_saved_on;
+  if(f && t){
+    if(!on || t === on){ const today = new Date(), shift = Math.round((new Date(`${ymd(today)}T00:00:00`) - new Date(`${t}T00:00:00`)) / 864e5), nf = new Date(`${f}T00:00:00`); nf.setDate(nf.getDate() + shift); $('#gwFrom').value = ymd(nf); $('#gwTo').value = ymd(today); }
+    else { $('#gwFrom').value = f; $('#gwTo').value = t; }
+  }
+} catch(e){ /* */ }
 gwRange();
 ['#gwFrom', '#gwTo'].forEach(id => $(id).onchange = () => { gwRange(); $('#btnGwList').click(); });
 function deleteGwRows(pick){
@@ -742,8 +752,10 @@ function addRqFiles(paths){
   renderRqFiles();
   if(bad.length) $('#rq_status').textContent = `이미지·PDF만 넣을 수 있어요 (뺀 파일: ${bad.map(b => b.split(/[\\/]/).pop()).join(', ')})`;
 }
+/** 이미 읽어서 경비 줄에 붙은 증빙 (읽고 나면 rqFiles 는 비우니까 이걸로 봐야 함) */
+const hasProofs = () => [...$('#r_exp tbody').querySelectorAll('tr')].some(tr => JSON.parse(tr.dataset.proofs || '[]').length);
 function syncRQuick(keepStatus){
-  const memo = !!$('#rq_memo').value.trim(), files = rqFiles.length > 0;
+  const memo = !!$('#rq_memo').value.trim(), files = rqFiles.length > 0 || hasProofs();
   $('#btnRQuick').disabled = !memo || !!$('#btnRQuick').dataset.busy;   // 영수증은 없어도 됨 (누를 때 두 번 확인)
   if(keepStatus || $('#btnRQuick').dataset.busy) return;
   $('#rq_status').textContent = memo ? (files ? '' : '영수증 없이도 작성할 수 있어요 (정산할 게 없으면).') : '② 한 줄 메모를 넣으면 [자동 작성]을 누를 수 있어요.';
@@ -751,7 +763,7 @@ function syncRQuick(keepStatus){
 $('#rq_memo').addEventListener('input', syncRQuick);
 $('#btnRQuick').onclick = async () => {
   if(!currentTrip || !$('#rq_memo').value.trim()) return syncRQuick();
-  if(!rqFiles.length && !confirmNoProof()) return;
+  if(!rqFiles.length && !hasProofs() && !confirmNoProof()) return;   // 전에 읽어 경비 줄에 붙은 증빙이 있으면 안 물음
   const btn = $('#btnRQuick'); btn.disabled = true; btn.dataset.busy = '1'; $('#rq_status').textContent = '보고사항 작성 중…';
   try {
     const r = await rpc('/api/report-quick', {id: currentTrip.trip_id, memo: $('#rq_memo').value});
@@ -763,7 +775,7 @@ $('#btnRQuick').onclick = async () => {
     const paths = rqFiles;
     if(!paths.length){ $('#rq_status').textContent = how + ' · 영수증 없이 작성 · 확인 후 [그룹웨어에 정산 입력하기]'; maybeFuel(); return; }   // 자차면 이어서 유류대 조회
     runJob(`영수증 ${paths.length}개 읽기`, '/api/job/receipts', {paths, period: receiptPeriod()}, res => {
-      applyReceipts(res.results || []);
+      applyReceipts(res.rows || []);
       rqFiles = []; renderRqFiles(); syncRQuick(true);
       $('#rq_status').textContent = how + ` · 영수증 ${paths.length}개 반영 · 확인 후 [그룹웨어에 입력하기]`;
       maybeFuel();   // 영수증 다 읽은 뒤 (작업은 하나씩) 자차면 유류대 조회
@@ -773,6 +785,12 @@ $('#btnRQuick').onclick = async () => {
 };
 $('#btnAddDay').onclick = () => schedRow();
 $('#btnAddRExp').onclick = () => expRow($('#r_exp tbody'), {}, refreshReport);
+$('#btnNewReport').onclick = async () => {   // 신청 내용만 남기고 영수증·메모·경비·보고사항 다 비움 (그룹웨어 기록은 안 건드림)
+  if(!currentTrip) return;
+  if(!confirm('작성 중인 보고서 내용(영수증·메모·경비·보고사항)을 모두 비우고 새로 시작할까요?')) return;
+  rqFiles = []; $('#rq_memo').value = ''; $('#r_err').textContent = '';
+  await showReport(currentTrip.trip_id, await rpc('/api/draft', {id: currentTrip.trip_id, fresh: true}));
+};
 $('#btnBack').onclick = () => { $('#reportView').classList.add('hidden'); $('#tripList').classList.remove('hidden'); };
 $('#btnRPrompt').onclick = async () => {
   const memo = $('#rq_memo').value.trim();
@@ -787,19 +805,17 @@ $('#btnRFill').onclick = async () => {
 /* 영수증: 끌어다 놓기·파일 고르기 → 자동 작성 때 AI 분류 → 경비 줄로 */
 function receiptPeriod(){ const d = reportData(); return d.period || ''; }
 /** 분류 결과를 경비 표에 반영: 같은 예산과목의 '증빙 없는 줄'(신청 때 예상 금액)은 영수증 줄로 바꾸고, 영수증마다 한 줄 + 증빙 1개 */
-function applyReceipts(results){
+/* got: main 이 읽어 같은 날 식대는 이미 한 줄로 묶은 줄들 (proofs 는 그 줄에 붙일 파일 전부) */
+function applyReceipts(got){
   const tb = $('#r_exp tbody');
   const rowsOf = () => [...tb.querySelectorAll('tr')].map(tr => ({ tr, item: tr.querySelector('.item').value, proofs: JSON.parse(tr.dataset.proofs || '[]') }));
-  const got = results.flatMap(r => (r && r.rows && r.rows.length ? r.rows.map(x => ({ ...x, path: r.path })) : r ? [{ path: r.path, item: '', amount: 0, failed: r.error || '영수증을 못 찾음' }] : []));
   const items = new Set(got.filter(g => g.item).map(g => g.item));
   rowsOf().filter(r => items.has(r.item) && !r.proofs.length).forEach(r => r.tr.remove());   // 예상 금액 줄 → 실제 영수증으로 대체
-  // 한 파일에 영수증이 여러 장이면 증빙은 첫 줄에만 (증빙은 줄마다 1개)
-  const seen = new Set();
   got.forEach(g => {
-    const proofs = seen.has(g.path) ? [] : [g.path]; seen.add(g.path);
+    const proofs = g.proofs || [];
     const memo = g.failed ? '' : [g.date && g.date.slice(5).split('-').map(Number).join('/'), g.memo || g.vendor].filter(Boolean).join(' ');   // 거래처비고 형식 "10/2 1인 조식"
     const people = (g.item || 'meal') === 'meal' && !g.failed ? (g.people || guessPeople(g.amount, g.memo || '')) : 0;
-    expRow(tb, { item: g.item || 'meal', amount: g.amount || '', memo: people ? withPeople(memo, people) : memo, people, proofs }, refreshReport);
+    expRow(tb, { item: g.item || 'meal', amount: g.amount || '', memo: people ? withPeople(memo, people) : memo, people, proofs, date: g.failed ? '' : g.date, meal: g.failed ? '' : g.meal }, refreshReport);
     const tr = tb.lastElementChild; tr.classList.add('fromai');
     if(g.failed || !g.item || !g.amount) tr.querySelectorAll('select,input').forEach(x => x.classList.add('need'));
   });

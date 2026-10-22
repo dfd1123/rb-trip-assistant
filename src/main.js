@@ -117,7 +117,32 @@ function openGwViewer(url) {
   viewWin.webContents.setWindowOpenHandler(() => ({ action: 'allow', overrideBrowserWindowOptions: { width: 1100, height: 1000, icon: ICON, autoHideMenuBar: true } }));
   viewWin.on('closed', () => { viewWin = null; });
   viewWin.loadURL(url);
+  watchPwPrompt(viewWin);
   return viewWin;
+}
+/** 그룹웨어 창에서 '비밀번호 입력' 창(임직원업무관리 개인정보 화면 등, 로그인 비밀번호 재확인)이 뜨면 저장된 비밀번호로 채워 [확인] — 사용자 요청 2026-10-22.
+ *  저장된 계정이 없으면 아무것도 안 함. 1초마다 보고, 창이 닫히면 멈춤 */
+function watchPwPrompt(win) {
+  const { Page, sleep } = require('./engine/driver');
+  const p = new Page(win);
+  let busy = false;
+  const timer = setInterval(async () => {
+    if (win.isDestroyed()) return clearInterval(timer);
+    if (busy) return; busy = true;
+    try {
+      const c = gwCreds();
+      const field = () => { const d = dialog('비밀번호 입력'); return d ? all('input[type=password]', d).find(vis) : null; };
+      if (!c || !c.pw || !(await p.eval(`() => { const field = ${field}; return !!field(); }`).catch(() => false))) return;
+      await p.clickWhere(`() => { const field = ${field}; return field(); }`);
+      await p.eval(`() => { const el = (${field})(); el.focus(); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, ''); el.dispatchEvent(new Event('input', { bubbles: true })); }`);
+      await p.type(c.pw);
+      if (!(await p.eval(`v => (${field})().value === v`, c.pw))) return;   // 다르게 들어갔으면 건드리지 않음 (사람이 직접)
+      await p.clickWhere(`() => { const d = dialog('비밀번호 입력'); return d && all('button', d).find(b => vis(b) && norm(b.textContent) === '확인'); }`);
+      await sleep(1500);
+    } catch (e) { /* 창이 닫혔거나 화면이 바뀜 — 다음 턴에 다시 */ }
+    finally { busy = false; }
+  }, 1000);
+  win.on('closed', () => clearInterval(timer));
 }
 
 // 네이버 지도 창도 숨긴 채 돌리고, 자동 검색이 안 될 때 작업창 [네이버 지도 열기]로만 띄운다
@@ -238,7 +263,19 @@ async function readReceipts(env, ai, paths, period) {
     } catch (e) { env.log(`${++i}/${paths.length} ${name}: 실패 (${e.message})`); out.push({ path: p, error: e.message }); }
   };
   for (let k = 0; k < paths.length; k += 3) await Promise.all(paths.slice(k, k + 3).map(one));   // 3개씩 동시에
-  return { results: paths.map(p => out.find(o => o.path === p)) };
+  // 파일 순서대로 펼침 — 표에는 영수증마다 한 줄 (한 파일에 영수증 여러 장이면 증빙은 첫 줄에만). 같은 날 식대 묶기는 채주내역 넣을 때 (runner)
+  const seen = new Set();
+  const proofOf = p => (seen.has(p) ? [] : (seen.add(p), [p]));
+  const flat = paths.map(p => out.find(o => o.path === p)).flatMap(o => o.rows && o.rows.length
+    ? o.rows.map(r => ({ ...r, path: o.path, proofs: proofOf(o.path) }))
+    : [{ path: o.path, item: '', amount: 0, failed: o.error || '영수증을 못 찾음', proofs: proofOf(o.path) }]);
+  // 표는 날짜·시각 순 (시각 없으면 끼니 순서, 그래도 없으면 읽은 순서). 못 읽은 줄은 맨 뒤
+  const MEAL_ORDER = { 조식: '08:00', 중식: '12:00', 석식: '18:00' };
+  const key = r => r.failed ? '9' : `${r.date || '9'} ${r.time || MEAL_ORDER[r.meal] || '23:59'}`;
+  flat.forEach((r, i) => { r._i = i; });
+  flat.sort((a, b) => key(a).localeCompare(key(b)) || a._i - b._i);
+  flat.forEach(r => { delete r._i; });
+  return { rows: flat };
 }
 
 // ---------- 그룹웨어 계정 (비밀번호는 OS 보안 저장소로 암호화해서만 저장) ----------
@@ -431,7 +468,7 @@ async function route(p, body = {}) {
     case '/api/plan': return runner.planApply(body, cfg);
     case '/api/trips': return { trips: store.list().map(t => ({ ...t, reportMemo: R.budgetMemo(R.reportTitle(t.reason || '')), reportDocTitle: R.reportTitle(t.reason || '') })) };   // reportDocTitle: 출장보고서 결재 문서 제목 (목록에서 보고 상태 찾기)   // reportMemo: 보고 품의 적요 (연결이 끊긴 보고 품의를 찾는 데 씀)
     case '/api/draft': {   // 전에 작성한 보고서가 있으면 그대로, 없으면 신청 내용으로 초안
-      const base = runner.reportDraft(store, cfg, body.id); const saved = store.load(body.id).report;
+      const base = runner.reportDraft(store, cfg, body.id); const saved = body.fresh ? null : store.load(body.id).report;   // fresh: 작성하던 내용 무시하고 신청 내용으로 새로
       const d = saved ? { ...base, ...saved, trip_id: body.id, transport: base.transport } : base;
       return { draft: d, prompt: R.reportPrompt(d), resumed: !!saved };
     }
@@ -477,7 +514,7 @@ async function route(p, body = {}) {
       const r = rows.find(x => x.item === body.item) || rows[0];
       if (!r) return { memo: '' };
       const md = r.date ? r.date.slice(5).split('-').map(Number).join('/') : '';
-      return { memo: [md, r.memo || r.vendor].filter(Boolean).join(' '), people: r.people || 0 };
+      return { memo: [md, r.memo || r.vendor].filter(Boolean).join(' '), people: r.people || 0, date: r.date || '', meal: r.meal || '' };
     }
     case '/api/job/po-read': {   // 발주서(PDF·이미지) 1개 → AI 가 거래처·품목·금액 읽기
       const ai = aiSettings(cfg); if (!ai) throw new Error('발주서 읽기는 AI 가 있어야 해요. 설정 › AI 문장 작성에서 Gemini 를 골라 주세요.');
