@@ -9,6 +9,7 @@ const path = require('path');
 
 const FIX = path.join(__dirname, '..', 'fixtures');
 const saved = [];
+let settle = null;   // 정산 화면 상태 (settle.js). 테스트가 setSettle 로 넣고 getSettle 로 읽음
 
 const INDEX = `<!doctype html><html><head><meta charset="utf-8"><title>Amaranth 10 (mock)</title><style>
 body{font-family:sans-serif;margin:0} .rg-root{border:1px solid #ccc;margin:10px;width:1200px} table{border-collapse:collapse}
@@ -17,7 +18,7 @@ td{border:1px solid #ddd;height:28px;min-width:90px;padding:0 4px;position:relat
 .dlg{position:fixed;left:200px;top:120px;width:600px;background:#fff;border:2px solid #333;z-index:10;padding:10px}
 .dlg .r{padding:4px;border-bottom:1px solid #eee;cursor:pointer} .bar{position:fixed;bottom:0;left:0;right:0;background:#556;padding:8px}
 input.rg-editor{position:absolute;left:0;top:0;width:100%;height:100%;box-sizing:border-box}
-</style></head><body><div id="app"></div><script>
+</style></head><body><div id="app"></div><script src="/settle.js"></script><script src="/compose.js"></script><script>
 const $=s=>document.querySelector(s);
 // 가짜 API: 실제 아마란스처럼 로그인하면 oAuthToken·signKey 쿠키와 사용자 정보가 생기고, 품의 목록은 fetch 로 받는다 (앱은 목록을 API 로만 읽음)
 const ST={'작성':'2','상신대기':'2','진행중':'0','결재진행':'0','결재완료':'1','반려':'3'};
@@ -25,7 +26,9 @@ const toApi=r=>({getDtYymm:(r.품의연월||'').replace('-',''),getDtDd:r.품의
 const realFetch=window.fetch.bind(window);
 window.fetch=async(url,opt)=>{ const u=String(url);
   if(u.endsWith('/nonprofit/NCA0018/0BN00001')){ const b=JSON.parse((opt&&opt.body)||'{}'); const ym=String(b.getDtYearMonth||'').slice(0,6);
-    const top=JSON.parse(localStorage.top||'[]').filter(r=>r.순번&&(r.품의연월||'').replace('-','')===ym&&(!b.getDt||String(+r.품의일)===String(+b.getDtDate)));
+    const st=await realFetch('/settle/state').then(r=>r.json()).catch(()=>null);   // 정산 mock 의 신청 품의도 목록에 (출장 보고 화면 테스트)
+    const extra=st&&st.approve?st.approve.map(a=>({품의연월:a.품의연월,품의일:a.품의일,순번:a.순번,품의구분:'지출',적요:a.적요+'로 인한 출장',총금액:a.총금액,결재상태:a.결재상태})):[];
+    const top=JSON.parse(localStorage.top||'[]').concat(extra).filter(r=>r.순번&&(r.품의연월||'').replace('-','')===ym&&(!b.getDt||String(+r.품의일)===String(+b.getDtDate)));
     return new Response(JSON.stringify({resultCode:0,resultData:top.map(toApi)}),{status:200,headers:{'Content-Type':'application/json'}}); }
   if(u.endsWith('/eap/eap107A04')) return new Response(JSON.stringify({resultCode:200,resultData:{list:{list:[],totalCount:0}}}),{status:200,headers:{'Content-Type':'application/json'}});
   return realFetch(url,opt); };
@@ -33,6 +36,8 @@ function route(){
   if(localStorage.auth){ document.cookie='oAuthToken=mock-token; path=/'; document.cookie='signKey=mock-key; path=/'; sessionStorage.userInfo=JSON.stringify({coCd:'1000',deptCd:'MBU1000',empCd:'250303'}); }
   if(!localStorage.auth){ if(location.hash!=='#/login') location.hash='#/login'; return loginPage(); }
   if(location.hash.startsWith('#/HP/NPC1023/NCA0018')) return budget();
+  if(window.settleRoute && window.settleRoute(location.hash)) return;
+  if(window.composeRoute && window.composeRoute(location.hash)) return;
   $('#app').innerHTML='<h1>일정 HOME</h1>';
 }
 // 로그인: 아이디 → [다음] → 비밀번호 (두 단계). 테스트 계정 tester / pw1234
@@ -144,6 +149,37 @@ function approvalDialog(){
 route();
 </script></body></html>`;
 
+// 구매의뢰서 작성 창 (실제 덤프 구조를 줄여서). MOCK_TEMPDRAFT=1 이면 "임시 저장 본문" 창을 늦게 띄움
+const COMPOSE = `<!doctype html><html><head><meta charset="utf-8"><title>전자결재</title><style>
+.OBTAutoCompleteChips_item__5KBpq{display:inline-block;margin:2px;padding:1px 4px;border:1px solid #aac} .ac{position:fixed;left:300px;top:220px;background:#fff;border:1px solid #888;z-index:9}
+.ac li{padding:3px 8px;cursor:pointer;list-style:none} .tip{position:fixed;left:300px;top:200px;background:#333;color:#fff;font-size:11px;padding:2px 6px;z-index:10}
+.tmp{position:fixed;inset:0;background:rgba(0,0,0,.3);display:flex;align-items:center;justify-content:center;z-index:20} .tmp .b{background:#fff;padding:16px}
+</style></head><body>
+<div><span class="title">전자결재</span><div class="topBtn">미리보기</div><div class="topBtn" id="keep">보관</div><div class="topBtn">상신</div></div>
+<table border="1"><tbody>
+<tr><td><p><span>기&nbsp;&nbsp;안&nbsp;&nbsp;자</span></p></td><td>이정우</td></tr>
+<tr><td><p><span>작&nbsp;성&nbsp;부&nbsp;서</span></p></td><td class="bd_color textL pl5">개발 2팀</td></tr>
+<tr><td><p><span>수신및참조</span><br></p></td><td><div class="referBox migFormEdit"><div class="flex-1 h-box"><p class="eapAutoChips flex-1"></p><div class="OBTAutoCompleteChips_Wrapper"><div data-orbit-component="OBTAutoCompleteChips" class="OBTAutoCompleteChips_wrapper__5KBpq" id="chips"><div class="OBTAutoCompleteChips_inputWrapper__5KBpq"><input type="text" value="" id="refin"></div></div></div><button class="btnImg ml4"><img alt=""></button></div></div></td></tr>
+<tr><td><p><span>시&nbsp; 행&nbsp; 자</span></p></td><td><input type="text" placeholder="시행자를 입력해주세요."></td></tr>
+<tr><td><p><span>제&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;목</span></p></td><td><div class="docTitleBox"><input type="text" maxlength="200" id="title"></div></td></tr>
+</tbody></table>
+<iframe id="editorView_UBAP001" src="/compose-editor.html" style="width:900px;height:600px"></iframe>
+<input type="file" multiple id="files">
+<script>
+const ORG=['구매팀','경영지원부','경영지원부(전자결재용)','연구지원팀','개발 2팀','개발 1팀'];
+const chips=document.getElementById('chips'), inp=document.getElementById('refin');
+const add=n=>{ const d=document.createElement('div'); d.className='OBTAutoCompleteChips_item__5KBpq OBTAutoCompleteChips_correct__5KBpq'; d.innerHTML='<div>'+n+' <button>x</button></div>'; chips.insertBefore(d, chips.lastElementChild); window.__chips=(window.__chips||[]).concat(n); };
+const close=()=>document.querySelectorAll('.ac,.tip').forEach(x=>x.remove());
+inp.addEventListener('input',()=>{ close(); const q=inp.value.trim(); if(!q) return; const hits=ORG.filter(o=>o.includes(q)); if(!hits.length) return;
+  const t=document.createElement('div'); t.className='tip'; t.textContent='(주)레인보우로보틱스>본사>'+hits[0]; document.body.appendChild(t);   // 경로 말풍선 (누르면 안 됨)
+  const u=document.createElement('ul'); u.className='ac'; u.innerHTML=hits.map(h=>'<li role="option"><span>👥</span> <span>'+h+'</span></li>').join(''); document.body.appendChild(u);
+  u.querySelectorAll('li').forEach((li,i)=>li.onclick=()=>{ add(hits[i]); inp.value=''; close(); }); });
+inp.addEventListener('keydown',e=>{ if(e.key==='Enter'){ const q=inp.value.trim(); const h=ORG.filter(o=>o.includes(q))[0]; if(h){ add(h); inp.value=''; close(); } } });
+document.getElementById('files').addEventListener('change',e=>{ window.__files=[...e.target.files].map(f=>f.name); });
+if (__TEMPDRAFT__) setTimeout(()=>{ const d=document.createElement('div'); d.className='tmp'; d.innerHTML='<div class="b"><p>작성 중이던 임시 저장 본문이 있습니다. 불러오시겠습니까?</p><button id="tc">취소</button><button id="to">확인</button></div>'; document.body.appendChild(d);
+  document.getElementById('tc').onclick=()=>{ d.remove(); window.__tempdraft='cancel'; }; document.getElementById('to').onclick=()=>{ d.remove(); window.__tempdraft='load'; document.getElementById('title').value='옛 임시 제목'; }; }, __TEMPDELAY__);
+</script></body></html>`;
+
 const POPUP = `<!doctype html><html><head><meta charset="utf-8"><title>전자결재</title></head><body>
 <div><span class="title">전자결재</span><div class="topBtn">미리보기</div><div class="topBtn" id="keep">보관</div><div class="topBtn">상신</div></div>
 <div class="docTitleBox"><input type="text" maxlength="200" id="title"></div>
@@ -165,8 +201,14 @@ function start(port = 0) {
       let b = ''; req.on('data', c => b += c); req.on('end', () => { saved.push(JSON.parse(b)); res.end('ok'); }); return;
     }
     const send = (body, type = 'text/html; charset=utf-8') => { res.writeHead(200, { 'Content-Type': type }); res.end(body); };
+    if (req.url === '/settle.js') return send(fs.readFileSync(path.join(__dirname, 'settle.js'), 'utf8'), 'text/javascript; charset=utf-8');
+    if (req.url === '/settle/state' && req.method === 'POST') { let b = ''; req.on('data', c => b += c); req.on('end', () => { settle = JSON.parse(b); res.end('ok'); }); return; }
+    if (req.url === '/settle/state') return send(JSON.stringify(settle), 'application/json');
     if (req.url === '/' || req.url.startsWith('/?')) return send(INDEX.replace('__SEARCH__', process.env.MOCK_SEARCH || 'button'));
     if (req.url.startsWith('/popup.html')) return send(POPUP);
+    if (req.url === '/compose.js') return send(fs.readFileSync(path.join(__dirname, 'compose.js'), 'utf8'), 'text/javascript; charset=utf-8');
+    if (req.url.startsWith('/compose.html')) return send(COMPOSE.replace('__TEMPDRAFT__', process.env.MOCK_TEMPDRAFT ? 'true' : 'false').replace('__TEMPDELAY__', String(Number(process.env.MOCK_TEMPDRAFT) > 1 ? Number(process.env.MOCK_TEMPDRAFT) : 700)));
+    if (req.url.startsWith('/compose-editor.html')) return send(`<!doctype html><html><head><meta charset="utf-8"></head><body contenteditable="true">${fs.readFileSync(path.join(FIX, 'purchase_body.html'), 'utf8')}</body></html>`);
     if (req.url.startsWith('/editor.html'))
       return send(`<!doctype html><html><head><meta charset="utf-8"></head><body contenteditable="true">${fs.readFileSync(path.join(FIX, process.env.MOCK_FORM || 'apply_form_body.html'), 'utf8')}</body></html>`);
     res.writeHead(404); res.end();
@@ -174,4 +216,4 @@ function start(port = 0) {
   return new Promise(r => srv.listen(port, '127.0.0.1', () => r({ srv, url: `http://127.0.0.1:${srv.address().port}`, saved })));
 }
 
-module.exports = { start };
+module.exports = { start, setSettle: s => { settle = s; }, getSettle: () => settle };

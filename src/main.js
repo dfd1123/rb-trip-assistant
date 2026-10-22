@@ -189,13 +189,20 @@ class Job {
 }
 let job = null;
 
-function startJob(kind, fn, title) {
-  if (job && job.state === 'waiting') job.cancel();          // 사람 입력만 기다리던 이전 작업은 취소
-  else if (job && job.state === 'running' && job.kind === 'fare') job.cancel();   // 교통비 조회는 새 조회가 덮어씀 (교통편 연달아 바꿀 때)
-  else if (job && job.state === 'running') throw new Error('이전 작업이 아직 진행 중이에요. 작업창의 [취소]를 누른 뒤 다시 시도해 주세요.');
+// 화면에 안 보이게 도는 작업(목록 갱신·환원 점검 등). 사람이 시킨 작업이 오면 양보한다 — 전엔 "작업창의 [취소]를 누르라"고 했는데 숨은 작업이라 누를 곳이 없었음
+const BACKGROUND_JOBS = new Set(['gw-list', 'gw-profile', 'refund-check', 'purchase-list', 'report-load']);
+async function startJob(kind, fn, title) {
+  const yieldTo = job && ((job.state === 'waiting') || (job.state === 'running' && (job.kind === 'fare' || (BACKGROUND_JOBS.has(job.kind) && !BACKGROUND_JOBS.has(kind)))));
+  if (yieldTo) {   // 사람 입력만 기다리던 작업·교통비 조회(새 조회가 덮어씀)·뒤에서 돌던 작업은 취소하고, 같은 창을 동시에 만지지 않게 멈출 때까지 기다림
+    const old = job; old.cancel();
+    await Promise.race([old.done, new Promise(r => setTimeout(r, 20000))]);
+  } else if (job && job.state === 'running') {
+    if (BACKGROUND_JOBS.has(kind)) return { ok: false, skipped: true };   // 뒤에서 하는 확인은 다음에 (알림 안 띄움)
+    throw new Error('이전 작업이 아직 진행 중이에요. 작업창의 [취소]를 누른 뒤 다시 시도해 주세요.');
+  }
   const j = job = new Job(kind, title);
   const env = { debugDir: app.isPackaged ? path.join(app.getPath('userData'), 'debug') : path.join(__dirname, '..', 'debug'), cfg: store.config(), store, ui: j, log: m => j.info(m), naverKeys: naverKeys(), fetch: net.fetch, gwWindow: () => gwWindow(false), showGw, makeNaverWindow, creds: gwCreds };
-  (async () => {
+  j.done = (async () => {
     try { j.result = await fn(env); j.state = 'done'; j.info('✔ 완료'); }
     catch (e) { j.error = e instanceof R.InputError ? `입력 오류: ${e.message}` : e.message; j.state = j.cancelled ? 'cancelled' : 'error';
       if (j.state === 'error' && !(e instanceof R.InputError)) reportJob(j, 'error', e.stack || e.message); }   // 입력 검증 오류는 사람 실수라 안 보냄
@@ -245,6 +252,12 @@ async function reportJob(j, kind, detail) {
 
 // ---------- 영수증 자동 분류 ----------
 const PROOF_MIME = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', heic: 'image/heic', heif: 'image/heif', pdf: 'application/pdf' };
+/** 고른 뒤 옮기거나 지운 파일: 작업을 시작하기 전에 이름을 알려 준다 ("ENOENT: no such file…" 대신) */
+function assertFilesExist(paths, what) {
+  const fs = require('fs');
+  const gone = [...new Set((paths || []).map(String).filter(Boolean))].filter(p => !fs.existsSync(p));
+  if (gone.length) throw new R.InputError(`${what} 파일을 찾을 수 없어요 (옮겼거나 지웠어요): ${gone.map(p => path.basename(p)).join(', ')}. 다시 골라 주세요.`);
+}
 async function readReceipts(env, ai, paths, period) {
   const fs = require('fs');
   const items = Object.fromEntries(Object.entries(R.BUDGET_ITEMS).map(([k, [, label]]) => [k, label.replace('여비교통비(판)_', '')]));
@@ -254,6 +267,7 @@ async function readReceipts(env, ai, paths, period) {
     const name = path.basename(p), ext = path.extname(p).slice(1).toLowerCase();
     const mime = PROOF_MIME[ext];
     if (!mime) return out.push({ path: p, error: '이미지나 PDF가 아니에요 (BMP·TIFF 는 PNG·JPG 로 바꿔 주세요)' });
+    if (!fs.existsSync(p)) return out.push({ path: p, error: '파일을 찾을 수 없어요 (옮겼거나 지웠어요)' });   // 한 장 때문에 전체가 멈추지 않게
     const size = fs.statSync(p).size;
     if (size > 15 * 1024 * 1024) return out.push({ path: p, error: '파일이 너무 커요 (15MB 이하)' });
     try {
@@ -345,6 +359,9 @@ const naverKeys = () => { const b = (() => { try { return require('./engine/buil
 const publicConfig = c => { const { aiKeyEnc, gwPwEnc, ...rest } = c; return { ...rest, fxKeySet: Boolean(fxKey()), placesOn: Boolean(naverKeys()), aiKeySet: Boolean(aiKeyEnc) || Boolean(aiSettings(c)), aiBuiltin: !aiKeyEnc && Boolean(aiSettings(c)), gwSaved: Boolean(c.gwId && gwPwEnc) }; };
 
 /** 한 줄 메모 → 신청서. AI 가 있으면 문장/추론은 AI, 금액·출장지 이름은 항상 규칙. */
+/** 한 줄 자동 작성은 템플릿이 있으니 AI 를 오래 기다리지 않는다 (AI 시간 초과 45초 × 모델 2개 = 90초 동안 '작성 중…' 이던 문제) */
+const AI_QUICK_MS = 20000;
+const withDeadline = (p, ms) => Promise.race([p, new Promise((_, j) => setTimeout(() => j(new Error(`AI 응답이 ${ms / 1000}초 넘게 없어요`)), ms))]);
 async function quick(memo) {
   const cfg = store.config();
   const places = store.places();
@@ -354,7 +371,7 @@ async function quick(memo) {
   let data = base.data, source = 'template', note = '';
   if (ai) {
     try {
-      const d = await AI.draftApply(ai, memo, { places });
+      const d = await withDeadline(AI.draftApply(ai, memo, { places }), AI_QUICK_MS);
       data = Q.mergeAi(base.data, d, places, cfg);
       source = AI.PROVIDERS[ai.provider].label;
     } catch (e) { note = `AI 작성 실패로 템플릿을 썼어요: ${e.message}`; }
@@ -398,8 +415,10 @@ async function quickReport(id, memo) {
   const ai = aiSettings(cfg);
   if (ai && memo.trim()) {
     try {
-      const d = await AI.draftReport(ai, draft, memo);
-      return { data: { ...draft, ...d, expenses: d.expenses || draft.expenses, attachments: draft.attachments, trip_id: id }, source: AI.PROVIDERS[ai.provider].label };
+      const d = await withDeadline(AI.draftReport(ai, draft, memo), AI_QUICK_MS);
+      // AI 가 비워서 돌려준 칸(출장지·기간 등)이 신청서 값을 지우지 않게: 값이 있는 것만 덮어씀 (실제로 출장지가 지워져 "출장지을 넣어 주세요" 로 막혔음)
+      const filled = Object.fromEntries(Object.entries(d || {}).filter(([, v]) => v !== '' && v != null && !(Array.isArray(v) && !v.length)));
+      return { data: { ...draft, ...filled, expenses: draft.expenses, attachments: draft.attachments, trip_id: id }, source: AI.PROVIDERS[ai.provider].label };
     } catch (e) { return { data: Q.quickReport(draft, memo), source: 'template', note: `AI 작성 실패로 템플릿을 썼어요: ${e.message}` }; }
   }
   return { data: Q.quickReport(draft, memo), source: 'template' };
@@ -467,6 +486,10 @@ async function route(p, body = {}) {
     case '/api/title': { const r = String(body.reason || '').trim(); return { apply: r ? R.applyTitle(r) : '', report: r ? R.reportTitle(r) : '' }; }
     case '/api/plan': return runner.planApply(body, cfg);
     case '/api/trips': return { trips: store.list().map(t => ({ ...t, reportMemo: R.budgetMemo(R.reportTitle(t.reason || '')), reportDocTitle: R.reportTitle(t.reason || '') })) };   // reportDocTitle: 출장보고서 결재 문서 제목 (목록에서 보고 상태 찾기)   // reportMemo: 보고 품의 적요 (연결이 끊긴 보고 품의를 찾는 데 씀)
+    case '/api/report-preview': {   // 보내기 전 확인 화면: 실제로 채주에 들어갈 줄 (같은 날 식대 묶음·식대 한도 반영 — runReport 와 같은 계산)
+      const rep = R.parseReport(body.data || {});
+      return { lines: runner.settleLines(rep, cfg).map(l => ({ item: l.item, label: l.label, memo: l.memo, amount: l.amount, pay: l.pay, noVat: l.noVat, proofs: (l.proofs || []).length, dup: l.dup })) };
+    }
     case '/api/draft': {   // 전에 작성한 보고서가 있으면 그대로, 없으면 신청 내용으로 초안
       const base = runner.reportDraft(store, cfg, body.id); const saved = body.fresh ? null : store.load(body.id).report;   // fresh: 작성하던 내용 무시하고 신청 내용으로 새로
       const d = saved ? { ...base, ...saved, trip_id: body.id, transport: base.transport } : base;
@@ -520,6 +543,7 @@ async function route(p, body = {}) {
       const ai = aiSettings(cfg); if (!ai) throw new Error('발주서 읽기는 AI 가 있어야 해요. 설정 › AI 문장 작성에서 Gemini 를 골라 주세요.');
       const f = String(body.path || ''), ext = path.extname(f).slice(1).toLowerCase(), mime = PROOF_MIME[ext], office = ext === 'docx' || ext === 'xlsx';
       if (!mime && !office) throw new Error('발주서는 PDF·이미지·워드(.docx)·엑셀(.xlsx) 파일이어야 해요.');
+      assertFilesExist([f], '발주서');
       return startJob('po-read', async env => {
         env.log(`발주서 읽는 중: ${path.basename(f)}`);
         const po = office ? await AI.readPurchaseOrder(ai, null, require('./engine/office').officeText(f)) : await AI.readPurchaseOrder(ai, { mime, data: require('fs').readFileSync(f).toString('base64') });
@@ -567,7 +591,7 @@ async function route(p, body = {}) {
     case '/api/purchase/title': return { title: R.purchaseTitle(String(body.tag || ''), String(body.desc || '')) };
     case '/api/job/purchase-list': return startJob('purchase-list', env => runner.runPurchaseList(env, { from: String(body.from || ''), to: String(body.to || '') }), body.title);
     case '/api/purchase/forget': store.removePurchase(String(body.title || '')); return { ok: true };
-    case '/api/job/purchase': { R.parsePurchase(body.data); return startJob('purchase', env => runner.runPurchase(env, body.data), body.title); }   // 보관·상신은 사람이
+    case '/api/job/purchase': { const pu = R.parsePurchase(body.data); assertFilesExist([pu.file].filter(Boolean), '발주서'); return startJob('purchase', env => runner.runPurchase(env, body.data), body.title); }   // 보관·상신은 사람이
     case '/api/job/receipts': {   // 영수증·증빙 여러 개 → AI 가 예산과목·금액·날짜 분류
       const ai = aiSettings(cfg);
       if (!ai) throw new Error('영수증 자동 분류는 AI 가 있어야 해요. 설정 › AI 문장 작성에서 Gemini 를 골라 주세요.');
@@ -597,18 +621,21 @@ async function route(p, body = {}) {
       if (f && !f.start) note = note || `출장일을 읽지 못했어요 (본문: "${String(f.period || '').slice(0, 40)}") — 보고서에서 기간을 직접 넣어 주세요`;
       const prev = store.list().find(t => t.gwApply && t.gwApply.key === r.key);   // 이미 들여온 기록이면 그 자리에 덮어쓴다 (본문 다시 읽기)
       const id = prev ? prev.id : store.newId((f && f.start) || pday, reason);
-      const keep = prev ? (({ report, gwReport, reportStatus, resolutionNo }) => ({ report, gwReport, reportStatus, resolutionNo }))(store.load(id)) : {};   // 작성 중이던 보고서·보고 품의 연결·전송한 결의번호는 유지
+      const old = prev ? store.load(id) : {};
+      const keep = prev ? (({ report, gwReport, reportStatus, resolutionNo }) => ({ report, gwReport, reportStatus, resolutionNo }))(old) : {};   // 작성 중이던 보고서·보고 품의 연결·전송한 결의번호는 유지
+      const pa = old.apply || {};   // 본문을 이번에 못 읽었거나 빈 칸이면 전에 읽어 둔 값을 그대로 (다시 읽다 실패하면 출장지·기간이 지워졌음 — UI 테스트로 발견 2026-10-23)
+      const or = (v, p) => (v !== '' && v != null && !(Array.isArray(v) && !v.length)) ? v : p;
       store.save(id, { ...keep, id, created: new Date().toISOString(), title: R.applyTitle(reason), status: '그룹웨어', gwApply: { key: r.key, ym: r.ym, day: String(r.day), seq: String(r.seq) },
-        apply: { reason, destination: (f && f.destination) || '', start: (f && f.start) || pday, end: (f && f.end) || pday, start_time: (f && f.start_time) || '', end_time: (f && f.end_time) || '',
-          category: (f && f.category) || '일반', project: (f && f.project) || '', transport: { mode: (f && f.transport) || '', to: '', from: '', total: null },   // 본문을 못 읽으면 교통편 모름 (보고서에서 자차·대중교통 둘 다 안내)
-          companions: (f && f.companions) || [], companion_purpose: (f && f.companion_purpose) || '', purpose: (f && f.purpose) || '', expenses: [] } });
-      return { id, filled: !!f, note };
+        apply: { reason, destination: or(f && f.destination, pa.destination || ''), start: or(f && f.start, pa.start || pday), end: or(f && f.end, pa.end || pday), start_time: or(f && f.start_time, pa.start_time || ''), end_time: or(f && f.end_time, pa.end_time || ''),
+          category: or(f && f.category, pa.category || '일반'), project: or(f && f.project, pa.project || ''), transport: f && f.transport ? { mode: f.transport, to: '', from: '', total: null } : (pa.transport || { mode: '', to: '', from: '', total: null }),   // 본문을 못 읽으면 교통편 모름 (보고서에서 자차·대중교통 둘 다 안내)
+          companions: or(f && f.companions, pa.companions || []), companion_purpose: or(f && f.companion_purpose, pa.companion_purpose || ''), purpose: or(f && f.purpose, pa.purpose || ''), expenses: pa.expenses || [] } });
+      return { id, filled: !!f || !!pa.destination, note };   // 전에 읽어 둔 값이 있으면 '못 읽었다' 알림은 안 띄움
     }
     case '/api/job/gw-delete': return startJob('gw-delete', env => runner.runDeleteBudget(env, body.keys), body.title);
     case '/api/job/login': return startJob('login', env => runner.runLogin(env), body.title);
     case '/api/job/fare': return startJob('fare', env => runner.runFare({ ...env, force: Boolean(body.force) }, body), body.title);
     case '/api/job/apply': runner.planApply(body.data, cfg); return startJob('apply', env => runner.runApply(env, body.data, { save: false }), body.title);     // 보관·상신은 사람이
-    case '/api/job/report': R.parseReport(body.data); return startJob('report', env => runner.runReport(env, body.data), body.title);
+    case '/api/job/report': { const rep = R.parseReport(body.data); assertFilesExist(rep.expenses.flatMap(e => e.proofs || []), '증빙'); } return startJob('report', env => runner.runReport(env, body.data), body.title);
     case '/api/job/cancel': if (job) job.cancel(); return { ok: true };
     case '/api/job': return job ? job.snapshot(Number(body.since || 0)) : { state: 'none' };
     case '/api/job/answer': if (job) job.answer(body.value); return { ok: true };

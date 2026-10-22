@@ -11,6 +11,8 @@ async function rpc(path, body){
 }
 const won = n => (Number(n)||0).toLocaleString('ko-KR') + '원';
 const num = s => Number(String(s||'').replace(/[^\d]/g,'')) || 0;
+const snum = s => (/^\s*-/.test(String(s || '')) ? -1 : 1) * num(s);   // 구매 할인 줄(-5,000) — num() 은 부호를 버림
+const qtyNum = s => Number(String(s||'').replace(/[^\d.]/g,'').replace(/(\..*)\./g, '$1')) || 0;   // 수량은 소수 가능 (1.5m). num() 은 점을 버려 1.5 → 15 가 됐음
 const radio = name => (document.querySelector(`input[name=${name}]:checked`)||{}).value;
 const setRadio = (name, v) => { const el = document.querySelector(`input[name=${name}][value="${v}"]`); if(el) el.checked = true; };
 const list = s => String(s||'').split(',').map(x=>x.trim()).filter(Boolean);
@@ -99,7 +101,7 @@ function expRow(tbody, e={}, onchange){
   sel.value = e.item || (tid==='a_exp' ? 'domestic_lodging' : 'domestic_transport');
   amt.value = (e.amount === 0 || e.amount) && e.amount !== '' ? Number(e.amount).toLocaleString('ko-KR') : '';   // 0원도 그대로 보임
   memo.value = e.memo || '';
-  amt.oninput = () => { amt.value = amt.value ? num(amt.value).toLocaleString('ko-KR') : ''; if(tid==='a_exp') autoExp = false; onchange(); };
+  amt.oninput = () => { delete tr.dataset.paid; delete tr.dataset.mealOk; amt.value = amt.value ? num(amt.value).toLocaleString('ko-KR') : ''; if(tid==='a_exp') autoExp = false; onchange(); };
   sel.onchange = memo.oninput = onchange;
   tr.querySelector('.del').onclick = () => { tr.remove(); onchange(); };
   tbody.appendChild(tr); onchange();
@@ -108,6 +110,59 @@ function expRow(tbody, e={}, onchange){
 function confirmNoProof(what = '영수증·증빙'){
   if(!confirm(`${what} 없이 진행할까요?`)) return false;
   return confirm(`정말 ${what}을(를) 안 넣을 건가요?\n증빙이 없으면 결재 승인이 안 날 수 있어요.`);
+}
+/* 식대 규정 한도 (1인 한 끼, 설정 rates). 한도를 넘는 식대 줄은 모달에 한꺼번에 보여 주고 끼니·인원을 확인받아 인원 × 한도까지로 맞춘다 (사용자 요청 2026-10-22).
+   영수증 원래 금액은 tr.dataset.paid, 확인한 값은 dataset.mealOk("끼니:인원:금액") — 같은 값이면 다시 안 물음. 금액을 사람이 고치면 둘 다 지움 */
+const MEAL_KINDS = [['조식', /조식|아침/], ['중식', /중식|점심/], ['석식', /석식|저녁/]];
+const mealKindOf = tr => tr.dataset.meal || (MEAL_KINDS.find(([, re]) => re.test(tr.querySelector('.memo').value)) || [])[0] || '';
+const mealPer = kind => { const r = (META.config && META.config.rates) || {}; return Number({ 조식: r.breakfast, 중식: r.lunch, 석식: r.dinner }[kind]) || 0; };
+const mealPaid = tr => Number(tr.dataset.paid) || num(tr.querySelector('.amt').value);
+function overMealRows(){
+  return [...$$('#r_exp tbody tr')].filter(tr => {
+    if(tr.querySelector('.item').value !== 'meal') return false;
+    const kind = mealKindOf(tr), per = mealPer(kind), ppl = Number((tr.querySelector('.ppl') || {}).value) || 1, paid = mealPaid(tr);
+    return per && paid > per * ppl && tr.dataset.mealOk !== `${kind}:${ppl}:${paid}`;
+  });
+}
+/** 한도 넘은 식대 줄이 있으면 모달 → [이대로 맞춰 넣기] 면 true (금액·인원·적요 반영), ✕ 면 false. 없으면 바로 true */
+function confirmMealCaps(){
+  const trs = overMealRows();
+  if(!trs.length) return Promise.resolve(true);
+  const r = (META.config && META.config.rates) || {}, won = n => `${Number(n).toLocaleString('ko-KR')}원`;
+  $('#mealRule').textContent = `회사 규정은 1인 한 끼 조식 ${won(r.breakfast)} · 중식 ${won(r.lunch)} · 석식 ${won(r.dinner)}이에요. 끼니가 맞는지 보고, 여러 명이 같이 먹었으면 인원을 고쳐 주세요.`;
+  const box = $('#mealRows'); box.innerHTML = '<div class="mr hd"><span>영수증</span><span>끼니</span><span>인원(명)</span><span class="res">정산 금액</span></div>';
+  const items = trs.map(tr => {
+    const el = document.createElement('div'); el.className = 'mr';
+    const memo = tr.querySelector('.memo').value, paid = mealPaid(tr);
+    el.innerHTML = `<div class="what"><b></b><span>영수증 ${won(paid)}</span></div>
+      <select class="k">${MEAL_KINDS.map(([k]) => `<option>${k}</option>`).join('')}</select>
+      <input class="p" inputmode="numeric" title="같이 먹은 인원 (본인 포함)">
+      <div class="res"></div>`;
+    el.querySelector('b').textContent = memo || '식대';
+    const k = el.querySelector('.k'), p = el.querySelector('.p'), res = el.querySelector('.res');
+    k.value = mealKindOf(tr) || '중식'; p.value = Number((tr.querySelector('.ppl') || {}).value) || 1;
+    const draw = () => { p.value = p.value.replace(/[^\d]/g, '').slice(0, 2); const cap = mealPer(k.value) * (Number(p.value) || 1), pay = Math.min(paid, cap);
+      res.innerHTML = `한도 ${won(cap)}<br>${pay < paid ? `<s>${won(paid)}</s> → ` : ''}<b class="${pay < paid ? '' : 'ok'}">${won(pay)}</b>`; };
+    k.onchange = draw; p.oninput = draw; draw(); box.appendChild(el);
+    return { tr, k, p, paid };
+  });
+  $('#mealModal').classList.add('on'); items[0].p.focus(); items[0].p.select();
+  return new Promise(resolve => {
+    const close = ok => { $('#mealModal').classList.remove('on'); $('#mealOk').onclick = $('#mealX').onclick = null; resolve(ok); };
+    $('#mealX').onclick = () => close(false);
+    $('#mealOk').onclick = () => {
+      items.forEach(({ tr, k, p, paid }) => {
+        const kind = k.value, ppl = Math.max(1, Number(p.value) || 1), pay = Math.min(paid, mealPer(kind) * ppl);
+        const memo = tr.querySelector('.memo'), pplIn = tr.querySelector('.ppl');
+        tr.dataset.meal = kind; tr.dataset.paid = paid; tr.dataset.mealOk = `${kind}:${ppl}:${paid}`;
+        tr.querySelector('.amt').value = pay.toLocaleString('ko-KR');
+        if(pplIn) pplIn.value = ppl;
+        memo.value = withPeople(/조식|중식|석식|아침|점심|저녁/.test(memo.value) ? memo.value.replace(/조식|중식|석식|아침|점심|저녁/, kind) : `${memo.value} ${kind}`.trim(), ppl);
+        [memo, pplIn, tr.querySelector('.amt')].forEach(x => x && x.classList.remove('need'));
+      });
+      refreshReport(); close(true);
+    };
+  });
 }
 /** 적요에 인원 넣기: "9/28 1인 석식" → "9/28 2인 석식" (없으면 날짜 뒤에) */
 const withPeople = (m, n) => /\d+\s*인/.test(m) ? m.replace(/\d+\s*인/, `${n}인`) : m.replace(/^(\d{1,2}\/\d{1,2})?\s*/, (_, d) => `${d ? d + ' ' : ''}${n}인 `).trim();
@@ -185,6 +240,7 @@ function fillApply(d){
 }
 /** 신청서 전체 비우기 ([새로 작성], 그룹웨어 입력이 끝났을 때) */
 function resetApply(scope = '국내'){
+  quickSeq++;   // 진행 중인 [자동 작성] 답은 버림
   fillApply({}); autoExp = true; fareShot = '';
   $('#q_memo').value = ''; $('#q_status').textContent = ''; $('#a_err').textContent = '';
   ['#a_air', '#a_hotel', '#a_roam', '#a_ins'].forEach(id => $(id).value = ''); setRadio('a_scope', scope); refreshApply();
@@ -381,11 +437,11 @@ let recalcTimer = null;
 ['#a_start','#a_end','#a_start_time','#a_end_time'].forEach(id => ['input', 'change'].forEach(ev => $(id).addEventListener(ev, () => { clearTimeout(recalcTimer); recalcTimer = setTimeout(recalcExpenses, 300); })));
 $('#btnRecalc').onclick = recalcExpenses;
 function markNeed(missing){
-  const map = {'교통편': ['#a_mode_seg'], '국가 등급': ['#a_grade_seg'], '환율': ['#btnRate'], '항공권': ['#a_air'], '날짜': ['#a_start','#a_end'], '출발 시각': ['#a_start_time'], '복귀 시각': ['#a_end_time'], '출장지': ['#a_destination'], '사유': ['#a_reason'], '교통비': ['#a_fare'], '과제명': ['#a_project'], '동행목적': ['#a_companion_purpose']};
+  const map = {'교통편': ['#a_mode_seg'], '국가 등급': ['#a_grade_seg'], '환율': ['#btnRate'], '항공권': ['#a_air'], '날짜': ['#a_start','#a_end'], '출발 시각': ['#a_start_time'], '복귀 시각': ['#a_end_time'], '출장지': ['#a_destination'], '사유': ['#a_reason'], '교통비': ['#a_fare'], '과제명': ['#a_project'], '동행목적': ['#a_companion_purpose'], '출장목적': ['#a_purpose']};
   $$('.need').forEach(el => el.classList.remove('need'));
   missing.forEach(m => (map[m]||[]).forEach(id => $(id).classList.add('need')));
 }
-$$('#a_start,#a_end,#a_start_time,#a_end_time,#a_destination,#a_reason,#a_fare,#a_project,#a_companion_purpose').forEach(el => ['input','change'].forEach(ev => el.addEventListener(ev, () => el.classList.remove('need'))));
+$$('#a_start,#a_end,#a_start_time,#a_end_time,#a_destination,#a_reason,#a_fare,#a_project,#a_companion_purpose,#a_purpose').forEach(el => ['input','change'].forEach(ev => el.addEventListener(ev, () => el.classList.remove('need'))));
 /* 이전에 입력한 한 줄 문장: localStorage 에 최근 30개 */
 const HIST_MAX = 30;
 const histLoad = () => { try { return JSON.parse(localStorage.q_hist || '[]'); } catch(e){ return []; } };
@@ -401,13 +457,16 @@ function histSave(memo){
 $('#q_hist').onchange = () => { if($('#q_hist').value){ $('#q_memo').value = $('#q_hist').value; $('#q_memo').focus(); } $('#q_hist').value = ''; };
 histRender();
 
+let quickSeq = 0;   // [자동 작성] 요청 번호: AI 가 늦게 답하는 사이 [새로 작성]·국내/해외 전환을 하면 늦은 답이 새 화면을 덮지 않게
 $('#btnQuick').onclick = async () => {
   const memo = $('#q_memo').value.trim();
+  const seq = ++quickSeq;
   if(!memo){ $('#q_memo').focus(); return; }
   histSave(memo);
   $('#btnQuick').disabled = true; $('#q_status').textContent = '작성 중…';
   try {
     const r = await rpc('/api/quick', {memo});
+    if(seq !== quickSeq) return;   // 그 사이 새로 작성함
     fillApply(r.data); autoExp = true; markNeed(r.missing); showMealPlan(r.meals);
     const by = r.source === 'template' ? '템플릿으로 작성' : `${r.source}로 작성`;
     $('#q_status').innerHTML = '';
@@ -440,6 +499,9 @@ $('#btnApply').onclick = async () => {
   $('#a_err').textContent = '';
   const data = applyData();
   const need = [];
+  if(!data.reason) need.push('사유');
+  if(!data.destination) need.push('출장지');   // 빈 채로 보내면 엔진이 "'destination' 값이 필요합니다" 라고만 해서 어디를 고칠지 몰랐음
+  if(!data.purpose) need.push('출장목적');
   if(!data.dates.start || !$('#a_end').value) need.push('날짜');
   if(!data.dates.start_time) need.push('출발 시각');
   if(!data.dates.end_time) need.push('복귀 시각');
@@ -449,6 +511,8 @@ $('#btnApply').onclick = async () => {
   if(data.category === '연구과제' && !data.project) need.push('과제명');
   if(data.companions.length && !data.companion_purpose.trim()) need.push('동행목적');
   if(need.length){ markNeed(need); $('#a_err').textContent = `${need.join(', ')}을(를) 넣어 주세요.`; return; }
+  const noAmt = [...$$('#a_exp tbody tr')].filter(tr => !tr.querySelector('.amt').value.trim());   // 빈 칸 ≠ 0원
+  if(noAmt.length){ noAmt.forEach(tr => tr.querySelector('.amt').classList.add('need')); $('#a_err').textContent = `금액이 빈 경비 ${noAmt.length}줄이 있어요. 금액을 넣거나 그 줄을 지워 주세요 (0원이면 0).`; return; }
   let plan; try { plan = await rpc('/api/plan', data); } catch(e){ $('#a_err').textContent = e.message; return; }
   // 보낼 내용 확인
   const t = data.transport, fare = t.mode === 'corporate' ? 0 : Number(t.total || 0), margin = t.mode !== 'corporate' && fare ? (META.config.rates.fareMargin || 0) : 0;
@@ -457,7 +521,7 @@ $('#btnApply').onclick = async () => {
   const ok = await confirmSubmit({ title: '출장신청, 이대로 올릴까요?', html: `
     <div class="cf-title">${escH(plan.title)}</div>
     <dl class="cf-grid"><dt>출장지</dt><dd>${escH(data.destination)}</dd><dt>기간</dt><dd>${escH(data.dates.start)} ${escH(data.dates.start_time)} ~ ${escH(data.dates.end)} ${escH(data.dates.end_time)}</dd>
-      <dt>교통편</dt><dd>${MODE_KO[t.mode] || '-'}${t.mode === 'corporate' && t.corporate_car ? ' · ' + escH(t.corporate_car) : ''}${data.scope === '해외' ? ` · ${escH(data.grade)} 등급 · USD ${Math.round(data.rate).toLocaleString('en-US')}원 (서울외국환중개, ${escH(data.rate_date)} 캡처 첨부)` : ''}</dd>
+      <dt>교통편</dt><dd>${MODE_KO[t.mode] || '-'}${t.mode === 'corporate' && t.corporate_car ? ' · ' + escH(t.corporate_car) : ''}${data.scope === '해외' ? ` · ${escH(data.grade)} 등급 · USD ${Math.round(data.rate).toLocaleString('en-US')}원 (한국수출입은행, ${escH(data.rate_date)} 캡처 첨부)` : ''}</dd>
       <dt>구분</dt><dd>${escH(data.category)}${data.project ? ' · ' + escH(data.project) : ''}</dd>
       ${data.companions.length ? `<dt>동행자</dt><dd>${escH(data.companions.join(', '))} · ${escH(data.companion_purpose)}</dd>` : ''}
       <dt>출장목적</dt><dd>${escH(data.purpose)}</dd></dl>
@@ -499,7 +563,7 @@ async function loadTrips(){
   const stOf = k => ((gwMap[k] || {}).status || '');
   const rows0 = () => gwAll.filter(r => (r.trip ? r.trip === 'apply' : /출장/.test(r.memo || '')) && !byReport[r.key]);   // 결재양식이 '출장신청…'인 품의 (상신 전엔 적요로)
   const applyDay = r => r.ym.replace('-', '') + String(r.day).padStart(2, '0');
-  const isRejected = r => { const t = byApply[r.key]; return REJECTED.test(stOf(r.key)) || !!(t && t.gwReport && REJECTED.test(stOf(t.gwReport.key))); };
+  const isRejected = r => { const t = byApply[r.key]; const d = reportDoc(r); return REJECTED.test(stOf(r.key)) || !!(t && t.gwReport && REJECTED.test(stOf(t.gwReport.key))) || !!(d && REJECTED.test(d.status)); };   // 보고 결재 문서가 반려된 것도 (맨 위로)
   // 정산(결의서전송)됨 = 그룹웨어 품의의 결의금액 > 0 또는 이 PC 기록의 결의번호. 예전 방식의 '보고 품의'는 이때 무시한다
   const settled = r => ((gwMap[r.key] || {}).sent || 0) > 0;   // 그룹웨어 API 값만 (이 PC 기록으로 판단하지 않음 — 2026-10-22)
   const nz = x => String(x || '').replace(/\s/g, '');
@@ -509,7 +573,8 @@ async function loadTrips(){
   const core = x => nz(x).replace(/^(\([^)]*\)|\[[^\]]*\])+/, '').replace(/(로인한)?출장(보고)?(의건)?$/, '');   // '(결재라인수정)[양식] KAI 기술 지원 출장의 건' → 'KAI기술지원'
   const dnum = x => String(x || '').replace(/\D/g, '').slice(0, 8);
   const mine = new Set(), paired = {};
-  rows0().forEach(r => { const t = byApply[r.key]; const d = t && gwReportDocs.find(d => nz(d.title) === nz(t.reportDocTitle)); if(d){ paired[r.key] = d; mine.add(d); } });
+  // 이름이 같은 출장이 여럿이면 보고 문서 하나를 두 출장에 붙이지 않는다 (최근 신청부터, 신청일 이후 가장 이른 문서)
+  rows0().sort((a, b) => applyDay(b).localeCompare(applyDay(a))).forEach(r => { const t = byApply[r.key]; const d = t && gwReportDocs.filter(d => !mine.has(d) && nz(d.title) === nz(t.reportDocTitle) && dnum(d.date) >= applyDay(r)).sort((a, b) => dnum(a.date).localeCompare(dnum(b.date)))[0]; if(d){ paired[r.key] = d; mine.add(d); } });
   rows0().filter(r => !paired[r.key] && DONE.test(stOf(r.key))).sort((a, b) => applyDay(b).localeCompare(applyDay(a))).forEach(r => {
     const c = core(r.docTitle || r.memo);
     const d = c && gwReportDocs.filter(d => !mine.has(d) && core(d.title) === c && dnum(d.date) >= applyDay(r)).sort((a, b) => dnum(a.date).localeCompare(dnum(b.date)))[0];
@@ -538,9 +603,9 @@ async function loadTrips(){
     const isSettled = settled(r) || !!rdoc;
     // 정산 결의를 이미 전송했으면 경비를 다시 쓰지 않는다 → 다음 할 일은 출장보고서 결재 창 올리기(결의서입력 → 결재상신)
     const repLabel = '보고서 작성';   // 상태와 상관없이 같은 버튼. 눌렀을 때 결의 전송·보고 상신 여부는 그룹웨어에서 보고 이어서 함
-    if(applyRejected || reportRejected) el.classList.add('rejected');
+    if(applyRejected || reportRejected || rdocRejected) el.classList.add('rejected');
     el.innerHTML = `<div><b></b>${gwPill('신청', links[0])}${rdoc ? pill('보고', rdoc.status || '', `${rdoc.status || ''} · ${rdoc.docNo}`) : isSettled ? '<span class="pill ok">정산 전송됨</span>' : t && t.gwReport ? gwPill('보고', t.gwReport) : ''}
-      <div class="sub" style="margin:2px 0 0"></div>${applyRejected ? '<div class="err" style="margin-top:4px">신청이 반려됐어요. 반려 사유를 그룹웨어에서 확인하고 [다시 신청]으로 고쳐 올리세요. 반려된 품의는 [삭제]로 지울 수 있어요.</div>' : reportRejected ? '<div class="err" style="margin-top:4px">보고서가 반려됐어요. 반려 사유를 확인하고 고쳐서 다시 올리세요.</div>' : ''}</div>
+      <div class="sub" style="margin:2px 0 0"></div>${applyRejected ? '<div class="err" style="margin-top:4px">신청이 반려됐어요. 반려 사유를 그룹웨어에서 확인하고 [다시 신청]으로 고쳐 올리세요. 반려된 품의는 [삭제]로 지울 수 있어요.</div>' : (reportRejected || rdocRejected) ? '<div class="err" style="margin-top:4px">보고서가 반려됐어요. 반려 사유를 확인하고 고쳐서 다시 올리세요.</div>' : ''}</div>
       <div class="inline"><button class="btn small danger del">삭제</button>${t ? `<button class="btn again ${applyRejected ? 'primary' : ''}">다시 신청</button>` : ''}${approved && !reportDone && (!rdoc || rdocRejected) ? `<button class="btn primary rep">${repLabel}</button>` : ''}</div>`;
     el.querySelector('b').textContent = (r.docTitle || r.memo || '').replace(/^\[[^\]]*\]\s*/, '');
     const md = d => d ? `${Number(d.slice(5, 7))}월 ${Number(d.slice(8, 10))}일` : '';
@@ -820,6 +885,7 @@ function applyReceipts(got){
     if(g.failed || !g.item || !g.amount) tr.querySelectorAll('select,input').forEach(x => x.classList.add('need'));
   });
   refreshReport();
+  confirmMealCaps();   // 한도 넘은 식대가 있으면 끼니·인원 확인 모달
   const bad = got.filter(g => g.failed || !g.item || !g.amount).length;
   $('#r_err').textContent = bad ? `영수증 ${bad}개는 제대로 못 읽었어요 (주황색 칸). 과목·금액을 확인해 주세요.` : '';
   $('#r_exp').scrollIntoView({ block: 'center', behavior: 'smooth' });
@@ -838,10 +904,14 @@ $$('input[name=r_fund]').forEach(x => x.addEventListener('change', () => $('#r_f
 $('#btnReport').onclick = async () => {
   $('#r_err').textContent = '';
   const d = reportData();
+  for(const [k, id, label] of [['destination', '#r_destination', '출장지'], ['period', '#r_period', '출장일시']]) if(!String(d[k] || '').trim()){ $('#r_err').textContent = `${label}을(를) 넣어 주세요.`; $(id).classList.add('need'); if(typeof revealIn === 'function') revealIn($(id)); $(id).scrollIntoView({block: 'center'}); return; }   // 엔진의 '보고서: 출장지을…' 대신 칸을 보여 줌
   if(!d.report){ $('#r_err').textContent = '담당업무 및 보고사항을 입력해 주세요.'; $('#r_report').classList.add('need'); return; }
   $$('#r_sched textarea').forEach(x => x.classList.toggle('need', !x.value.trim()));
   if(!d.schedule.length || d.schedule.some(r => !r.detail)){ $('#r_err').textContent = '출장일정의 세부 활동 내용을 날짜마다 적어 주세요.'; return; }
   if(!d.fund){ $('#r_err').textContent = '자금과목(일반경비·제조경비)을 골라 주세요.'; $('#r_fund').classList.add('need'); return; }
+  // 금액 빈 칸은 0원이 아니다 (영수증을 못 읽은 줄 등) — 0원은 그대로 보낼 수 있음
+  const noAmt = [...$$('#r_exp tbody tr')].filter(tr => !tr.querySelector('.amt').value.trim());
+  if(noAmt.length){ noAmt.forEach(tr => tr.querySelector('.amt').classList.add('need')); $('#r_err').textContent = `금액이 빈 경비 ${noAmt.length}줄이 있어요. 금액을 넣거나 그 줄을 지워 주세요 (0원이면 0).`; return; }
   const noProof = d.expenses.filter(e => !(e.proofs || []).length).length;
   if(noProof && !confirmNoProof(`정산 경비 ${noProof}줄의 증빙`)) return;
   if(!d.expenses.length && !confirm('정산할 경비가 없어요. 신청한 금액을 전부 환원하고 보고서만 올릴까요?')) return;
@@ -858,16 +928,19 @@ $('#btnReport').onclick = async () => {
     still.forEach(tr => tr.querySelector('.memo').classList.add('need'));
     return;
   }
-  // 보낼 내용 확인
-  const sumR = d.expenses.reduce((a, e) => a + e.amount, 0), PAY = { personal: '개인', card: '법인카드' };
+  if(!(await confirmMealCaps())){ $('#r_err').textContent = '식대 한도 확인을 닫았어요. 금액·인원을 확인하고 다시 눌러 주세요.'; return; }
+  d.expenses = reportData().expenses;   // 모달에서 맞춘 금액·인원 반영
+  // 보낼 내용 확인: 채주에 실제로 들어갈 줄 (같은 날 식대는 한 줄로 묶인 모양 그대로)
+  let pre; try { pre = (await rpc('/api/report-preview', {data: d})).lines; } catch(e){ $('#r_err').textContent = e.message; return; }
+  const sumR = pre.reduce((a, e) => a + e.amount, 0), PAY = { personal: '개인', card: '법인카드' };
   const okR = await confirmSubmit({ title: '출장보고서·정산, 이대로 보낼까요?', html: `
     <div class="cf-title">${escH($('#r_title').textContent)}</div>
-    <dl class="cf-grid"><dt>출장일시</dt><dd>${escH(d.period)}</dd><dt>출장지</dt><dd>${escH(d.destination)}${d.visit_org ? ' · ' + escH(d.visit_org) : ''}</dd>
+    <dl class="cf-grid"><dt>출장일시</dt><dd>${escH(d.period)}</dd><dt>출장지</dt><dd>${escH(d.destination)}${d.visit_org && d.visit_org !== d.destination ? ' · ' + escH(d.visit_org) : ''}</dd>
       <dt>출장구분</dt><dd>${escH(d.category)}${d.project ? ' · ' + escH(d.project) : ''}</dd><dt>자금과목</dt><dd>${escH(d.fund)}</dd>
       <dt>보고사항</dt><dd>${escH(d.report)}</dd><dt>일정</dt><dd>${d.schedule.map(x => `${escH(x.date)} ${escH(x.place)} — ${escH(x.detail)}`).join('<br>')}</dd></dl>
-    <div class="cf-sec">정산 경비 (채주)</div>
-    ${d.expenses.length ? `<table class="cf-tbl"><thead><tr><th>예산과목</th><th>거래처비고</th><th>결제</th><th>증빙</th><th style="text-align:right">금액</th></tr></thead>
-      <tbody>${d.expenses.map(e => `<tr><td>${escH(itemName(e.item))}</td><td>${escH(e.memo)}</td><td>${PAY[e.pay] || '개인'}${e.pay === 'card' ? (e.noVat ? ' · 면세' : ` · 부가세 ${won(Math.floor(e.amount / 11))}`) : ''}</td><td>${(e.proofs || []).length ? '<span class="cf-ok">✓</span>' : '<span class="cf-no">없음</span>'}</td><td class="n">${won(e.amount)}</td></tr>`).join('')}</tbody>
+    <div class="cf-sec">채주로 들어갈 내용${pre.some(e => e.dup) ? ' <span class="sub">(같은 날 식대는 한 줄로)</span>' : ''}</div>
+    ${pre.length ? `<table class="cf-tbl"><thead><tr><th>예산과목</th><th>거래처비고</th><th>결제</th><th>증빙</th><th style="text-align:right">금액</th></tr></thead>
+      <tbody>${pre.map(e => `<tr><td>${escH(itemName(e.item))}</td><td>${escH(e.memo)}</td><td>${PAY[e.pay] || '개인'}${e.pay === 'card' ? (e.noVat ? ' · 면세' : ` · 부가세 ${won(Math.floor(e.amount / 11))}`) : ''}</td><td>${e.proofs ? `<span class="cf-ok">✓${e.proofs > 1 ? ' ' + e.proofs : ''}</span>` : '<span class="cf-no">없음</span>'}</td><td class="n">${won(e.amount)}</td></tr>`).join('')}</tbody>
       <tfoot><tr><td colspan="4">합계</td><td class="n">${won(sumR)}</td></tr></tfoot></table>` : '<p class="sub">정산할 경비가 없어요 — 신청 금액 전액을 환원해요.</p>'}`,
     note: '보내면 결의서전송(채주·첨부·환원) → <b>[전송]까지 앱이 해요</b> → 결재상신 → 본문까지 채우고 작성 창을 띄워요. <b>상신은 직접</b>. 품의 한도를 넘는 금액은 한도까지만 청구돼요.' });
   if(!okR) return;
@@ -976,14 +1049,14 @@ function puItemRow(it = {}){
   tr.innerHTML = '<td><input class="name"></td><td><input class="unit"></td><td><input class="qty" inputmode="numeric"></td><td><input class="price" inputmode="numeric"></td><td><input class="amt" inputmode="numeric"></td><td><input class="due" type="date"></td><td><input class="note" placeholder="예: 옵션 1.0M"></td><td><button class="btn small del" type="button">✕</button></td>';
   const q = c => tr.querySelector('.' + c);
   q('name').value = it.part_no && !(it.name || '').includes(it.part_no) ? `${it.name || ''} (${it.part_no})`.trim() : (it.name || ''); q('unit').value = it.unit || 'EA'; q('qty').value = it.qty ?? 1; q('price').value = it.unit_price != null ? Number(it.unit_price).toLocaleString('ko-KR') : ''; q('amt').value = it.amount != null ? Number(it.amount).toLocaleString('ko-KR') : ''; q('due').value = it.due || ''; q('note').value = it.note || '';
-  const recalc = () => { q('amt').value = (num(q('qty').value) * num(q('price').value)).toLocaleString('ko-KR'); puRender(); };
+  const recalc = () => { q('amt').value = Math.round(qtyNum(q('qty').value) * snum(q('price').value)).toLocaleString('ko-KR'); puRender(); };
   q('qty').addEventListener('input', recalc); q('price').addEventListener('input', recalc);
   q('amt').addEventListener('input', puRender); q('due').addEventListener('change', puRender); q('note').addEventListener('input', puRender);
   q('del').onclick = () => { tr.remove(); puRender(); };
   $('#pu_items tbody').appendChild(tr);
   return tr;
 }
-function puItems(){ return [...$('#pu_items tbody').querySelectorAll('tr')].map(tr => { const q = c => tr.querySelector('.' + c).value.trim(); return { name: q('name'), part_no: '', unit: q('unit') || 'EA', qty: num(q('qty')), unit_price: num(q('price')), amount: q('amt') === '' ? '' : num(q('amt')), due: q('due'), note: q('note') }; }); }
+function puItems(){ return [...$('#pu_items tbody').querySelectorAll('tr')].map(tr => { const q = c => tr.querySelector('.' + c).value.trim(); return { name: q('name'), part_no: '', unit: q('unit') || 'EA', qty: qtyNum(q('qty')), unit_price: snum(q('price')), amount: q('amt') === '' ? '' : snum(q('amt')), due: q('due'), note: q('note') }; }); }
 function purchaseData(){
   return { file: puLink ? '' : puFile, link: puFile ? null : puLink, summary: puSummary, memo: $('#pu_memo').value.trim(), purpose: $('#pu_purpose').value, purpose_etc: $('#pu_purpose_etc').value.trim(), project: $('#pu_project').value, project_etc: $('#pu_project_etc').value.trim(),
     urgency: radio('pu_urgency') || '일반', substitutable: radio('pu_sub') === 'yes', items: puItems(), vat_included: $('#pu_vat').checked, price_vat: puOnlineVatIn(), total: '',
@@ -1156,7 +1229,7 @@ $('#btnPurchase').onclick = async () => {
 /* ---------- 작업 패널 ---------- */
 let jobTimer = null, jobSince = 0;
 async function runJob(title, path, body, onDone, opt = {}){
-  try { await rpc(path, {...body, title}); } catch(e){ alertErr(e.message); return; }
+  try { const r = await rpc(path, {...body, title}); if(r && r.skipped) return; } catch(e){ alertErr(e.message); return; }   // skipped: 다른 작업 중이라 뒤에서 하는 확인은 건너뜀
   watchJob(title, onDone, opt);
 }
 /** 진행 중인 작업 화면에 붙기 (새 작업 시작, 또는 새로고침 후 이어보기) */
@@ -1194,6 +1267,8 @@ function watchJob(title, onDone, {quiet = false} = {}){
       if(s.state==='error') $('#jobLog').textContent += '\n✖ ' + s.error + '\n';
       if(s.state==='cancelled') $('#jobLog').textContent += '\n— 취소했어요.\n';
       if(s.state==='done' && onDone) onDone(s.result);
+      // 읽기만 하는 작업(영수증·발주서·페이지·교통비)은 끝나면 작업 창을 접는다 — 남아 있으면 오른쪽 [제출 준비]·입력 버튼을 가렸음
+      if(s.state==='done' && ['receipts', 'po-read', 'url-read', 'fare', 'report-load'].includes(s.kind)) setTimeout(() => { if(!jobTimer) $('#jobPanel').style.display = 'none'; }, 1500);
     }
   }, 700);
 }

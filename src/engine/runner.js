@@ -126,6 +126,21 @@ function reportDraft(store, cfg, id) {
   };
 }
 
+/** 보고서 경비 → 채주로 넣을 줄 (날짜 채우기 → 식대 규정 한도 → 같은 날 식대 한 줄 → 날짜순). 보내기 전 확인 화면도 이걸로 보여 줘서 실제와 같게 */
+function settleLines(rep, cfg, log = () => {}) {
+  const usedOn = (/(\d{4})[.-](\d{2})[.-](\d{2})/.exec(rep.period) || []).slice(1).join('-');   // 출장 시작일 (법인카드 자금계획일 기준)
+  // 같은 날 식대 영수증 여러 장 → 채주 한 줄 (영수증 날짜 필드로. 직접 쓴 줄은 적요 앞 "10/20" + 출장 연도)
+  const year = usedOn.slice(0, 4) || String(new Date().getFullYear());
+  const startM = Number(usedOn.slice(5, 7)) || 0;
+  const dated = rep.expenses.map(e => { if (e.date) return e; const m = /^(\d{1,2})\/(\d{1,2})\b/.exec(e.memo || ''); const y = m && startM && +m[1] < startM ? +year + 1 : year;   // 12/30~1/2 출장의 '1/1' 은 다음 해
+    return { ...e, date: m ? `${y}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}` : '' }; });   // 날짜는 AI 가 읽은 필드 우선, 없으면(직접 쓴 줄) 적요 앞 M/D
+  const capped = R.capMealRows(dated, cfg.rates);
+  capped.filter(e => e.capped).forEach(e => log(`${e.memo}: ${e.paid.toLocaleString('ko-KR')}원 → 식대 규정 한도 ${e.amount.toLocaleString('ko-KR')}원으로 조정`));
+  const merged = R.mergeMealRows(capped).sort((a, b) => (a.date || '').localeCompare(b.date || ''));   // 품의 한도는 앞 날짜부터 채움 (뒤 날짜가 깎이거나 빠짐)
+  merged.filter(e => e.dup).forEach(e => log(`${e.date} 식대 ${e.dup}건 → 채주 한 줄로 묶음 (${e.amount.toLocaleString('ko-KR')}원, 증빙 ${e.proofs.length}개)`));
+  return merged.map(e => ({ item: e.item, dup: e.dup || 0, label: e.label, pay: e.pay, noVat: e.noVat, amount: e.amount, date: e.date, supply: R.supplyAmount(e.amount, e.pay, e.noVat), vat: R.vatAmount(e.amount, e.pay, e.noVat), memo: e.memo, planDate: R.fundPlanDate(e.pay, { usedOn }), proofs: e.proofs || [] }));
+}
+
 /** 출장보고서(정산). 새 품의를 만들지 않고, 승인된 신청 품의로 지출결의를 한다 (사용자가 알려 준 회사 절차):
  *  품의서승인(복수) → 신청 품의 체크 → [결의서전송/취소] → 지출결의서·집행용도 → 예산 줄 결제수단·과세구분 → 채주내역(영수증마다) → [환원]
  *  → 사람이 확인하고 [전송]. 이어지는 결의서입력 → 결재상신 → 출장보고서 본문은 다음 단계에서 자동화한다. */
@@ -139,13 +154,7 @@ async function runReport(env, data) {
   if (!apply || !apply.ym || !apply.seq) throw new R.InputError('이 출장의 신청 품의를 몰라요. [내 출장보고서] 목록에서 그룹웨어 신청 품의와 연결된 출장으로 보고서를 써 주세요.');
   const payee = cfg.name || rep.name;
   if (!payee) throw new R.InputError('그룹웨어 이름을 몰라요. 설정에서 그룹웨어에 로그인해 내 정보를 불러와 주세요.');
-  const usedOn = (/(\d{4})[.-](\d{2})[.-](\d{2})/.exec(rep.period) || []).slice(1).join('-');   // 출장 시작일 (법인카드 자금계획일 기준)
-  // 같은 날 식대 영수증 여러 장 → 채주 한 줄 (영수증 날짜 필드로. 직접 쓴 줄은 적요 앞 "10/20" + 출장 연도)
-  const year = usedOn.slice(0, 4) || String(new Date().getFullYear());
-  const dated = rep.expenses.map(e => { if (e.date) return e; const m = /^(\d{1,2})\/(\d{1,2})\b/.exec(e.memo || ''); return { ...e, date: m ? `${year}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}` : '' }; });   // 날짜는 AI 가 읽은 필드 우선, 없으면(직접 쓴 줄) 적요 앞 M/D
-  const merged = R.mergeMealRows(dated).sort((a, b) => (a.date || '').localeCompare(b.date || ''));   // 품의 한도는 앞 날짜부터 채움 (뒤 날짜가 깎이거나 빠짐)
-  merged.filter(e => e.dup).forEach(e => log(`${e.date} 식대 ${e.dup}건 → 채주 한 줄로 묶음 (${e.amount.toLocaleString('ko-KR')}원, 증빙 ${e.proofs.length}개)`));
-  const lines = merged.map(e => ({ label: e.label, pay: e.pay, noVat: e.noVat, amount: e.amount, date: e.date, supply: R.supplyAmount(e.amount, e.pay, e.noVat), vat: R.vatAmount(e.amount, e.pay, e.noVat), memo: e.memo, planDate: R.fundPlanDate(e.pay, { usedOn }), proofs: e.proofs || [] }));
+  const lines = settleLines(rep, cfg, log);
   const gw = new Amaranth({ win: env.gwWindow(), baseUrl: cfg.baseUrl, ui, log, debugDir: env.debugDir, creds: env.creds });
   await gw.ensureLogin();
   // 1~2단계: 결의서전송 (이미 전송한 출장이면 건너뜀 — 다시 돌릴 때)
@@ -329,4 +338,4 @@ async function runDeleteTrip(env, id) {
   return { rows };
 }
 
-module.exports = { listRange, runRefundCheck, runProfile, runLoadReport, planApply, runFare, runApply, runPurchase, runPurchaseList, reportDraft, runReport, runLogin, runListBudget, runDeleteBudget, runDeleteTrip };
+module.exports = { settleLines, listRange, runRefundCheck, runProfile, runLoadReport, planApply, runFare, runApply, runPurchase, runPurchaseList, reportDraft, runReport, runLogin, runListBudget, runDeleteBudget, runDeleteTrip };

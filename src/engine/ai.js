@@ -10,6 +10,8 @@ const PROVIDERS = {
   gemini: { label: 'Gemini', model: 'gemini-3.5-flash-lite', fallback: ['gemini-flash-lite-latest'] },   // 3.8-flash 는 무료 티어에서 503 잦음, 3.5-flash 는 생각이 길어 45초 초과
 };
 
+const qtyOf = v => Math.round((Number(String(v ?? '').replace(/[^\d.]/g, '')) || 0) * 1000) / 1000;   // 수량은 소수 가능 (1.5m) — 반올림하지 않음
+
 async function post(url, headers, body, timeoutMs = 45000) {
   // 503(혼잡)·429(한도)·529 는 잠깐 뒤 다시 (최대 3회: 2초, 5초 간격)
   for (let attempt = 0; ; attempt++) {
@@ -22,6 +24,10 @@ async function post(url, headers, body, timeoutMs = 45000) {
       if ([429, 503, 529].includes(res.status) && attempt < 2) { await new Promise(r => setTimeout(r, [2000, 5000][attempt])); continue; }
       const msg = (json.error && (json.error.message || json.error.type)) || res.statusText;
       throw new Error(`AI 호출 실패 (${res.status}): ${msg}${res.status === 404 ? ' — 설정에서 모델 이름을 확인해 주세요.' : ''}`);
+    } catch (e) {
+      // 시간 초과는 "This operation was aborted"(영어)로만 떠서 사용자가 뭔지 몰랐음 → 한글로, 다른 모델로 다시 시도할 수 있게 표시
+      if (e && e.name === 'AbortError') throw Object.assign(new Error(`AI 응답이 ${Math.round(timeoutMs / 1000)}초 안에 안 왔어요. 잠시 뒤 다시 눌러 주세요.`), { timeout: true });
+      throw e;
     } finally { clearTimeout(t); }
   }
 }
@@ -50,7 +56,7 @@ async function complete({ provider, model, key }, prompt) {
       const j = await post(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(m)}:generateContent`,
         { 'x-goog-api-key': key }, { contents: [{ parts: [{ text: prompt }] }] });
       return j.candidates[0].content.parts.map(x => x.text || '').join('');
-    } catch (e) { last = e; if (!/\(503\)|\(429\)|aborted/.test(e.message)) throw e; }
+    } catch (e) { last = e; if (!e.timeout && !/\(503\)|\(429\)|aborted/.test(e.message)) throw e; }
   }
   throw last;
 }
@@ -81,7 +87,7 @@ async function completeWithFiles({ provider, model, key }, prompt, files) {
       const j = await post(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(m)}:generateContent`, { 'x-goog-api-key': key },
         { contents: [{ parts: [...files.map(f => ({ inline_data: { mime_type: f.mime, data: f.data } })), { text: prompt }] }], generationConfig: { responseMimeType: 'application/json' } }, 90000);
       return j.candidates[0].content.parts.map(x => x.text || '').join('');
-    } catch (e) { last = e; if (!/\(503\)|\(429\)|aborted/.test(e.message)) throw e; }
+    } catch (e) { last = e; if (!e.timeout && !/\(503\)|\(429\)|aborted/.test(e.message)) throw e; }
   }
   throw last;
 }
@@ -132,7 +138,7 @@ async function readPurchaseOrder(ai, file, text = '') {
   const num = v => Math.round(Number(String(v ?? '').replace(/[^\d.-]/g, '')) || 0), str = (v, n = 80) => String(v || '').trim().slice(0, n);
   const v = j.vendor || {};
   return { vendor: { name: str(v.name), address: str(v.address, 120), contact: str(v.contact, 40), phone: str(v.phone, 40), email: str(v.email) }, order_date: str(j.order_date, 10),
-    items: (Array.isArray(j.items) ? j.items : []).map(i => ({ name: str(i.name), part_no: str(i.part_no), unit: str(i.unit, 10) || 'EA', qty: num(i.qty) || 1, unit_price: num(i.unit_price), amount: num(i.amount), due: '', urgency: /긴급/.test(String(i.urgency || '')) ? '긴급' : '' })).filter(i => i.name),
+    items: (Array.isArray(j.items) ? j.items : []).map(i => ({ name: str(i.name), part_no: str(i.part_no), unit: str(i.unit, 10) || 'EA', qty: qtyOf(i.qty) || 1, unit_price: num(i.unit_price), amount: num(i.amount), due: '', urgency: /긴급/.test(String(i.urgency || '')) ? '긴급' : '' })).filter(i => i.name),
     supply: num(j.supply), vat: num(j.vat), total: num(j.total), summary: (Array.isArray(j.summary) ? j.summary : []).map(x => str(x, 160)).filter(Boolean).slice(0, 10) };
 }
 
@@ -154,7 +160,7 @@ ${String(text || '').slice(0, 12000)}`;
   let j; try { j = JSON.parse(m ? m[0] : out); } catch (e) { throw new Error('AI 가 제품 페이지를 읽지 못했어요'); }
   const num = v => Math.round(Number(String(v ?? '').replace(/[^\d.-]/g, '')) || 0), str = (v, n = 80) => String(v || '').trim().slice(0, n);
   const v = j.vendor || {};
-  return { price_vat: /별도/.test(String(j.price_vat || '')) ? 'excl' : 'incl', name: str(j.name, 120), part_no: str(j.part_no), unit: str(j.unit, 10) || 'EA', unit_price: num(j.unit_price), qty: num(j.qty) || 1, note: str(j.note, 200),
+  return { price_vat: /별도/.test(String(j.price_vat || '')) ? 'excl' : 'incl', name: str(j.name, 120), part_no: str(j.part_no), unit: str(j.unit, 10) || 'EA', unit_price: num(j.unit_price), qty: qtyOf(j.qty) || 1, note: str(j.note, 200),
     vendor: { name: str(v.name), phone: str(v.phone, 40), email: str(v.email) }, summary: (Array.isArray(j.summary) ? j.summary : []).map(x => str(x, 160)).filter(Boolean).slice(0, 10) };
 }
 

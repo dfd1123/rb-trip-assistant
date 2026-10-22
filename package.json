@@ -12,6 +12,8 @@
     "postinstall": "node scripts/brand-dev-electron.js",
     "test": "node --test test/rules.test.js",
     "e2e": "electron test/e2e.js",
+    "e2e:settle": "electron test/e2e-settle.js",
+    "e2e:purchase": "electron test/e2e-purchase.js",
     "predist": "node scripts/write-builtin-key.js",
     "dist": "electron-builder",
     "dist:win": "node scripts/write-builtin-key.js && electron-builder --win",

@@ -134,6 +134,16 @@ td.proof{vertical-align:top}
 .tsel{display:flex;align-items:center;gap:4px}.tsel select{flex:1;min-width:0}
 input.need + .tsel select{outline:2px solid #f59e0b;border-color:#f59e0b}
 #r_drop.over,.drop.over{background:var(--accent-soft);border-color:var(--accent)}
+#mealRows .mr{display:grid;grid-template-columns:1fr 92px 70px 120px;gap:8px;align-items:center;padding:10px 0;border-top:1px solid var(--line);font-size:13px}
+#mealRows .mr:first-child{border-top:0}
+#mealRows .mr.hd{padding:0 0 6px;color:var(--muted);font-size:12px}
+#mealRows .mr.hd+.mr{border-top:1px solid var(--line)}
+#mealRows .mr .what b{display:block;font-size:14px}
+#mealRows .mr .what span{color:var(--muted)}
+#mealRows .mr select,#mealRows .mr input{width:100%;padding:6px 8px;border:1px solid var(--line);border-radius:8px;font:inherit}
+#mealRows .mr .res{text-align:right;line-height:1.4}
+#mealRows .mr .res s{color:var(--muted)}
+#mealRows .mr .res b.ok{color:#15803d}
 #rq_files .chip{display:flex;align-items:center;gap:6px;background:#fff;border:1px solid var(--line);border-radius:8px;padding:4px 6px 4px 10px;font-size:12px;max-width:260px}
 #rq_files .chip .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #rq_files .chip button{border:0;background:none;cursor:pointer;color:var(--muted);font-size:14px;padding:0 2px}
@@ -248,8 +258,8 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
 @keyframes hintBob{0%,100%{transform:translateY(0)}50%{transform:translateY(-2px)}}
 .tk-break span.need{background:#fff3cd;color:#7a4b00;font-weight:600}
 
-#cfmModal,#askModal,#carModal{position:fixed;inset:0;background:rgba(15,23,42,.45);display:none;align-items:center;justify-content:center;z-index:70;backdrop-filter:blur(2px)}
-#cfmModal.on,#askModal.on,#carModal.on{display:flex;animation:cfFade .18s ease-out}
+#cfmModal,#askModal,#carModal,#mealModal{position:fixed;inset:0;background:rgba(15,23,42,.45);display:none;align-items:center;justify-content:center;z-index:70;backdrop-filter:blur(2px)}
+#cfmModal.on,#askModal.on,#carModal.on,#mealModal.on{display:flex;animation:cfFade .18s ease-out}
 @keyframes cfFade{from{opacity:0}to{opacity:1}}
 /* 출장지 자동완성 (네이버 지역 검색) */
 .acwrap{position:relative;min-width:0}.acwrap input{width:100%}
@@ -298,7 +308,7 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
 .pofile .thumb{flex:none;width:64px;height:44px;border-radius:8px;object-fit:cover;border:1px solid var(--line);background:#f3f6fa}
 #pu_items td{padding:3px 3px}#pu_items input{padding:8px 6px;min-width:0}#pu_items input[type=date]{padding:8px 4px;font-size:14px}#pu_items .del{padding:6px 8px}
 #askChoices{display:flex;flex-direction:column;gap:8px}#askChoices button{text-align:left;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:#fff;font-size:14px;cursor:pointer}#askChoices button:hover{border-color:var(--accent);background:var(--accent-soft)}#askChoices button small{display:block;color:var(--muted);margin-top:2px}
-#cfmModal .box,#askModal .box,#carModal .box{background:#fff;border-radius:16px;width:620px;max-width:calc(100vw - 32px);max-height:calc(100vh - 48px);display:flex;flex-direction:column;box-shadow:0 30px 70px -20px rgba(0,0,0,.45);animation:cfPop .22s cubic-bezier(.2,.9,.3,1.2)}
+#cfmModal .box,#askModal .box,#carModal .box,#mealModal .box{background:#fff;border-radius:16px;width:620px;max-width:calc(100vw - 32px);max-height:calc(100vh - 48px);display:flex;flex-direction:column;box-shadow:0 30px 70px -20px rgba(0,0,0,.45);animation:cfPop .22s cubic-bezier(.2,.9,.3,1.2)}
 @keyframes cfPop{from{transform:translateY(8px) scale(.98);opacity:.6}to{transform:none;opacity:1}}
 .cf-head{display:flex;align-items:center;padding:18px 22px 10px;font-size:17px}.cf-head .x{margin-left:auto;border:0;background:none;font-size:16px;cursor:pointer;color:var(--muted)}
 .cf-body{padding:4px 22px 10px;overflow:auto}
@@ -700,6 +710,9 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
 <div id="askModal"><div class="box" style="width:520px"><div class="cf-head"><b id="askTitle">📍 출장지를 다시 알려 주세요</b></div>
   <div class="cf-body"><p id="askQ" style="white-space:pre-line;margin:0 0 12px;line-height:1.6"></p><div class="acwrap"><input id="askInput" autocomplete="off"><div id="askAc" class="ac hidden"></div></div><div id="askChoices" class="hidden"></div></div>
   <div class="cf-foot" style="justify-content:flex-end"><button class="btn" type="button" id="askSkip">금액 직접 입력</button><button class="btn primary" type="button" id="askGo">다시 조회</button></div></div></div>
+<div id="mealModal"><div class="box" style="width:680px"><div class="cf-head"><b>🍽 식대 규정 한도를 넘은 영수증이 있어요</b><button class="x" type="button" id="mealX">✕</button></div>
+  <div class="cf-body"><p class="sub" id="mealRule" style="margin:0 0 12px;line-height:1.6"></p><div id="mealRows"></div></div>
+  <div class="cf-foot"><span class="cf-note">한도를 넘는 금액은 정산에서 빠져요 (영수증은 그대로 첨부)</span><button class="btn primary" type="button" id="mealOk">이대로 맞춰 넣기</button></div></div></div>
 <div id="cfmModal"><div class="box"><div class="cf-head"><b id="cfTitle">이대로 보낼까요?</b><button class="x" type="button" id="cfX">✕</button></div>
   <div class="cf-body" id="cfBody"></div>
   <div class="cf-foot"><span class="cf-note" id="cfNote"></span><button class="btn" type="button" id="cfNo">고칠게요</button><button class="btn primary glow" type="button" id="cfYes">보내기 ✦</button></div></div></div>

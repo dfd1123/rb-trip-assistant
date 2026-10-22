@@ -22,9 +22,10 @@ $$('textarea[data-examples]').forEach(typePlaceholder);
 /* ---------- 숫자 올라가는 효과 ---------- */
 function countTo(el, target){
   const from = Number(el.dataset.v || 0); el.dataset.v = target;
+  const tok = el._anim = (el._anim || 0) + 1;   // 앞 애니메이션이 끝나기 전에 값이 또 바뀌면 앞의 것은 멈춤 (안 그러면 옛 목표값이 마지막에 덮어써 합계가 틀려 보임)
   if(from === target){ el.textContent = won(target); return; }
   const t0 = performance.now(), dur = 520;
-  const step = t => { const k = Math.min(1, (t - t0) / dur), e = 1 - Math.pow(1 - k, 3);
+  const step = t => { if(el._anim !== tok) return; const k = Math.min(1, (t - t0) / dur), e = 1 - Math.pow(1 - k, 3);
     el.textContent = won(Math.round(from + (target - from) * e)); if(k < 1) requestAnimationFrame(step); };
   requestAnimationFrame(step);
 }

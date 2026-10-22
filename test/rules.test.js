@@ -504,6 +504,19 @@ test('결재 문서 출장일 글자 읽기: 여러 꼴, 연도 없으면 품의
   assert.deepEqual(P('', '2026-10-14'), { start: '', end: '', start_time: '', end_time: '' });
 });
 
+test('식대 규정 한도: 조식 8,300 → 8,000, 2인 중식 28,000 은 그대로, 끼니 모르면 안 깎음', () => {
+  const rates = { breakfast: 8000, lunch: 15000, dinner: 15000 };
+  const c = R.capMealRows([
+    { item: 'meal', amount: 8300, meal: '조식', people: 1, memo: '10/21 1인 조식' },
+    { item: 'meal', amount: 28000, meal: '중식', people: 2, memo: '10/21 2인 중식' },
+    { item: 'meal', amount: 42000, people: 3, memo: '10/19 3인 석식' },   // 끼니는 적요에서
+    { item: 'meal', amount: 50000, people: 1, memo: '10/19 1인 편의점' },   // 끼니 모름
+    { item: 'domestic_lodging', amount: 90000, memo: '숙박 1박' },
+  ], rates);
+  assert.deepEqual(c.map(r => [r.amount, !!r.capped, r.paid]), [[8000, true, 8300], [28000, false, undefined], [42000, false, undefined], [50000, false, undefined], [90000, false, undefined]]);
+  assert.equal(R.capMealRows([{ item: 'meal', amount: 20000, meal: '석식', people: 1 }], rates)[0].amount, 15000);
+});
+
 test('같은 날 식대 영수증은 한 줄로 (10/19~21 네이버페이 영수증 9장, 2026-10-22)', () => {
   const rc = (path, item, amount, date, memo, vendor, people = 0) => ({ path, item, amount, date, memo, vendor, people, proofs: [path] });
   const rows = [
@@ -542,4 +555,115 @@ test('같은 날 식대 영수증은 한 줄로 (10/19~21 네이버페이 영수
   const n = R.mergeMealRows([rc('x', 'meal', 1000, '', '중식', ''), rc('y', 'meal', 2000, '', '석식', ''), { path: 'z', item: '', amount: 0, failed: '못 읽음', date: '2026-10-20', proofs: ['z'] }]);
   assert.equal(n.length, 3);
   assert.deepEqual(n[2].proofs, ['z']);
+});
+
+test('한 줄 메모 날짜·시각: 요일 괄호, 떨어진 끝 날짜, 거꾸로 쓴 기간, 낱말 뒤 시각, 시간(기간)은 시각 아님 (자가 테스트 2026-10-22)', () => {
+  const today = new Date(2026, 9, 22);
+  const d = m => { const r = Q.parseDates(m, today); return `${r.start}~${r.end}`; };
+  const t = m => { const r = Q.parseTimes(m); return `${r.startTime}/${r.endTime}`; };
+  assert.equal(d('10/27(화)~10/29(목) 판교'), '2026-10-27~2026-10-29');
+  assert.equal(d('10/27 13시 출발 10/28 21시 복귀 판교'), '2026-10-27~2026-10-28');
+  assert.equal(d('10/27 판교 왕복 10.5km'), '2026-10-27~2026-10-27');   // 거리 숫자를 끝 날짜로 안 봄
+  assert.equal(d('10/29~10/27 판교'), '2026-10-27~2026-10-29');         // 1년짜리가 되지 않음
+  assert.equal(d('12/30~1/2 부산'), '2026-12-30~2027-01-02');           // 연말은 해를 넘김
+  assert.equal(t('10/27 판교 출발 9:00 복귀 17:30'), '09:00/17:30');
+  assert.equal(t('출발은 9시, 복귀는 6시'), '09:00/18:00');
+  assert.equal(t('10/27 판교 3.5시간 운전'), '/');
+  assert.equal(t('10/27 판교 2시간 회의 9시 출발'), '09:00/');
+  assert.equal(t('9시 출발 18시 복귀'), '09:00/18:00');
+  assert.equal(t('화 19시 출발 목 15시 복귀'), '19:00/15:00');
+});
+
+test('한 줄 메모: 작업장·공항·빌딩 같은 장소, 사유 정리(교통수단 이동·N월 말·저녁 먹고), 저녁 먹고 복귀 = 20시 넘음 (자가 테스트 2026-10-22)', () => {
+  const today = new Date(2026, 9, 22);
+  const qa = m => Q.quickApply(m, { today, places: PLACES, rates: Q.DEFAULT_RATES, origin: '세종' });
+  assert.equal(qa('10/27 삼성전자 구미 A동 작업장 설치 지원').data.destination, '삼성전자 구미 A동 작업장');
+  assert.equal(qa('10/27 설치 지원 LG전자 창원 공장').data.destination, 'LG전자 창원 공장');   // 업무 낱말은 장소에서 뺌
+  assert.equal(qa('10/27 인천공항 장비 통관').data.destination, '인천공항');
+  assert.equal(qa('10/27 화성 현대차 남양연구소 테스트 지원 자차 이동').data.reason, '화성 현대차 남양연구소 테스트 지원');
+  const late = qa('10/27 판교 본사 가서 회의 하고 저녁 먹고 복귀');
+  assert.equal(late.data.reason, '본사 회의');
+  assert.equal(late.data.dates.end_time, '20:30');
+  assert.deepEqual(late.data.expenses.map(e => e.amount), [30000]);   // 중식 + 석식
+  const vague = qa('10월 말 판교 출장');
+  assert.ok(vague.missing.includes('사유') && vague.missing.includes('날짜'));
+});
+
+test('한 줄 메모 동행자·사유: 차 이름 조각을 사람으로 안 봄, 요일 괄호·홀로 남은 요일 글자는 사유에서 뺌 / 빈 칸 오류는 한글 (자가 테스트 2026-10-22)', () => {
+  const today = new Date(2026, 9, 22);
+  const qa = m => Q.quickApply(m, { today, places: PLACES, rates: Q.DEFAULT_RATES }).data;
+  const a = qa('다음주 화~목 판교 RBY1 Muscat 연동 검증, 법인차 스타렉스, 홍길동이랑 같이 9시 출발 목 18시 복귀');
+  assert.deepEqual(a.companions, ['홍길동']);
+  assert.equal(a.reason, 'RBY1 Muscat 연동 검증');
+  assert.equal(qa('10/27(화)~10/29(목) 대전 ETRI 연구원 과제 회의').reason, '대전 ETRI 연구원 과제 회의');
+  assert.deepEqual(qa('김철수, 홍길동이랑 같이 10/27 판교 회의').companions, ['김철수', '홍길동']);
+  assert.throws(() => R.parseApply({ transport: { mode: 'corporate' }, dates: { start: '2026-10-27', end: '2026-10-27', start_time: '09:00', end_time: '18:00' }, reason: '회의', destination: '  ', purpose: 'x', expenses: [] }), /출장지을\(를\) 넣어 주세요/);
+});
+
+test('채주 계획: 다른 날짜 예산 줄로 안 넘김, 나뉜 영수증 증빙은 첫 조각에만, 같은 적요·금액 채주는 (2) 로 구분, 묶은 식대 적요 인원은 최대 (자가 테스트 2026-10-22)', () => {
+  const L = (label, memo, amount, date, id) => ({ id, label: `여비교통비(판)_${label}`, pay: 'personal', amount, supply: amount, memo, date, proofs: [`${id}.png`] });
+  const dated = [{ 예산과목: '여비교통비(판)_식대', 예산과목비고: '10/19 식대', 미지출액: '30,000' }, { 예산과목: '여비교통비(판)_식대', 예산과목비고: '10/20 식대', 미지출액: '38,000' }];
+  const a = R.planPayees(dated, [L('식대', '10/21 1인 중식', 15000, '2026-10-21', 'x')]);
+  assert.deepEqual(a.plan.map(p => p.lines.length), [0, 0]);   // 21일 영수증은 19·20일 줄에 안 들어감
+  assert.equal(a.plan[1].dropped, 1);
+  const two = [{ 예산과목: '여비교통비(판)_국내교통비', 예산과목비고: '교통비', 미지출액: '10,000' }, { 예산과목: '여비교통비(판)_국내교통비', 예산과목비고: '교통비', 미지출액: '10,000' }];
+  const b = R.planPayees(two, [L('국내교통비', '택시', 15000, '', 't')]);
+  assert.deepEqual(b.plan.map(p => p.lines.map(l => [l.amount, l.proofs.length])), [[[10000, 1]], [[5000, 0]]]);
+  const c = R.planPayees([{ 예산과목: '여비교통비(판)_국내교통비', 예산과목비고: '교통비', 미지출액: '50,000' }], [L('국내교통비', '10/20 택시', 8000, '', 'a'), L('국내교통비', '10/20 택시', 8000, '', 'b')]);
+  assert.deepEqual(c.plan[0].lines.map(l => l.memo), ['10/20 택시', '10/20 택시 (2)']);
+  const m = R.mergeMealRows([{ item: 'meal', amount: 8000, date: '2026-10-20', memo: '10/20 1인 조식', meal: '조식', people: 1, proofs: ['a'] }, { item: 'meal', amount: 45000, date: '2026-10-20', memo: '10/20 3인 석식', meal: '석식', people: 3, proofs: ['b'] }]);
+  assert.equal(m[0].memo, '10/20 3인 조식·석식 2건');
+});
+
+test('구매의뢰 금액: 음수는 막고 ₩·원 표기는 받음, 수량 소수(1.5m), 단가 없이 금액만 있는 줄 (자가 테스트 2026-10-22)', () => {
+  const base = { vendor: { name: '다성' }, purpose: '기타', purpose_etc: '시험', project: '기타', project_etc: '디스플레이 2차', reason: '사유', file: '/a.pdf' };
+  const P = items => R.parsePurchase({ ...base, items }).items.map(i => [i.qty, i.unit_price, i.amount]);
+  assert.deepEqual(P([{ name: 'A', qty: '3', unit_price: '₩12,345원' }]), [[3, 12345, 37035]]);
+  assert.deepEqual(P([{ name: '케이블', qty: '1.5', unit_price: 1000 }]), [[1.5, 1000, 1500]]);
+  assert.deepEqual(P([{ name: 'A', qty: 2, unit_price: '', amount: '50,000' }]), [[2, 25000, 50000]]);
+  assert.deepEqual(P([{ name: 'A', qty: 1, unit_price: 50000 }, { name: '할인', qty: 1, unit_price: '-5,000' }]), [[1, 50000, 50000], [1, -5000, -5000]]);   // 견적 할인 줄
+  assert.throws(() => P([{ name: '할인', qty: 1, unit_price: -1000 }]), /0원보다 작아요/);
+  assert.throws(() => R.parseExpenses([{ item: 'meal', amount: -5000 }]), /금액은 숫자/);
+});
+
+test('출장지 검색 순서: 지역 붙인 이름("부산 벡스코")에 식당만 나와도 컨벤션센터·기업이 먼저, 식당·카페는 뒤 (자가 테스트 2026-10-22)', () => {
+  const { rankPlaces } = require('../src/engine/places');
+  const P = (name, category) => ({ name, category, address: '', lng: 129, lat: 35 });
+  const r = rankPlaces('부산 벡스코', [P('고담현불고기 해운대센텀시티 본점', '한식>육류,고기요리'), P('W웨딩 벡스코웨딩홀', '연애,결혼>웨딩컨설팅,플래너'), P('BEXCO', '문화,예술>컨벤션센터'), P('손의손 센텀벡스코점', '해물,생선요리>주꾸미요리')]);
+  assert.equal(r[0].name, 'BEXCO');
+  assert.equal(rankPlaces('판교 맛집', [P('A식당', '음식점>한식'), P('B빌딩', '기업,빌딩')])[0].name, 'A식당');   // 식당을 찾을 땐 그대로
+  assert.equal(rankPlaces('한국항공우주산업', [P('에비오시스테크놀러지스', '서비스,산업>제조업'), P('한국항공우주산업', '서비스,산업>기업')])[0].name, '한국항공우주산업');
+});
+
+test('보고서 경비의 식대 인원은 엔진까지 넘어가야 함 — 빠지면 보낼 때 3인 식대를 1인 한도로 깎음 (자가 테스트 2026-10-22)', () => {
+  const base = { trip_id: 't', reason: 'r', name: 'n', destination: 'd', fund: '일반경비', period: '2026.10.19 - 2026.10.20', purpose: 'p', report: 'x', schedule: [{ date: '10/19', place: 'a', detail: 'b' }] };
+  const rep = R.parseReport({ ...base, expenses: [{ item: 'meal', amount: 42000, memo: '10/19 3인 석식', meal: '석식', people: 3, pay: 'personal' }] });
+  assert.equal(rep.expenses[0].people, 3);
+  assert.equal(R.capMealRows(rep.expenses, { breakfast: 8000, lunch: 15000, dinner: 15000 })[0].amount, 42000);
+  assert.equal(R.capMealRows([{ item: 'meal', amount: 42000, memo: '10/19 3인 석식' }], { dinner: 15000 })[0].amount, 42000);   // 인원 칸 없이 적요만
+});
+
+test('정산 줄 날짜: 직접 쓴 줄의 "1/1" 은 해를 넘긴 출장(12/30~1/2)이면 다음 해 (자가 테스트 2026-10-22)', () => {
+  const runner = require('../src/engine/runner');
+  const rep = { period: '2026.12.30 09:00 - 2027.01.02 18:00', expenses: [{ item: 'meal', label: '여비교통비(판)_식대', amount: 15000, memo: '12/31 1인 석식', pay: 'personal' }, { item: 'meal', label: '여비교통비(판)_식대', amount: 8000, memo: '1/1 1인 조식', pay: 'personal' }] };
+  assert.deepEqual(runner.settleLines(rep, { rates: { breakfast: 8000, lunch: 15000, dinner: 15000 } }).map(l => l.date), ['2026-12-31', '2027-01-01']);
+});
+
+test('한 줄 메모: 해외 도시·나라를 출장지로, 나라 이름은 사유에서 빼고, "다음주 일본·수원"의 일·수는 요일 아님 (자가 테스트 2026-10-22)', () => {
+  const today = new Date(2026, 9, 22);
+  const qa = m => Q.quickApply(m, { today, places: PLACES, rates: Q.DEFAULT_RATES }).data;
+  const sg = qa('다음주 화~목 싱가포르 고객사 RBY1 데모 9시 출발 18시 복귀');
+  assert.equal(sg.destination, '싱가포르'); assert.ok(sg.purpose.startsWith('싱가포르에서'));
+  const lv = qa('1/6~1/9 미국 라스베이거스 CES 참관');
+  assert.equal(lv.destination, '라스베이거스'); assert.equal(lv.reason, 'CES 참관');
+  const jp = qa('다음주 일본 도쿄 로봇 전시회');
+  assert.equal(jp.reason, '로봇 전시회'); assert.equal(jp.dates.start, '');   // '다음주 일(요일)' 로 읽으면 안 됨
+  const sw = qa('다음주 월 수원 출장');
+  assert.equal(sw.dates.start, '2026-10-26'); assert.equal(sw.dates.end, '2026-10-26');   // '수원'의 수 ≠ 수요일
+});
+
+test('AI 결과 병합: AI 가 비워 둔 칸은 규칙으로 읽은 값을 지우지 않음 (자가 테스트 2026-10-23)', () => {
+  const base = Q.quickApply('10/27 킨텍스 로봇 전시회 참관 법인차 8시 출발 21시 복귀', { today: new Date(2026, 9, 22), places: PLACES, rates: Q.DEFAULT_RATES }).data;
+  const m = Q.mergeAi(base, { reason: '', purpose: null, destination: '', transport: { mode: '' }, companions: [], dates: { start: '' } }, PLACES, { defaultOrigin: '세종' });
+  assert.equal(m.reason, base.reason); assert.equal(m.destination, '킨텍스'); assert.equal(m.transport.mode, 'corporate'); assert.equal(m.dates.start, '2026-10-27'); assert.ok(m.purpose);
 });
