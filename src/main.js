@@ -556,6 +556,8 @@ async function route(p, body = {}) {
       const reason = String(r.docTitle || r.memo || '출장').replace(/^\[[^\]]*\]\s*/, '').replace(/(으로|로) 인한 출장의 건$/, '').replace(/\s*출장의 건$/, '').trim() || '출장';
       let f = null, note = '';
       if (r.docId) { try { const { Amaranth } = require('./engine/gw'); const gw = new Amaranth({ win: gwWindow(false), baseUrl: cfg.baseUrl, ui: null, log: () => {}, debugDir: null, creds: gwCreds }); f = await gw.apiApplyDocFields(r.docId, r.formId); } catch (e) { note = e.message; } }
+      if (f) { const pd = R.parseTripPeriod(f.period, pday); if (pd.start) Object.assign(f, pd); else { f.start = f.start || ''; f.end = f.end || ''; } }   // 출장일 글자를 여러 꼴로 다시 읽음
+      if (f && !f.start) note = note || `출장일을 읽지 못했어요 (본문: "${String(f.period || '').slice(0, 40)}") — 보고서에서 기간을 직접 넣어 주세요`;
       const prev = store.list().find(t => t.gwApply && t.gwApply.key === r.key);   // 이미 들여온 기록이면 그 자리에 덮어쓴다 (본문 다시 읽기)
       const id = prev ? prev.id : store.newId((f && f.start) || pday, reason);
       const keep = prev ? (({ report, gwReport, reportStatus, resolutionNo }) => ({ report, gwReport, reportStatus, resolutionNo }))(store.load(id)) : {};   // 작성 중이던 보고서·보고 품의 연결·전송한 결의번호는 유지

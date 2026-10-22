@@ -548,6 +548,7 @@ async function loadTrips(){
       if(t && t.status !== '그룹웨어') return openReport(t.id);
       const {id, filled, note} = await rpc('/api/trip/adopt', {row: r});
       if(!filled) alertErr(`결재 문서 본문을 읽지 못했어요${note ? ' (' + note + ')' : ''}. 기간·출장지는 직접 채워 주세요.`);
+      else if(note) alertErr(note);   // 본문은 읽었지만 출장일을 못 읽음 → 품의일로 채운 기간이니 고쳐야 함
       openReport(id);
     };
     const del = el.querySelector('.del');

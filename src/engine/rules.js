@@ -354,6 +354,31 @@ function extractYaml(text) {
   return data;
 }
 
+/** 결재 문서 '출장일' 칸 글자 → {start, end, start_time, end_time}. 사람이 쓴 여러 꼴을 받는다:
+ *  "2026.10.19 09:00 - 2026.10.20 18:00", "2026-10-19 ~ 2026-10-20", "2026년 10월 19일 ~ 20일", "10/19~10/20", "10월 19일(월) 9시 ~ 10월 20일".
+ *  연도가 없으면 base(품의일 'YYYY-MM-DD')의 해 (품의일보다 두 달 넘게 앞서면 다음 해). 못 읽으면 빈 값 — 품의일로 지어내지 않는다 */
+function parseTripPeriod(text, base = '') {
+  const t = String(text || '').replace(/\u00a0/g, ' ');
+  const by = Number(String(base).slice(0, 4)) || new Date().getFullYear(), bd = base ? new Date(`${base}T00:00:00`) : null;
+  const pad = n => String(n).padStart(2, '0');
+  const re = /(?:(\d{4})\s*[.\-/년]\s*)?(\d{1,2})\s*[.\-/월]\s*(\d{1,2})\s*일?(?:\s*\([^)]*\))?(?:\s*(\d{1,2})(?::(\d{2})|\s*시(?:\s*(\d{1,2})\s*분)?))?/g;
+  const hits = []; let m;
+  while ((m = re.exec(t))) {
+    const mo = Number(m[2]), d = Number(m[3]); if (mo < 1 || mo > 12 || d < 1 || d > 31) continue;
+    let y = m[1] ? Number(m[1]) : (hits.length ? hits[hits.length - 1].y : by);
+    if (!m[1] && !hits.length && bd && new Date(`${y}-${pad(mo)}-${pad(d)}T00:00:00`) < new Date(bd.getTime() - 60 * 864e5)) y++;
+    const time = m[4] ? `${pad(m[4])}:${m[5] || m[6] || '00'}`.replace(/:(\d)$/, ':0$1') : '';
+    hits.push({ y, mo, d, time, end: re.lastIndex });
+  }
+  if (hits.length === 1) {   // "10월 19일 ~ 20일": 두 번째 날짜에 월이 빠진 경우
+    const rest = t.slice(hits[0].end), m2 = /^\s*[~\-–]\s*(\d{1,2})\s*일(?:\s*\([^)]*\))?(?:\s*(\d{1,2})(?::(\d{2})|\s*시))?/.exec(rest);
+    if (m2 && Number(m2[1]) >= hits[0].d) hits.push({ y: hits[0].y, mo: hits[0].mo, d: Number(m2[1]), time: m2[2] ? `${pad(m2[2])}:${m2[3] || '00'}` : '' });
+  }
+  const iso = h => h ? `${h.y}-${pad(h.mo)}-${pad(h.d)}` : '';
+  const a = hits[0], b = hits[1] || hits[0];
+  return { start: iso(a), end: iso(b), start_time: a ? a.time : '', end_time: hits[1] ? hits[1].time : '' };
+}
+
 /** 구매의뢰서 결재 제목: "[구매의뢰서 - 양팔로봇] 무선 LAN 안테나 연장선 구매 요청의 건" */
 const purchaseTitle = (tag, desc) => `[${PURCHASE_FORM}${tag ? ` - ${tag}` : ''}] ${String(desc || '').trim()} 구매 요청의 건`;
 
@@ -398,7 +423,7 @@ function parsePurchase(data) {
 }
 
 module.exports = {
-  APPLY_FORM, REPORT_FORM, PURCHASE_FORM, PURCHASE_PURPOSES, PURCHASE_PROJECTS, PURCHASE_RECIPIENTS, PROJECT_DETAIL_REQUIRED, purchaseTitle, parsePurchase, BUDGET_ITEMS, TRANSPORT_MODES, CORPORATE_CARS, APPLY_CATEGORIES, REPORT_CATEGORIES,
+  APPLY_FORM, REPORT_FORM, PURCHASE_FORM, parseTripPeriod, PURCHASE_PURPOSES, PURCHASE_PROJECTS, PURCHASE_RECIPIENTS, PROJECT_DETAIL_REQUIRED, purchaseTitle, parsePurchase, BUDGET_ITEMS, TRANSPORT_MODES, CORPORATE_CARS, APPLY_CATEGORIES, REPORT_CATEGORIES,
   InputError, ro, applyTitle, reportTitle, budgetMemo, parseCarText, parseTransitText, roundTrip,
   parseApply, parseReport, parseExpenses, transportExpense, fuelOnlyExpense, applyPrompt, reportPrompt, extractYaml,
   OVERSEAS_GRADES, OVERSEAS_RATES, OVERSEAS_RATES_EXEC, overseasGuess, overseasExpenses,

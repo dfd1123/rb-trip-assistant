@@ -452,3 +452,15 @@ test('오류 기록 슬랙 전송: 메시지 → 파일 올리기 → 스레드�
   assert.equal(scrubHtml('<input type="password" name="pw" value="secret1">'), '<input type="password" name="pw" value="***">');
   assert.deepEqual(await sendReport({ token: '', channel: 'C1', fetch: fake, text: 'x' }), { skipped: true });
 });
+
+test('결재 문서 출장일 글자 읽기: 여러 꼴, 연도 없으면 품의일 해, 못 읽으면 빈 값', () => {
+  const P = R.parseTripPeriod;
+  assert.deepEqual(P('2026.10.19 09:00 - 2026.10.20 18:00', '2026-10-14'), { start: '2026-10-19', end: '2026-10-20', start_time: '09:00', end_time: '18:00' });
+  assert.deepEqual(P('2026-10-19 ~ 2026-10-20', '2026-10-14'), { start: '2026-10-19', end: '2026-10-20', start_time: '', end_time: '' });
+  assert.deepEqual(P('2026년 10월 19일 ~ 20일', '2026-10-14'), { start: '2026-10-19', end: '2026-10-20', start_time: '', end_time: '' });
+  assert.deepEqual(P('10/19~10/20', '2026-10-14'), { start: '2026-10-19', end: '2026-10-20', start_time: '', end_time: '' });
+  assert.deepEqual(P('10월 19일(월) 9시 ~ 10월 20일(화) 18시', '2026-10-14'), { start: '2026-10-19', end: '2026-10-20', start_time: '09:00', end_time: '18:00' });
+  assert.deepEqual(P('1/6~1/12', '2026-12-20'), { start: '2027-01-06', end: '2027-01-12', start_time: '', end_time: '' });   // 해 넘김
+  assert.deepEqual(P('10.22', '2026-10-21'), { start: '2026-10-22', end: '2026-10-22', start_time: '', end_time: '' });
+  assert.deepEqual(P('', '2026-10-14'), { start: '', end: '', start_time: '', end_time: '' });
+});
