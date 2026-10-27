@@ -63,12 +63,18 @@ class Amaranth {
           }
         } catch (e) { probe = { error: e.message }; }
         const scrub = h => h.replace(/(<input\b[^>]*type="password"[^>]*?)\svalue="[^"]*"/gi, '$1 value="***"');   // 비밀번호 값은 진단 파일에 남기지 않는다
-        return { dialog: dlg ? scrub(dlg.outerHTML) : '(창 제목을 못 찾음)', page: scrub(document.documentElement.outerHTML), url: location.href, probe };
+        const ae = document.activeElement;   // 창 포커스·표시 상태 (윈도우에서 숨긴 창이 포커스를 못 받아 편집기·드롭다운이 안 열리는지 가리려고)
+        const env = { hasFocus: document.hasFocus(), visibility: document.visibilityState, active: ae ? `${ae.tagName}#${ae.id}.${String(ae.className).slice(0, 60)}` : '',
+          screen: [screenX, screenY, innerWidth, innerHeight, devicePixelRatio], dropdownItems: all('.rg-dropdown-item').length,
+          listEditor: (all('input.rg-list-editor').map(e => `${e.getAttribute('aria-expanded')} ${e.parentElement.style.cssText}`)[0] || '') };
+        return { dialog: dlg ? scrub(dlg.outerHTML) : '(창 제목을 못 찾음)', page: scrub(document.documentElement.outerHTML), url: location.href, probe: { env, ...(probe || {}) } };
       }, titleRe || '.^');
       fs.writeFileSync(base + '-dialog.html', `<!-- ${d.url} -->\n` + d.dialog);
       fs.writeFileSync(base + '-page.html', d.page);
+      const w = this.win; d.probe.env.win = { focused: w.isFocused(), visible: w.isVisible(), minimized: w.isMinimized(), bounds: w.getBounds(), platform: process.platform };
       fs.writeFileSync(base + '-probe.json', JSON.stringify(d.probe, null, 1));
-      fs.writeFileSync(base + '.png', (await this.win.webContents.capturePage()).toPNG());
+      this.log(`(창 상태: 포커스 ${d.probe.env.hasFocus ? 'O' : 'X'}/${w.isFocused() ? 'O' : 'X'}, ${d.probe.env.visibility}, 드롭다운 항목 ${d.probe.env.dropdownItems}개)`);
+      try { fs.writeFileSync(base + '.png', (await this.win.webContents.capturePage()).toPNG()); } catch (e) { this.log(`(진단 캡처 실패: ${e.message})`); }
       this.log(`(진단 파일 저장: ${base}-dialog.html)`);
       return base;
     } catch (e) { return ''; }
@@ -385,7 +391,8 @@ class Amaranth {
       const vs = rows(g).map((_, i) => rowVals(g, i)).filter(v => v && v['순번'] && !before.includes(v['순번']) && String(v['품의구분'] || '').includes(k));
       return vs.length ? vs[vs.length - 1]['순번'] : null; }, [kind, seqBefore], { timeout: 6000 });
     if (!seq) {
-      await ui.assist(`품의구분이 '${kind}'로 저장되지 않은 것 같아요. 그룹웨어 창을 열어 맨 아래 빈 행의 품의구분을 '${kind}'로 고르고 Enter 3번 누른 뒤 [계속]을 눌러주세요.`);
+      await this.debugDump('kind-fail', '품의서입력');
+      await ui.assist(`품의구분이 '${kind}'로 저장되지 않은 것 같아요. 위 [작업 중인 창 열기]로 뜬 창에서(따로 연 브라우저 말고) 맨 아래 빈 행의 품의구분을 '${kind}'로 고르고 Enter 3번 누른 뒤 [계속]을 눌러주세요.`);
       seq = await p.eval((k, before) => { const g = grid('품의구분'); const vs = rows(g).map((_, i) => rowVals(g, i)).filter(v => v && v['순번'] && !before.includes(v['순번']));
         return vs.length ? vs[vs.length - 1]['순번'] : null; }, kind, seqBefore);
     }
