@@ -1,7 +1,7 @@
 {
   "name": "trip-assistant",
   "productName": "와니의 결재 도우미",
-  "version": "0.3.7",
+  "version": "0.3.8",
   "description": "아마란스10 출장신청서·출장보고서 자동 작성 (레인보우로보틱스)",
   "main": "src/main.js",
   "author": "Rainbow Robotics 개발 2팀",
