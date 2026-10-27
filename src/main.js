@@ -9,6 +9,9 @@ try { process.loadEnvFile(require('path').join(__dirname, '..', '.env')); } catc
 if (process.platform === 'linux' && process.env.APPIMAGE) {
   try { if (require('fs').readFileSync('/proc/sys/kernel/apparmor_restrict_unprivileged_userns', 'utf8').trim() === '1') app.commandLine.appendSwitch('no-sandbox'); } catch (e) { /* 제한 없음 */ }
 }
+// 윈도우: 작업 창은 화면 밖(-32000)에 두는데, 크로미움이 이걸 '가려진 창'으로 보고 페이지를 hidden 으로 바꿔 그리기를 멈춘다
+// → 네이버 자동완성 목록이 안 뜨고 capturePage 가 'Current display surface not available for capture' 로 실패. 가림 계산을 끈다
+if (process.platform === 'win32') { app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion'); app.commandLine.appendSwitch('disable-backgrounding-occluded-windows'); }
 const path = require('path');
 let R = require('./engine/rules');
 let runner = require('./engine/runner');
