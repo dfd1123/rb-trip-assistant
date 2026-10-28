@@ -123,6 +123,11 @@ app.whenReady().then(async () => {
       const html = await w.webContents.executeJavaScript('document.body.innerHTML');
       for (const needle of ['김종완', '홍길동', 'RBY1 과제', 'KAI', 'SDK 래핑 완료<br>실기 검증 3건 통과', '활동 6', '9/32'])
         assert.ok(html.includes(needle), `본문에 '${needle}' 없음`);
+      // 일정은 머리 줄 바로 아래 빈 줄부터 차례로 (머리 줄을 복제해 끼우면 안 됨 — 데이터 줄도 '세부 활동' 칸이 합쳐져 있음)
+      const sched = await w.webContents.executeJavaScript(`(() => { const h = [...document.querySelectorAll('td')].find(td => td.textContent.replace(/\\s/g, '') === '일자');
+        return [...h.parentElement.parentElement.children].slice([...h.parentElement.parentElement.children].indexOf(h.parentElement)).map(tr => tr.textContent.replace(/\\s+/g, ' ').trim()); })()`);
+      assert.equal(sched.filter(t => /^일자/.test(t)).length, 1, '머리 줄이 복제됨: ' + JSON.stringify(sched));
+      assert.deepEqual(sched.slice(1, 7).map(t => (/^\d+\/\d+/.exec(t) || [''])[0]), ['9/27', '9/28', '9/29', '9/30', '9/31', '9/32'], JSON.stringify(sched));
       assert.ok(!/font-style:\s*italic[^>]*>RBY1 과제/.test(html), '과제명이 안내 문구 스타일(빨간 기울임)로 들어감');
       assert.equal((html.match(/checked="checked"/g) || []).length, 1, '출장구분 로봇만 체크');
       assert.ok(html.includes('20261016-60'), '결의 표(자동)는 그대로');

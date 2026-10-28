@@ -19,18 +19,20 @@ function planApply(data, cfg) {
   };
 }
 
+/** 최근 조회값(30일): 자차는 지금 설정한 내 차 기준(차종·연료)으로 조회한 것만 — [자동 작성]도 같은 기준 */
+const cachedFare = (store, cfg, mode, from, to) => { const c = store.getFare(mode, from, to); return c && (mode !== 'car' || c.basis === carBasis({ type: cfg.carType, fuel: cfg.carFuel })) ? c : null; };
 async function runFare(env, { mode, to, from, place = null }) {
   const { cfg, store, ui, log } = env;
   if (mode !== 'car' && mode !== 'transit') return { total: 0, describe: '법인차량은 교통비를 자동 계산하지 않습니다.' };
   if (!to) throw new R.InputError('도착지를 입력해 주세요.');
   const origin = from || cfg.defaultOrigin;
   if (!origin) throw new R.InputError('출발지가 없어요. 설정의 기본 출발지나 교통·경비의 출발지를 넣어 주세요.');
-  const cached = store.getFare(mode, origin, to);
-  if (cached && !env.force && (mode !== 'car' || cached.basis === carBasis({ type: cfg.carType, fuel: cfg.carFuel }))) { log(`교통비(최근 조회값): ${cached.describe}`); return { ...cached, source: 'cache' }; }   // 자차는 연비 8km/L 로 조회한 값만
+  const cached = cachedFare(store, cfg, mode, origin, to);
+  if (cached && !env.force) { log(`교통비(최근 조회값): ${cached.describe}`); return { ...cached, source: 'cache' }; }   // 자차는 연비 8km/L 로 조회한 값만
   const shot = path.join(store.tripsDir, '_fare', `교통비_${mode}_${Date.now()}.png`);
   const r = await lookupFare({ makeWindow: env.makeNaverWindow, mode, origin, dest: to, shotPath: shot, ui, log, debugDir: env.debugDir, creds: env.creds, car: { type: cfg.carType, fuel: cfg.carFuel },
     destPlace: place, places: env.naverKeys ? q => searchPlaces(q, { keys: env.naverKeys, fetch: env.fetch }) : null });
-  store.putFare(mode, origin, to, r);
+  if (r.source !== 'manual') store.putFare(mode, origin, to, r);   // 사람이 직접 넣은 값은 다음 출장에 '최근 조회값'(증빙)으로 쓰지 않는다
   log(`교통비: ${r.describe}`);
   return r;
 }
@@ -45,7 +47,7 @@ async function runPurchase(env, data) {
   const popup = await gw.openForm(R.PURCHASE_FORM);
   const fs = require('fs');
   const shotDataUrl = pu.link && pu.link.shot && fs.existsSync(pu.link.shot) ? `data:image/png;base64,${fs.readFileSync(pu.link.shot).toString('base64')}` : '';   // 페이지 캡처는 본문에 그림으로도, 첨부로도
-  await gw.fillAndKeep(popup, { title: pu.title, probe: '구매목적', payload: purchasePayload(pu, { shotDataUrl }), attachments: [pu.file, pu.link && pu.link.shot].filter(Boolean), save: false,
+  await gw.fillAndKeep(popup, { title: pu.title, probe: '구매목적', payload: purchasePayload(pu, { shotDataUrl }), attachments: [pu.file, shotDataUrl && pu.link.shot].filter(Boolean), save: false,   /* 캡처 파일이 지워졌으면(예전 기록 다시 불러오기) 첨부에서 빼야 파일 넣기가 안 막힘 */
     beforeShow: () => gw.addRecipients(popup, R.PURCHASE_RECIPIENTS, { withDept: true }) });   // 수신및참조까지 다 넣고 나서 창을 띄움
   env.store.addPurchase({ title: pu.title, created: new Date().toISOString(), data, total: pu.total, vendor: pu.vendor.name, items: pu.items.length });   // 다시 불러오기·목록용
   return { title: pu.title };
@@ -59,9 +61,19 @@ async function runPurchaseList(env, { from = '', to = '' } = {}) {
   let docs = [];
   try { docs = (await gw.apiApprovalDocs(r.from.replace(/-/g, ''), r.to.replace(/-/g, ''))).filter(d => d.form === R.PURCHASE_FORM); }
   catch (e) { env.log(`(결재 문서 목록 못 읽음: ${String(e.message).slice(0, 120)})`); }
-  const mine = env.store.purchases();
-  const rows = docs.map(d => ({ docNo: d.docNo, title: d.title, status: d.status, date: d.date, local: mine.find(m => nz(m.title) === nz(d.title)) || null }));
-  for (const m of mine) if (!rows.some(x => x.local === m)) rows.push({ docNo: '', title: m.title, status: '', date: m.created.slice(0, 10), local: m });   // 작성 창만 열고 아직 상신 안 함 (또는 기간 밖)
+  let mine = []; try { mine = env.store.purchases(); } catch (e) { env.log(`(${e.message})`); }
+  // 결재 문서 ↔ 이 PC 기록: 전에 맞춘 문서번호가 있으면 그것, 없으면 같은 제목이면서 문서 날짜 이전에 만든 기록 중 가장 최근 것 (한 기록은 한 문서에만)
+  const used = new Set();
+  // 문서번호 없는 문서는 번호로 맞추지 않음 ('' 끼리 같다고 보면 엉뚱한 기록이 붙음)
+  const pick = d => (d.docNo && mine.find(m => m.docNo === d.docNo)) || mine.filter(m => !m.docNo && !used.has(m) && nz(m.title) === nz(d.title) && String(m.created).slice(0, 10) <= String(d.date || '9999'))
+    .sort((a, b) => String(b.created).localeCompare(String(a.created)))[0] || null;
+  const localOf = new Map();
+  for (const d of [...docs].sort((a, b) => String(a.date).localeCompare(String(b.date)))) {   // 오래된 문서부터 맞춰야 예전 기록이 예전 문서로
+    const m = pick(d); if (!m) continue; used.add(m); localOf.set(d, m);
+    if (!m.docNo && d.docNo) try { env.store.linkPurchase(m.created, d.docNo); } catch (e) { /* 다음에 다시 맞춤 */ }
+  }
+  const rows = docs.map(d => ({ docNo: d.docNo, title: d.title, status: d.status, date: d.date, local: localOf.get(d) || null }));
+  for (const m of mine) if (!rows.some(x => x.local === m)) rows.push({ docNo: m.docNo || '', title: m.title, status: '', date: m.created.slice(0, 10), local: m });   // 작성 창만 열고 아직 상신 안 함 (문서번호가 있으면 조회 기간 밖)
   env.log(`구매의뢰서 ${docs.length}건 (그룹웨어) · 이 PC 기록 ${mine.length}건`);
   return { rows: rows.map(x => ({ ...x, local: x.local ? { created: x.local.created, data: x.local.data } : null })), from: r.from, to: r.to };
 }
@@ -121,7 +133,9 @@ function reportDraft(store, cfg, id) {
     // 정산엔 유류대만 넣는다 (통행료·하이패스는 영수증으로 따로 — 지도 추정값은 증빙이 안 됨)
     expenses: (r.expenses || a.expenses).map(({ item, amount, memo }) => item === 'domestic_transport' && r.fare && r.fare.total && (a.transport.mode !== 'car' || r.fare.basis === carBasis({ type: cfg.carType, fuel: cfg.carFuel }))
       ? (a.transport.mode === 'car' ? R.fuelOnlyExpense(r.fare) : { item, amount: r.fare.total, memo: memo.replace(/ \+ 여유 [\d,]+원/, ''), proofs: r.fare.screenshot ? [r.fare.screenshot] : [] })
-      : { item, amount, memo, proofs: [] }),
+      : item === 'domestic_transport' && /\+ 여유 [\d,]+원/.test(memo || '')   // 지도 조회값이 없으면 신청액에서 여유분은 뺀다 (영수증 없는 돈이 청구될 뻔)
+        ? { item, amount: Math.max(0, amount - Number(/\+ 여유 ([\d,]+)원/.exec(memo)[1].replace(/,/g, ''))), memo: memo.replace(/ \+ 여유 [\d,]+원/, ''), proofs: [] }
+        : { item, amount, memo, proofs: [] }),
     attachments: [],
   };
 }
@@ -132,13 +146,15 @@ function settleLines(rep, cfg, log = () => {}) {
   // 같은 날 식대 영수증 여러 장 → 채주 한 줄 (영수증 날짜 필드로. 직접 쓴 줄은 적요 앞 "10/20" + 출장 연도)
   const year = usedOn.slice(0, 4) || String(new Date().getFullYear());
   const startM = Number(usedOn.slice(5, 7)) || 0;
-  const dated = rep.expenses.map(e => R.vehicleItem(e, rep.transport_mode)).map(e => { if (e.date) return e; const m = /^(\d{1,2})\/(\d{1,2})\b/.exec(e.memo || ''); const y = m && startM && +m[1] < startM ? +year + 1 : year;   // 12/30~1/2 출장의 '1/1' 은 다음 해
-    return { ...e, date: m ? `${y}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}` : '' }; });   // 날짜는 AI 가 읽은 필드 우선, 없으면(직접 쓴 줄) 적요 앞 M/D
+  const endY = Number(([...String(rep.period).matchAll(/(\d{4})[.-]\d{2}[.-]\d{2}/g)].pop() || [])[1]) || +year;   // 기간 끝 날짜의 해
+  const dated = rep.expenses.map(e => R.vehicleItem(e, rep.transport_mode)).map(e => { if (e.date) return e; const m = /^(\d{1,2})\/(\d{1,2})\b/.exec(e.memo || ''); const y = m && startM && +m[1] < startM && endY > +year ? +year + 1 : year;   // 12/30~1/2 출장의 '1/1' 은 다음 해 (해를 넘긴 출장일 때만 — 10월 출장의 '9/28' 예매 영수증은 그해)
+    const d = m ? `${y}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}` : '';
+    return { ...e, date: d && !isNaN(Date.parse(`${d}T00:00:00`)) && new Date(`${d}T00:00:00`).getDate() === +m[2] ? d : '' }; });   // '10/32' 같은 오타는 날짜 없음으로   // 날짜는 AI 가 읽은 필드 우선, 없으면(직접 쓴 줄) 적요 앞 M/D
   const capped = R.capMealRows(dated, cfg.rates);
   capped.filter(e => e.capped).forEach(e => log(`${e.memo}: ${e.paid.toLocaleString('ko-KR')}원 → 식대 규정 한도 ${e.amount.toLocaleString('ko-KR')}원으로 조정`));
   const merged = R.mergeMealRows(capped).sort((a, b) => (a.date || '').localeCompare(b.date || ''));   // 품의 한도는 앞 날짜부터 채움 (뒤 날짜가 깎이거나 빠짐)
   merged.filter(e => e.dup).forEach(e => log(`${e.date} 식대 ${e.dup}건 → 채주 한 줄로 묶음 (${e.amount.toLocaleString('ko-KR')}원, 증빙 ${e.proofs.length}개)`));
-  return merged.map(e => ({ item: e.item, dup: e.dup || 0, label: e.label, pay: e.pay, noVat: e.noVat, amount: e.amount, date: e.date, supply: R.supplyAmount(e.amount, e.pay, e.noVat), vat: R.vatAmount(e.amount, e.pay, e.noVat), memo: e.memo, planDate: R.fundPlanDate(e.pay, { usedOn }), proofs: e.proofs || [] }));
+  return merged.map(e => ({ item: e.item, kind: e.kind || '', dup: e.dup || 0, label: e.label, pay: e.pay, noVat: e.noVat, amount: e.amount, date: e.date, supply: R.supplyAmount(e.amount, e.pay, e.noVat), vat: R.vatAmount(e.amount, e.pay, e.noVat), memo: e.memo, planDate: R.fundPlanDate(e.pay, { usedOn: e.date || usedOn }) /* 법인카드: 그 영수증을 쓴 달 기준 (10/30~11/2 출장의 11/1 영수증 = 12/23) */, proofs: e.proofs || [] }));
 }
 
 /** 출장보고서(정산). 새 품의를 만들지 않고, 승인된 신청 품의로 지출결의를 한다 (사용자가 알려 준 회사 절차):
@@ -338,4 +354,4 @@ async function runDeleteTrip(env, id) {
   return { rows };
 }
 
-module.exports = { settleLines, listRange, runRefundCheck, runProfile, runLoadReport, planApply, runFare, runApply, runPurchase, runPurchaseList, reportDraft, runReport, runLogin, runListBudget, runDeleteBudget, runDeleteTrip };
+module.exports = { cachedFare, settleLines, listRange, runRefundCheck, runProfile, runLoadReport, planApply, runFare, runApply, runPurchase, runPurchaseList, reportDraft, runReport, runLogin, runListBudget, runDeleteBudget, runDeleteTrip };

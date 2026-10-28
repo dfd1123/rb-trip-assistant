@@ -75,7 +75,17 @@ const PARK = process.platform !== 'darwin';
 let gwShown = false;   // 사람이 [작업 중인 창 열기]로 보고 있는 중이면 팝업(문서 보기 등)도 바로 보이게
 function park(w) { if (!w || w.isDestroyed()) return; if (!PARK) return w.hide(); w.setSkipTaskbar(true); w.setPosition(-32000, -32000); if (!w.isVisible()) w.showInactive(); }
 function unpark(w) { if (!w || w.isDestroyed()) return; if (PARK) { w.setSkipTaskbar(false); w.center(); } w.show(); }
-app.on('before-quit', () => { quitting = true; });
+// 작업 중에 끄면: 먼저 취소(신청이면 만들던 품의 정리)하고 멈춘 뒤 끈다 — 그냥 끄면 반쯤 만든 품의가 그룹웨어에 남음 (최대 30초 기다림)
+let quitAfterJob = false;
+app.on('before-quit', e => {
+  if (!quitAfterJob && jobBusy()) {
+    e.preventDefault(); quitAfterJob = true;
+    const j = job; j.cancel();
+    Promise.race([j.done, new Promise(r => setTimeout(r, 30000))]).finally(() => app.quit());
+    return;
+  }
+  quitting = true;
+});
 function gwWindow(show = false) {
   if (gwWin && !gwWin.isDestroyed()) { if (show) showGw(); return gwWin; }
   gwWin = new BrowserWindow({
@@ -128,6 +138,8 @@ function openGwViewer(url) {
 function watchPwPrompt(win) {
   const { Page, sleep } = require('./engine/driver');
   const p = new Page(win);
+  // 그룹웨어 주소일 때만 — 창에서 링크를 따라 다른 사이트로 가면 거기 '비밀번호 입력' 창에 회사 비밀번호를 넣을 뻔 (자가 테스트 2026-10-28)
+  const onGw = () => { try { return new URL(win.webContents.getURL()).origin === new URL(store.config().baseUrl).origin; } catch (e) { return false; } };
   let busy = false;
   const timer = setInterval(async () => {
     if (win.isDestroyed()) return clearInterval(timer);
@@ -135,9 +147,10 @@ function watchPwPrompt(win) {
     try {
       const c = gwCreds();
       const field = () => { const d = dialog('비밀번호 입력'); return d ? all('input[type=password]', d).find(vis) : null; };
-      if (!c || !c.pw || !(await p.eval(`() => { const field = ${field}; return !!field(); }`).catch(() => false))) return;
+      if (!c || !c.pw || !onGw() || !(await p.eval(`() => { const field = ${field}; return !!field(); }`).catch(() => false))) return;
       await p.clickWhere(`() => { const field = ${field}; return field(); }`);
       await p.eval(`() => { const el = (${field})(); el.focus(); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, ''); el.dispatchEvent(new Event('input', { bubbles: true })); }`);
+      if (!onGw()) return;   // 넣기 직전에 한 번 더 (그사이 다른 사이트로 넘어갔을 수 있음)
       await p.type(c.pw);
       if (!(await p.eval(`v => (${field})().value === v`, c.pw))) return;   // 다르게 들어갔으면 건드리지 않음 (사람이 직접)
       await p.clickWhere(`() => { const d = dialog('비밀번호 입력'); return d && all('button', d).find(b => vis(b) && norm(b.textContent) === '확인'); }`);
@@ -163,7 +176,7 @@ function showNaver() { if (naverWin && !naverWin.isDestroyed()) { unpark(naverWi
 // ---------- 작업 1건 (사람 확인 포함) ----------
 class Cancelled extends Error { constructor() { super('취소했어요.'); } }
 class Job {
-  constructor(kind, title) { this.startedAt = Date.now(); this.reported = new Set(); this.kind = kind; this.title = title || kind; this.logs = []; this.state = 'running'; this.result = null; this.error = ''; this.question = null; this._resolve = null; this._reject = null; this.cancelled = false; }
+  constructor(kind, title) { this.id = ++Job.seq; this.startedAt = Date.now(); this.reported = new Set(); this.kind = kind; this.title = title || kind; this.logs = []; this.state = 'running'; this.result = null; this.error = ''; this.question = null; this._resolve = null; this._reject = null; this.cancelled = false; }
   info(msg) {
     if (this.cancelled) throw new Cancelled();
     this.logs.push(...String(msg).split('\n'));
@@ -188,30 +201,44 @@ class Job {
   async askChoice(text, options) { return this._ask('choice', text, options); }   // 고른 번호(0부터), '' 이면 안 고름
   async pause(text) { await this._ask('pause', text); }
   answer(v) { if (this._resolve) { const f = this._resolve; this._resolve = this._reject = null; f(v); } }
-  snapshot(since = 0) { return { kind: this.kind, title: this.title, state: this.state, logs: this.logs.slice(since), next: this.logs.length, question: this.question, result: this.result, error: this.error }; }
+  snapshot(since = 0) { return { id: this.id, kind: this.kind, title: this.title, state: this.state, logs: this.logs.slice(since), next: this.logs.length, question: this.question, result: this.result, error: this.error }; }
 }
+Job.seq = 0;   // 작업 번호 — 화면이 다른(지난) 작업의 상태·질문에 반응하지 않게
 let job = null;
 
 // 화면에 안 보이게 도는 작업(목록 갱신·환원 점검 등). 사람이 시킨 작업이 오면 양보한다 — 전엔 "작업창의 [취소]를 누르라"고 했는데 숨은 작업이라 누를 곳이 없었음
+// 끊어도 되돌릴 게 없는 작업(그룹웨어에 아무것도 안 만듦): 사람 확인을 기다리던 중이어도 새 작업이 오면 취소하고 넘어감
+const PREEMPTIBLE_JOBS = new Set(['fare', 'login', 'receipts', 'po-read', 'url-read']);
 const BACKGROUND_JOBS = new Set(['gw-list', 'gw-profile', 'refund-check', 'purchase-list', 'report-load']);
-async function startJob(kind, fn, title) {
-  const yieldTo = job && ((job.state === 'waiting') || (job.state === 'running' && (job.kind === 'fare' || (BACKGROUND_JOBS.has(job.kind) && !BACKGROUND_JOBS.has(kind)))));
-  if (yieldTo) {   // 사람 입력만 기다리던 작업·교통비 조회(새 조회가 덮어씀)·뒤에서 돌던 작업은 취소하고, 같은 창을 동시에 만지지 않게 멈출 때까지 기다림
+// 시작 요청은 하나씩 차례로: 앞 작업이 멈추길 기다리는 사이 두 번째 요청이 오면 둘 다 새 작업을 만들어 같은 창을 동시에 만졌음 (자가 테스트 2026-10-28).
+// 차례로 처리하면 뒤 요청은 앞 요청이 시작한 작업을 보고 판단한다 (교통비 조회는 마지막 것이 이김)
+let startChain = Promise.resolve();
+function startJob(...a) { const p = startChain.then(() => startJobNow(...a)); startChain = p.catch(() => {}); return p; }
+async function startJobNow(kind, fn, title) {
+  if (quitAfterJob) throw new Error('앱을 끄는 중이에요.');
+  const bg = BACKGROUND_JOBS.has(kind), busy = job && (job.state === 'running' || job.state === 'waiting');
+  // 뒤에서 하는 확인은 사람이 시킨 작업을 절대 끊지 않는다: 도움을 기다리던 신청 작업을 구매 목록 새로고침이 취소해 품의가 지워질 뻔함
+  if (bg && busy && !BACKGROUND_JOBS.has(job.kind)) return { ok: false, skipped: true };
+  // 사람 확인을 기다리는 사람 작업도 다른 작업이 끊지 않는다 (취소되면 만들던 품의를 지움). 되돌릴 게 없는 작업만 끊음
+  if (busy && job.state === 'waiting' && !job.cancelled && !BACKGROUND_JOBS.has(job.kind) && !PREEMPTIBLE_JOBS.has(job.kind)) throw new Error('작업창에서 확인을 기다리는 작업이 있어요. 그 작업을 [계속]하거나 [취소]한 뒤 다시 해 주세요.');
+  const yieldTo = busy && (job.cancelled || job.state === 'waiting' || job.kind === 'fare' || (BACKGROUND_JOBS.has(job.kind) && !bg));
+  if (yieldTo) {   // 교통비 조회(새 조회가 덮어씀)·뒤에서 돌던 작업·취소한 작업은 멈출 때까지 기다림 (같은 창을 동시에 만지지 않게)
     const old = job; old.cancel();
-    await Promise.race([old.done, new Promise(r => setTimeout(r, 20000))]);
-  } else if (job && job.state === 'running') {
-    if (BACKGROUND_JOBS.has(kind)) return { ok: false, skipped: true };   // 뒤에서 하는 확인은 다음에 (알림 안 띄움)
+    const stopped = await Promise.race([old.done.then(() => true), new Promise(r => setTimeout(() => r(false), 20000))]);
+    if (!stopped) { if (bg) return { ok: false, skipped: true }; throw new Error('이전 작업이 아직 정리되지 않았어요. 잠시 뒤 다시 눌러 주세요.'); }   // 정리(품의 삭제 등) 중에 새 작업이 같은 창을 쓰면 안 됨
+  } else if (busy) {
+    if (bg) return { ok: false, skipped: true };   // 뒤에서 하는 확인은 다음에 (알림 안 띄움)
     throw new Error('이전 작업이 아직 진행 중이에요. 작업창의 [취소]를 누른 뒤 다시 시도해 주세요.');
   }
   const j = job = new Job(kind, title);
   const env = { debugDir: app.isPackaged ? path.join(app.getPath('userData'), 'debug') : path.join(__dirname, '..', 'debug'), cfg: store.config(), store, ui: j, log: m => j.info(m), naverKeys: naverKeys(), fetch: net.fetch, gwWindow: () => gwWindow(false), showGw, makeNaverWindow, creds: gwCreds };
   j.done = (async () => {
-    try { j.result = await fn(env); j.state = 'done'; j.info('✔ 완료'); }
+    try { j.result = await fn(env); j.state = 'done'; try { j.info('✔ 완료'); } catch (e) { /* 끝난 뒤 들어온 취소 — 이미 다 함 */ } }
     catch (e) { j.error = e instanceof R.InputError ? `입력 오류: ${e.message}` : e.message; j.state = j.cancelled ? 'cancelled' : 'error';
       if (j.state === 'error' && !(e instanceof R.InputError)) reportJob(j, 'error', e.stack || e.message); }   // 입력 검증 오류는 사람 실수라 안 보냄
     finally { if (j.state !== 'done' && mainWin && !mainWin.isDestroyed()) mainWin.focus(); }   // 성공 시엔 작성 팝업이 앞
   })();
-  return { ok: true };
+  return { ok: true, id: j.id };
 }
 
 // ---------- 실패·막힘 기록을 개발자 슬랙으로 (끌 수 없음. 설정 화면에 알림) ----------
@@ -225,7 +252,9 @@ async function captureWindows() {
   for (const [name, w] of wins) {
     try { out.push({ name: `${name}.png`, data: (await w.webContents.capturePage()).toPNG() }); } catch (e) { /* 캡처 실패 */ }
     try {
-      const frames = await w.webContents.executeJavaScript(`[document.documentElement.outerHTML, ...[...document.querySelectorAll('iframe')].map(f => { try { return f.contentDocument.documentElement.outerHTML; } catch (e) { return ''; } })]`);
+      // 비밀번호 칸은 복제본에서 값을 지운 뒤 HTML 로 (글자 치환은 속성 안의 '>' 등에 뚫림). 아래 scrubHtml 은 한 겹 더
+      const frames = await w.webContents.executeJavaScript(`(() => { const safe = d => { const c = d.documentElement.cloneNode(true); c.querySelectorAll('input[type=password]').forEach(i => i.setAttribute('value', '***')); return c.outerHTML; };
+        return [safe(document), ...[...document.querySelectorAll('iframe')].map(f => { try { return safe(f.contentDocument); } catch (e) { return ''; } })]; })()`);
       out.push({ name: `${name}.html`, data: scrubHtml(`<!-- ${w.webContents.getURL()} -->\n` + frames.filter(Boolean).join('\n<!-- ===== iframe ===== -->\n')) });
     } catch (e) { /* HTML 실패 */ }
   }
@@ -240,7 +269,7 @@ async function reportJob(j, kind, detail) {
     const key = `${kind}:${String(detail).slice(0, 200)}`; if (j.reported.has(key) || j.reported.size >= 5) return; j.reported.add(key);
     const fs = require('fs'), cfg = store.config(), dir = app.isPackaged ? path.join(app.getPath('userData'), 'debug') : path.join(__dirname, '..', 'debug');
     let dumps = [];
-    try { dumps = fs.readdirSync(dir).map(n => path.join(dir, n)).filter(f => /\.(png|html|json)$/.test(f) && fs.statSync(f).mtimeMs >= j.startedAt - 1000 && fs.statSync(f).size < 8e6)
+    try { dumps = fs.readdirSync(dir).map(n => path.join(dir, n)).filter(f => /^\d{4}-\d{2}-\d{2}T[\d-]+Z-.+(-page\.html|-dialog\.html|-probe\.json|\.png)$/.test(path.basename(f)) && fs.statSync(f).mtimeMs >= j.startedAt - 1000 && fs.statSync(f).size < 8e6)
       .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs).slice(0, 12).map(f => ({ name: path.basename(f), data: fs.readFileSync(f) })); } catch (e) { /* 진단 폴더 없음 */ }
     const head = `${kind === 'error' ? '🚨 작업 실패' : '⚠️ 자동화가 막힘 (사람에게 넘김)'} · ${j.title}\n`
       + `${cfg.name || '(이름 없음)'} · ${cfg.budgetDept || '-'} · 계정 ${cfg.lastLoginId || cfg.gwId || '-'} · v${app.getVersion()} · ${process.platform} ${process.arch}\n`
@@ -344,7 +373,8 @@ function builtinAi() {
 }
 function aiSettings(cfg) {
   if (cfg.aiProvider === 'none') return null;                       // 설정에서 '사용 안 함'을 고른 경우
-  if (!cfg.aiKeyEnc) return !cfg.aiProvider || cfg.aiProvider === 'gemini' ? builtinAi() : null;   // 팀 공용 키는 Gemini 만. Claude·OpenAI 는 개인 키 필요
+  const own = cfg.aiKeyEnc && (!cfg.aiKeyFor || cfg.aiKeyFor === cfg.aiProvider);   // 개인 키는 그 키를 넣은 회사에만 (다른 회사로 보내지 않음)
+  if (!own) return !cfg.aiProvider || cfg.aiProvider === 'gemini' ? builtinAi() : null;   // 팀 공용 키는 Gemini 만. Claude·OpenAI 는 개인 키 필요
   if (!cfg.aiProvider) return null;
   try {
     const buf = Buffer.from(cfg.aiKeyEnc, 'base64');
@@ -359,7 +389,8 @@ function encryptKey(key) {
 const fxKey = () => (process.env.OPEN_API_KEY || (() => { try { return require('./engine/builtin-key.json').fxKey; } catch (e) { return ''; } })() || '').trim();
 // 네이버 지역 검색 키 (출장지 자동완성·좌표): 개발 중엔 .env, 배포본엔 builtin-key.json (팀 공용)
 const naverKeys = () => { const b = (() => { try { return require('./engine/builtin-key.json'); } catch (e) { return {}; } })(); const id = (process.env.NAVER_CLIENT_ID || b.naverId || '').trim(), secret = (process.env.NAVER_CLIENT_SECRET || b.naverSecret || '').trim(); return id && secret ? { id, secret } : null; };
-const publicConfig = c => { const { aiKeyEnc, gwPwEnc, ...rest } = c; return { ...rest, fxKeySet: Boolean(fxKey()), placesOn: Boolean(naverKeys()), aiKeySet: Boolean(aiKeyEnc) || Boolean(aiSettings(c)), aiBuiltin: !aiKeyEnc && Boolean(aiSettings(c)), gwSaved: Boolean(c.gwId && gwPwEnc) }; };
+const publicConfig = c => { const { aiKeyEnc, gwPwEnc, ...rest } = c; const own = Boolean(aiKeyEnc) && (!c.aiKeyFor || c.aiKeyFor === c.aiProvider);   // 이 회사에 쓸 개인 키가 있는지
+  return { ...rest, fxKeySet: Boolean(fxKey()), placesOn: Boolean(naverKeys()), aiKeySet: own || Boolean(aiSettings(c)), aiBuiltin: !own && Boolean(aiSettings(c)), gwSaved: Boolean(c.gwId && gwPwEnc) }; };
 
 /** 한 줄 메모 → 신청서. AI 가 있으면 문장/추론은 AI, 금액·출장지 이름은 항상 규칙. */
 /** 한 줄 자동 작성은 템플릿이 있으니 AI 를 오래 기다리지 않는다 (AI 시간 초과 45초 × 모델 2개 = 90초 동안 '작성 중…' 이던 문제) */
@@ -408,7 +439,7 @@ async function quick(memo) {
   if (!data.destination) missing.push('출장지');
   if (source === 'template' && base.missing.includes('사유')) missing.push('사유');
   const t = data.transport;
-  const fare = (t.mode === 'car' || t.mode === 'transit') && t.to ? store.getFare(t.mode, t.from || cfg.defaultOrigin, t.to) : null;
+  const fare = (t.mode === 'car' || t.mode === 'transit') && t.to ? runner.cachedFare(store, cfg, t.mode, t.from || cfg.defaultOrigin, t.to) : null;
   return { data, missing, source, note, fare, meals: meals && { summary: meals.summary, timed: meals.timed } };
 }
 
@@ -461,12 +492,16 @@ async function route(p, body = {}) {
   const cfg = store.config();
   switch (p) {
     case '/api/meta':
-      return { config: publicConfig(cfg), configured: store.hasConfig(), items: Object.fromEntries(Object.entries(R.BUDGET_ITEMS).map(([k, v]) => [k, v[1]])), purchase: { purposes: R.PURCHASE_PURPOSES, projects: R.PURCHASE_PROJECTS },
+      return { config: publicConfig(cfg), configured: store.hasConfig(), items: Object.fromEntries(Object.entries(R.BUDGET_ITEMS).map(([k, v]) => [k, v[1]])), noVat: R.NO_VAT.source, noVatKinds: R.NO_VAT_KINDS, purchase: { purposes: R.PURCHASE_PURPOSES, projects: R.PURCHASE_PROJECTS },
         version: app.getVersion(), dev: !app.isPackaged, providers: Object.fromEntries(Object.entries(AI.PROVIDERS).map(([k, v]) => [k, v])) };
     case '/api/config': {
-      const patch = { ...body };
-      if ('aiKey' in patch) { const k = String(patch.aiKey || '').trim(); delete patch.aiKey; if (k) patch.aiKeyEnc = encryptKey(k); }
-      if (patch.clearAiKey) { patch.aiKeyEnc = ''; delete patch.clearAiKey; }
+      // 화면에서 바꿀 수 있는 설정만 (그룹웨어 주소·저장된 비밀번호 같은 건 화면에서 못 바꿈 — 바뀌면 자동 로그인이 엉뚱한 곳에 비밀번호를 넣을 수 있음)
+      const ALLOWED = ['name', 'budgetDept', 'defaultOrigin', 'rates', 'rank', 'carFuel', 'carType', 'hasCar', 'aiProvider', 'aiModel', 'aiKey', 'clearAiKey'];
+      const patch = Object.fromEntries(Object.entries(body || {}).filter(([k]) => ALLOWED.includes(k)));
+      // 키는 넣은 회사와 같이 저장 — 회사를 바꾸면(사용 안 함을 거쳐도) 그 키는 안 씀 (OpenAI 키가 Anthropic 으로 보내질 뻔 — 자가 테스트 2026-10-28)
+      if ('aiKey' in patch) { const k = String(patch.aiKey || '').trim(); delete patch.aiKey; if (k) { patch.aiKeyEnc = encryptKey(k); patch.aiKeyFor = patch.aiProvider || cfg.aiProvider; } }
+      if (patch.clearAiKey) { patch.aiKeyEnc = ''; patch.aiKeyFor = ''; delete patch.clearAiKey; }
+      if (cfg.aiKeyEnc && !cfg.aiKeyFor && !patch.aiKeyFor && cfg.aiProvider && cfg.aiProvider !== 'none') patch.aiKeyFor = cfg.aiProvider;   // 예전에 저장한 키(회사 표시 없음)는 지금 회사 것
       return publicConfig(store.saveConfig(patch));
     }
     case '/api/ai/test': {
@@ -503,7 +538,11 @@ async function route(p, body = {}) {
     case '/api/update/check': return { ...(await updater.check(!!body.force)), current: app.getVersion() };
     case '/api/update/install': return await updater.install();
     case '/api/copy': clipboard.writeText(String(body.text || '')); return { ok: true };
-    case '/api/open': if (body.path) shell.openPath(body.path); return { ok: true };
+    case '/api/open': {   // 증빙·발주서·캡처 보기만 — 실행 파일 등 다른 건 열지 않음 (화면이 보낸 경로를 그대로 실행하지 않게)
+      const f = String(body.path || ''), ext = path.extname(f).slice(1).toLowerCase();
+      if (f && (PROOF_MIME[ext] || ['docx', 'xlsx', 'bmp', 'tif', 'tiff'].includes(ext))) shell.openPath(f);
+      return { ok: true };
+    }
     case '/api/pick-po': {   // 발주서 1개: PDF·워드·엑셀·이미지
       const r = await dialog.showOpenDialog(mainWin, { title: '발주서·견적서 선택 (PDF·워드·엑셀·이미지 1개)', properties: ['openFile'], filters: [{ name: '발주서', extensions: ['pdf', 'docx', 'xlsx', 'png', 'jpg', 'jpeg', 'webp'] }] });
       return { path: r.canceled ? '' : r.filePaths[0] };
@@ -593,7 +632,7 @@ async function route(p, body = {}) {
     }
     case '/api/purchase/title': return { title: R.purchaseTitle(String(body.tag || ''), String(body.desc || '')) };
     case '/api/job/purchase-list': return startJob('purchase-list', env => runner.runPurchaseList(env, { from: String(body.from || ''), to: String(body.to || '') }), body.title);
-    case '/api/purchase/forget': store.removePurchase(String(body.title || '')); return { ok: true };
+    case '/api/purchase/forget': store.removePurchase(String(body.created || '')); return { ok: true };
     case '/api/job/purchase': { const pu = R.parsePurchase(body.data); assertFilesExist([pu.file].filter(Boolean), '발주서'); return startJob('purchase', env => runner.runPurchase(env, body.data), body.title); }   // 보관·상신은 사람이
     case '/api/job/receipts': {   // 영수증·증빙 여러 개 → AI 가 예산과목·금액·날짜 분류
       const ai = aiSettings(cfg);
@@ -641,7 +680,7 @@ async function route(p, body = {}) {
     case '/api/job/report': { const rep = R.parseReport(body.data); assertFilesExist(rep.expenses.flatMap(e => e.proofs || []), '증빙'); } return startJob('report', env => runner.runReport(env, body.data), body.title);
     case '/api/job/cancel': if (job) job.cancel(); return { ok: true };
     case '/api/job': return job ? job.snapshot(Number(body.since || 0)) : { state: 'none' };
-    case '/api/job/answer': if (job) job.answer(body.value); return { ok: true };
+    case '/api/job/answer': if (job && (!body.id || body.id === job.id)) job.answer(body.value); return { ok: true };   // 다른 작업의 질문에 답이 가지 않게
     default: throw new Error(`알 수 없는 요청: ${p}`);
   }
 }

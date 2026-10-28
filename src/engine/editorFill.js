@@ -78,7 +78,7 @@ const fillForm = (payload) => {
       const w = doc.createTreeWalker(td, NodeFilter.SHOW_TEXT);
       let n, done = false;
       while ((n = w.nextNode())) {
-        if (n.textContent.includes(f.replace[0])) { n.textContent = n.textContent.replace(f.replace[0], f.replace[1]); done = true; }
+        if (n.textContent.includes(f.replace[0])) { n.textContent = n.textContent.replace(f.replace[0], () => f.replace[1]); done = true; }   // 바꿀 글자는 함수로: 넣는 글자의 '$&'·'$$' 를 특수 기호로 해석하지 않게
       }
       if (!done) result.missing.push(`${[].concat(f.label)[0]}:${f.replace[0]}`);
     }
@@ -105,8 +105,10 @@ const fillForm = (payload) => {
       const tbody = headRow.parentElement;
       let row = headRow.nextElementSibling;
       t.rows.forEach((vals, i) => {
-        // 빈 행이 모자라면: 합계 행(colspan) 앞에 바로 위 행을 복제해 끼움, 합계 행이 없으면 맨 뒤에
-        const isSum = r => r && Array.from(r.querySelectorAll('td')).some(td => td.colSpan > 1);
+        // 빈 행이 모자라면: 합계 행 앞에 바로 위 행을 복제해 끼움, 합계 행이 없으면 맨 뒤에.
+        // 합계 행 = 머리 행과 칸 구조(칸 수·합친 칸)가 다른 행. 실제 보고서 일정 표는 데이터 행도 '세부 활동'이 2칸 합쳐져 있어 colspan 만으론 못 가름
+        const shape = r => Array.from(r.querySelectorAll('td')).map(td => td.colSpan).join(',');
+        const isSum = r => r && shape(r) !== shape(headRow);
         if (!row || isSum(row)) {
           const src = row ? row.previousElementSibling : tbody.lastElementChild;
           const clone = src.cloneNode(true);

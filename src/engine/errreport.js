@@ -3,7 +3,8 @@
 // 글(요약)은 채널 메시지로, 작업 기록·화면 캡처·화면 HTML 은 그 메시지의 스레드 파일로. 보내기 실패는 조용히 넘긴다 (작업 흐름을 막지 않음).
 
 const API = 'https://slack.com/api/';
-const scrubHtml = h => String(h || '').replace(/(<input\b[^>]*type="?password"?[^>]*?)\svalue="[^"]*"/gi, '$1 value="***"');   // 비밀번호 칸 값은 지움
+// 비밀번호 칸 값은 지움. 속성 순서(value 가 type 보다 앞)·따옴표 모양과 상관없이
+const scrubHtml = h => String(h || '').replace(/<input\b[^>]*>/gi, t => /\stype=["']?password\b/i.test(t) ? t.replace(/\svalue=("[^"]*"|'[^']*'|[^\s>]+)/gi, ' value="***"') : t);
 
 async function call(f, token, method, body, form = false) {
   const res = await f(API + method, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': form ? 'application/x-www-form-urlencoded' : 'application/json; charset=utf-8' },

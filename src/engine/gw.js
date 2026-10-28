@@ -14,7 +14,8 @@ const RESOLUTION_PATH = '/#/HP/NPC1030/NCA0020';   // 결의서입력: 전송된
 const { capToBudget, planPayees, PAY_MODES } = require('./rules');
 // 확인창(OBTConfirm·'…?' 창) 안의 [확인]/[예] 위치. 없으면 null. 화면 전체에서 '마지막 확인'을 고르면 결의서전송 창 맨 아래 [확인]이 눌려 창이 닫힌다
 // (실제 덤프로 확인: 확인창 버튼이 DOM 에서 창 버튼보다 앞에 있음 — 2026-10-22)
-const CONFIRM_OK = `() => { const d = all('[class*=Confirm_root], [class*=Dialog], .dialog_data, [role=dialog]').filter(x => vis(x) && /하시겠습니까|습니까\\s*\\?|\\?\\s*(취소|확인|예|아니오)/.test(x.innerText || '') && !/OBTDialog_bottomButton/.test(x.className)).pop();
+const CONFIRM_OK = `() => { const m = x => vis(x) && /하시겠습니까|습니까\\s*\\?|\\?\\s*(취소|확인|예|아니오)/.test(x.innerText || '') && !/OBTDialog_bottomButton/.test(x.className);
+  const d = all('[class*=Confirm_root]').filter(m).pop() || all('[class*=Dialog], .dialog_data, [role=dialog]').filter(x => m(x) && (x.innerText || '').length < 300).pop();   // 큰 창(결의서전송) 말고 확인창
   const b = d && all('button, [role=button]', d).filter(b => vis(b) && /^(확인|예)$/.test(norm(b.textContent))).pop(); return b ? center(b) : null; }`;
 const G_PAYEE = '거래처코드';   // 채주내역 그리드 (첫 열)
 const p_wait = async (p, cond, ms) => { const end = Date.now() + ms; while (Date.now() < end) { if (await cond()) return true; await sleep(500); } return false; };
@@ -62,12 +63,13 @@ class Amaranth {
             probe = { found: false, elKeys: el ? Object.keys(el) : [], fibers };
           }
         } catch (e) { probe = { error: e.message }; }
-        const scrub = h => h.replace(/(<input\b[^>]*type="password"[^>]*?)\svalue="[^"]*"/gi, '$1 value="***"');   // 비밀번호 값은 진단 파일에 남기지 않는다
+        // 비밀번호 값은 진단 파일에 남기지 않는다: 복제본의 비밀번호 칸 값을 지운 뒤 HTML 로 (글자 치환은 속성 순서·'>' 에 뚫림)
+        const safe = el => { const c = el.cloneNode(true); (c.matches && c.matches('input[type=password]') ? [c] : []).concat([...c.querySelectorAll('input[type=password]')]).forEach(i => i.setAttribute('value', '***')); return c.outerHTML; };
         const ae = document.activeElement;   // 창 포커스·표시 상태 (윈도우에서 숨긴 창이 포커스를 못 받아 편집기·드롭다운이 안 열리는지 가리려고)
         const env = { hasFocus: document.hasFocus(), visibility: document.visibilityState, active: ae ? `${ae.tagName}#${ae.id}.${String(ae.className).slice(0, 60)}` : '',
           screen: [screenX, screenY, innerWidth, innerHeight, devicePixelRatio], dropdownItems: all('.rg-dropdown-item').length,
           listEditor: (all('input.rg-list-editor').map(e => `${e.getAttribute('aria-expanded')} ${e.parentElement.style.cssText}`)[0] || '') };
-        return { dialog: dlg ? scrub(dlg.outerHTML) : '(창 제목을 못 찾음)', page: scrub(document.documentElement.outerHTML), url: location.href, probe: { env, ...(probe || {}) } };
+        return { dialog: dlg ? safe(dlg) : '(창 제목을 못 찾음)', page: safe(document.documentElement), url: location.href, probe: { env, ...(probe || {}) } };
       }, titleRe || '.^');
       fs.writeFileSync(base + '-dialog.html', `<!-- ${d.url} -->\n` + d.dialog);
       fs.writeFileSync(base + '-page.html', d.page);
@@ -98,6 +100,9 @@ class Amaranth {
   async autoLogin(id, pw) {
     const p = this.page;
     if (!id || !pw) return false;
+    // 그룹웨어 주소(같은 origin)일 때만 비밀번호를 넣는다 — 앞부분만 같은 다른 주소·리다이렉트된 남의 사이트에 넣지 않게
+    const sameOrigin = () => { try { return new URL(p.url()).origin === new URL(this.baseUrl).origin; } catch (e) { return false; } };
+    if (!sameOrigin()) { this.log(`(그룹웨어 주소가 아니라 자동 로그인을 안 해요: ${p.url().slice(0, 60)})`); return false; }
     this.log('저장된 계정으로 그룹웨어에 로그인합니다.');
     const has = what => p.eval(w => !!(w === 'pw' ? loginPw() : loginId()), what);
     // 칸 비우고 넣기 → 정확히 그 값인지 확인 (남아 있던 글자에 붙어 'fdfd1123' 처럼 되는 것 방지). 안 맞으면 Backspace 로 지우고 다시
@@ -107,6 +112,7 @@ class Amaranth {
         await p.clickWhere(pick);
         await p.eval(w => { const el = w === 'pw' ? loginPw() : loginId(); el.focus(); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, ''); el.dispatchEvent(new Event('input', { bubbles: true })); }, which);
         if (t) await p.press('Backspace', 40);
+        if (which === 'pw' && !sameOrigin()) throw new Error('그룹웨어 주소가 아니에요');   // 넣기 직전에도
         await p.type(v);
         if (await p.eval((w, x) => (w === 'pw' ? loginPw() : loginId()).value === x, which, v)) return;
         this.log(`(${which === 'pw' ? '비밀번호' : '아이디'} 칸 값이 달라 다시 넣어요${which === 'pw' ? '' : `: '${await p.eval(() => loginId().value)}'`})`);
@@ -699,7 +705,7 @@ class Amaranth {
           for (let i = 0; i < want.length; i++) { await p.click(box.pts[i]); await p.selectAll(); await p.type(want[i]); await p.key('Enter'); await sleep(400); }
           step('날짜 입력 후', { vals: await p.eval(() => { const lb = all('*').find(e => ownText(e) && vis(e) && norm(e.textContent) === '품의일자');
             let c = lb; for (let i = 0; c && i < 6 && !all('input', c).filter(vis).length; i++) c = c.parentElement; return c ? all('input', c).filter(vis).map(x => x.value) : null; }) });
-          try { await p.clickWhere(() => document.querySelector('#tutorial-conditionPanel-search, [class*=OBTConditionPanel_searchButton]')); } catch (e) { await p.key('Enter'); }
+          try { await p.clickWhere(() => all('#tutorial-conditionPanel-search, [class*=OBTConditionPanel_searchButton]').filter(vis).pop()); } catch (e) { await p.key('Enter'); }
           await sleep(3000);
           idx = await findIdx();
           step('기간 넓힌 뒤', { idx, rows: await p.eval(() => { const g = all('.rg-root').filter(vis)[0]; return g ? rows(g).map((_, i) => rowVals(g, i)) : []; }) });
@@ -832,18 +838,22 @@ class Amaranth {
   }
 
   /** 위쪽 그리드 화면상 i번째 행 체크 (RealGrid2 체크바는 별도 표: tr.rg-row-bar / span.rg-checkbar-checked) */
-  async setRowChecked(i, on, seq = '') {
+  /** 체크바 상태 (실제 표시는 span.rg-checkbar-(un)checked — 숨긴 input.checked 는 안 따라옴). 그리드가 없으면 [] */
+  checkStates(gridHdr) {
+    return this.page.eval(h => { const g = grid(h); if (!g) return []; return all('td.rg-checkbar-cell', g).map(c => {
+      const sp = c.querySelector('[class*=checkbar-checked], [class*=checkbar-unchecked]'), inp = c.querySelector('input[type=checkbox]');
+      return sp ? /checkbar-checked/.test(sp.className) : inp ? inp.checked : /☑/.test(c.textContent); }); }, gridHdr);
+  }
+  /** i번째 줄 체크/해제. 누른 뒤 표시가 바뀌었는지 보고 최대 3번 */
+  async setRowChecked(i, on, seq = '', gridHdr = '품의구분') {
     const p = this.page;
-    const state = () => p.eval(k => { const g = grid('품의구분'); const c = all('td.rg-checkbar-cell', g)[k]; if (!c) return null;
-      const inp = c.querySelector('input[type=checkbox]'); const sp = c.querySelector('[class*=checkbar-checked], [class*=checkbar-unchecked]');
-      return sp ? /checkbar-checked/.test(sp.className) : inp ? inp.checked : /☑/.test(c.textContent); }, i);
     for (let t = 0; t < 3; t++) {
-      if ((await state()) === on) return;
+      if ((await this.checkStates(gridHdr))[i] === on) return;
       // 실제 체크바: 숨긴 input(display:none) → 보이는 span.rg-checkbar-(un)checked → 숨긴 label 순. 보이는 것만 클릭
-      await p.clickWhere(k => { const g = grid('품의구분'); const c = all('td.rg-checkbar-cell', g)[k]; return c && (all('span, label, input', c).find(vis) || c); }, i);
-      await sleep(300);
+      await p.clickWhere((h, k) => { const g = grid(h); const c = g && all('td.rg-checkbar-cell', g)[k]; return c && (all('span, label, input', c).find(vis) || c); }, gridHdr, i);
+      await sleep(400);
     }
-    if ((await state()) !== on) throw new Error(`순번 ${seq} 행을 ${on ? '체크' : '해제'}하지 못했습니다.`);
+    if ((await this.checkStates(gridHdr))[i] !== on) throw new Error(`${seq ? `순번 ${seq}` : `${i + 1}번째`} 행을 ${on ? '체크' : '해제'}하지 못했습니다.`);
   }
 
   /** key 품의 행이 화면에 보이게 스크롤하고 화면상 행 번호를 돌려준다 */
@@ -857,7 +867,7 @@ class Amaranth {
     const b = await box(); if (!b) return false;
     if (b[2] !== ym) { await p.click(b[0]); await p.selectAll(); await p.type(ym.replace('-', '')); await p.key('Enter'); await sleep(400); }
     if (String(Number(b[3])) !== String(Number(day))) { await p.click(b[1]); await p.selectAll(); await p.type(String(Number(day))); await p.key('Enter'); await sleep(300); }
-    try { await p.clickWhere(() => document.querySelector('#tutorial-conditionPanel-search, [class*=OBTConditionPanel_searchButton]')); } catch (e) { await p.key('Enter'); }
+    try { await p.clickWhere(() => all('#tutorial-conditionPanel-search, [class*=OBTConditionPanel_searchButton]').filter(vis).pop()); } catch (e) { await p.key('Enter'); }
     await sleep(1500);
     return true;
   }
@@ -966,7 +976,7 @@ class Amaranth {
         const ins = c ? all('input', c).filter(vis) : []; return ins.length ? center(ins[0]) : null; });
       if (box) {
         await p.click(box); await p.selectAll(); await p.type(ym.replace('-', '') + '01'); await p.key('Enter'); await sleep(400);
-        try { await p.clickWhere(() => document.querySelector('#tutorial-conditionPanel-search, [class*=OBTConditionPanel_searchButton]')); } catch (e) { await p.key('Enter'); }
+        try { await p.clickWhere(() => all('#tutorial-conditionPanel-search, [class*=OBTConditionPanel_searchButton]').filter(vis).pop()); } catch (e) { await p.key('Enter'); }
         await sleep(2500);
         ri = await find();
       }
@@ -980,8 +990,9 @@ class Amaranth {
     }
     const v = await this.rowVals('품의구분', ri);
     if (!/승인완료/.test(v['진행상태'] || '')) throw new Error(`신청 품의(순번 ${seq})가 아직 '${v['진행상태'] || v['결재상태'] || '?'}' 상태예요. 신청이 승인완료돼야 보고(정산)를 할 수 있어요.`);
-    await this.checkOnly('품의구분', ri);
+    await this.checkOnly('품의구분', ri, { noAssist });
     await sleep(300);
+    this.approvedTotal = amountOf(v['총금액']);   // 품의 총금액 — 전송된 결의가 다 썼는지(환원할 게 있는지) 판단
     this.log(`신청 품의 선택: ${ym}-${day} 순번 ${seq} (${v['총금액']}원)`);
   }
 
@@ -1020,28 +1031,36 @@ class Amaranth {
   /** 전송된 결의면 { ok, resNo } (환원이 빠졌으면 [환원]만 다시). 아니면 null — 아무것도 안 함 */
   /** 그리드(gridHdr)에서 k번째 줄만 체크: 다른 줄에 남아 있던 체크(사람이 전에 해 둔 것 등)는 풀어 준다.
    *  체크 칸은 데이터 줄(tr) 안이 아니라 옆의 tr.rg-row-bar 에 있어 그리드 안 td.rg-checkbar-cell 순서 = 줄 순서 */
-  async checkOnly(gridHdr, k, { fresh = false } = {}) {
-    const p = this.page;
-    const state = () => p.eval(h => { const g = grid(h); return all('td.rg-checkbar-cell', g).map(c => { const i = c.querySelector('input[type=checkbox]'); return i ? i.checked : /(^|\s)checked/.test(c.textContent || ''); }); }, gridHdr);
-    const toggle = async i => { await p.clickWhere((h, i) => { const g = grid(h); const c = all('td.rg-checkbar-cell', g)[i]; return c && (all('span, label, input', c).find(vis) || c); }, gridHdr, i); await sleep(400); };
-    let st = await state();
-    for (let i = 0; i < st.length; i++) if (i !== k && st[i]) { await toggle(i); this.log(`  (다른 줄 ${i + 1} 체크 풀음)`); }
-    st = await state();
-    if (fresh && st[k]) { await toggle(k); st = await state(); }   // 이미 체크돼 있으면 풀었다가 다시 (그대로 두면 그룹웨어가 선택으로 안 받는 화면이 있음)
-    if (!st[k]) await toggle(k);
-    st = await state();
-    if (!st[k] || st.some((on, i) => on && i !== k)) this.log(`  (체크 상태 확인 못 함: ${st.map((on, i) => on ? i + 1 : '').filter(Boolean).join(',') || '없음'} 체크됨)`);
+  /** k번째 줄만 체크 (다른 줄은 해제). fresh: 이미 체크돼 있어도 풀었다가 다시 (그대로 두면 [결재상신]이 안 먹는 화면이 있음).
+   *  끝내 안 되면 사람에게 — 두 줄이 체크된 채로 넘어가면 그룹웨어가 "한 건의 품의서만 전송할 수 있습니다"로 막음 (2026-10-28) */
+  async checkOnly(gridHdr, k, { fresh = false, noAssist = false } = {}) {
+    try {
+      const st = await this.checkStates(gridHdr);
+      for (let i = 0; i < st.length; i++) if (i !== k && st[i]) { await this.setRowChecked(i, false, '', gridHdr); this.log(`  (다른 줄 ${i + 1} 체크 풀음)`); }
+      if (fresh && st[k]) await this.setRowChecked(k, false, '', gridHdr);
+      await this.setRowChecked(k, true, '', gridHdr);
+      const now = await this.checkStates(gridHdr);
+      if (now.some((on, i) => on !== (i === k))) throw new Error(`${now.map((on, i) => on ? i + 1 : '').filter(Boolean).join(',') || '없음'} 체크됨`);
+    } catch (e) {
+      if (/창이 닫혔/.test(e.message) || noAssist) throw e;   // 뒤에서 하는 점검은 사람에게 묻지 않고 다음에 다시
+      await this.debugDump('check-only', '');
+      await this.ui.assist(`목록에서 ${k + 1}번째 줄만 체크하지 못했어요(${e.message}). [작업 중인 창 열기]에서 그 줄만 체크(다른 줄은 해제)하고 [계속]을 눌러 주세요.`);
+    }
   }
   /** 결의내역 ri 줄 체크 → 버튼(label) → 확인 창(최대 2개) */
   async pressResButton(ri, label) {
     const p = this.page;
     await this.checkOnly('결의구분', ri);
     await sleep(300);
-    await p.clickWhere(l => all('button').filter(b => vis(b) && norm(b.textContent) === l).pop(), label);
+    // 결의내역 그리드가 든 창 안의 버튼만 (창이 닫혔는데 아래 품의서승인 화면의 [삭제]를 누르면 안 됨)
+    await p.clickWhere(l => { const g = grid('결의구분'); const hit = c => all('button', c).filter(b => vis(b) && norm(b.textContent) === l);
+      let c = g; while (c && !hit(c).length) c = c.parentElement; return c ? hit(c).pop() : null; }, label);
     await sleep(1200);
     // "삭제하시겠습니까?" 같은 확인 창: 그 창 안의 [확인]만 (결의서전송 창 맨 아래 [확인]을 누르면 안 됨 — 2026-10-22 삭제가 안 된 원인)
     for (let i = 0; i < 2; i++) {
-      const ok = await p.eval(() => { const d = all('[class*=Dialog], .dialog_data, [role=dialog], [class*=Confirm_root], [class*=Alert_root]').filter(x => vis(x) && /하시겠습니까|습니까\?|\?/.test(x.innerText || '')).pop();
+      // 진짜 확인창(Confirm·Alert)부터. 없을 때만 작은 창 — 적요·거래처비고에 '?'가 든 결의서전송 창 자체를 확인창으로 보면 맨 아래 [확인]이 눌려 창이 닫힘
+      const ok = await p.eval(() => { const m = x => vis(x) && /하시겠습니까|습니까\?|\?/.test(x.innerText || '');
+        const d = all('[class*=Confirm_root], [class*=Alert_root]').filter(m).pop() || all('[class*=Dialog], .dialog_data, [role=dialog]').filter(x => m(x) && (x.innerText || '').length < 300).pop();
         const b = d && all('button, [role=button]', d).filter(b => vis(b) && /^(확인|예)$/.test(norm(b.textContent))).pop(); return b ? center(b) : null; });
       if (!ok) break; await p.click(ok); await sleep(1500);
     }
@@ -1052,6 +1071,7 @@ class Amaranth {
   async keepRefundIfSent(res, readRes, pressRefund, isRefund, { offerRedo = false } = {}) {
     const sent = res.find(v => v['결의번호'] && /지출결의서/.test(v['결의구분'] || ''));
     if (!sent) return null;
+    this.lastSent = { no: sent['결의번호'], amount: Number(String(sent['결의금액'] || '').replace(/[^\d]/g, '')) || 0, purpose: String(sent['집행용도'] || '') };   // 결의서입력에서 이 결의를 금액으로 찾게 (같은 날 다른 출장 결의와 헷갈리지 않게)
     const ui = this.ui;
     if (offerRedo && typeof ui.confirm === 'function' && await ui.confirm(`이미 전송된 정산 결의(${sent['결의번호']}, ${sent['결의금액'] || ''}원)가 있어요.\n채주를 다시 넣을까요? [예]를 누르면 전송취소 → 결의 줄 삭제 → 새로 입력해요.\n(이 결의로 이미 결재를 올렸다면 [아니오])`)) {
       try {
@@ -1076,6 +1096,9 @@ class Amaranth {
       }
     }
     this.log(`이미 전송된 결의(${sent['결의번호']})가 있어 결의서전송은 건너뛰어요.`);
+    // 품의를 다 쓴 결의는 환원할 게 없다 (정산 때도 [환원]을 안 누름) → 품의 총금액 − 결의금액 이 남을 때만
+    const total = this.approvedTotal || 0;   // 품의서승인 목록의 총금액 (예산내역 그리드 합계는 화면에 그려진 줄만이라 안 믿음). 모르면 전처럼 [환원]
+    if (total && amountOf(sent['결의금액']) >= total) { this.log('품의 금액을 다 써서 환원할 게 없어요.'); return { ok: true, resNo: sent['결의번호'] }; }
     if (!res.some(isRefund)) {
       this.log('환원이 빠져 있어 [환원]을 다시 눌러요 (남은 품의 금액 돌려주기).');
       try { await pressRefund(); if (!(await readRes()).some(isRefund)) throw new Error('환원 줄이 안 생겼어요'); this.log('✔ [환원] 다시 했어요.'); }
@@ -1119,12 +1142,19 @@ class Amaranth {
       if (ok) { await p.click(ok); await sleep(1000); }
     };
     // 0) 이미 [전송]한 결의가 있으면 결의서전송은 끝난 것 — 아무것도 바꾸지 않는다 ([환원취소] 금지). 환원이 빠져 있으면 다시 [환원]만
-    const first = await readRes();
+    // 결의내역이 늦게 그려질 수 있다: 두 번 연달아 같게 읽힐 때까지 (느린 PC에서 빈 목록으로 보고 넘어가면 전송된 결의에 [환원취소]를 누를 뻔 — 자가 테스트 2026-10-28)
+    let first = await readRes(); await sleep(500);
+    await p_wait(p, async () => { const r = await readRes(); const same = JSON.stringify(r) === JSON.stringify(first); first = r; return same; }, 4000);
+    const isSent = r => r.some(v => v['결의번호'] && /지출결의서/.test(v['결의구분'] || ''));   // 환원 줄엔 전송 뒤에도 결의번호가 안 붙는다 → 지출결의서로만 판단
     const done = await this.keepRefundIfSent(first, readRes, pressRefund, isRefund, { offerRedo: true });
     if (done) return done;
     // 0-1) 전송 전에 눌러 둔 [환원]이 있으면 먼저 [환원취소]. 채주를 다 넣은 뒤 마지막에 다시 환원한다
     // 다시 넣기(전송취소·삭제)를 했으면 줄 위치가 바뀌었으니 새로 읽는다 (예전 목록의 줄 번호로 누르면 엉뚱한 줄)
     let hi = (await readRes()).findIndex(v => isRefund(v) && !v['결의번호']);
+    if (hi >= 0 && isSent(await readRes())) {   // 누르기 직전 한 번 더: 전송된 결의면 [환원취소] 절대 안 함
+      const d = await this.keepRefundIfSent(await readRes(), readRes, pressRefund, isRefund, { offerRedo: true }); if (d) return d;
+      hi = (await readRes()).findIndex(v => isRefund(v) && !v['결의번호']);   // 다시 넣기로 전송취소·삭제했으면 줄이 바뀜
+    }
     if (hi >= 0) {
       this.log('전에 해 둔 환원이 있어 [환원취소]부터 해요.');
       try {
@@ -1139,7 +1169,7 @@ class Amaranth {
 
     // 1) 결의내역: 아직 전송 안 한 지출결의서 줄이 있으면 그 줄, 없으면 빈 줄에 새로
     let res = await readRes();
-    let ri = res.findIndex(v => v['순번'] && /지출결의서/.test(v['결의구분'] || ''));
+    let ri = res.findIndex(v => v['순번'] && /지출결의서/.test(v['결의구분'] || '') && !v['결의번호']);   // 전송된 결의는 지우지 않는다
     if (ri >= 0) {   // 전송 안 한 지출결의서 줄이 남아 있으면(전에 하다 만 것) 이어 쓰지 않고 지우고 새로 — 옛 채주 줄이 섞이지 않게 (사용자 요청 2026-10-22)
       this.log(`전에 만든 지출결의서 줄(순번 ${res[ri]['순번']})은 [삭제]하고 새로 넣어요.`);
       try {
@@ -1153,7 +1183,7 @@ class Amaranth {
         await this.debugDump('settle-delete-res', '결의서전송');
         await ui.assist(`전에 만든 지출결의서 줄을 못 지웠어요(${e.message}). [작업 중인 창 열기]에서 결의내역의 그 줄을 체크하고 [삭제]한 뒤 [계속]을 눌러 주세요.`);
       }
-      res = await readRes(); ri = res.findIndex(v => v['순번'] && /지출결의서/.test(v['결의구분'] || ''));
+      res = await readRes(); ri = res.findIndex(v => v['순번'] && /지출결의서/.test(v['결의구분'] || '') && !v['결의번호']);
     }
     if (ri < 0) {
       ri = res.findIndex(v => !v['순번']);
@@ -1182,6 +1212,7 @@ class Amaranth {
     const budgets = await p.eval(() => { const g = grid('결제수단'); return rows(g).map((_, i) => rowVals(g, i) || {}).filter(v => v['예산과목']); });
     const failed = [];   // 저장 확인이 안 된 채주 줄
     const { plan, left } = planPayees(budgets, lines);   // 같은 예산과목 영수증 여러 장 = 그 예산 줄 아래 채주 여러 줄 (식대 4일치 등)
+    lines.filter(l => Number(l.amount) === 0).forEach(l => this.log(`${l.memo || l.label}: 0원이라 채주로는 안 넣어요`));
     for (const pb of plan) {
       if (!pb.lines.length) { this.log(`${pb.label}: 쓴 돈 없음 → 환원으로 전액 돌려줌`); continue; }
       const pays = [...new Set(pb.lines.map(l => l.pay || 'personal'))];
@@ -1194,7 +1225,7 @@ class Amaranth {
       try { await this.pickDropdown('결제수단', pb.index, '결제수단', mode.method); } catch (e) { await ui.assist(`결제수단 선택 실패(${e.message}). ${pb.label} 예산 줄 결제수단을 '${mode.method}'로 골라 주세요.`); }
       try { await this.pickDropdown('결제수단', pb.index, '과세구분', mode.tax); } catch (e) { await ui.assist(`과세구분 선택 실패(${e.message}). ${pb.label} 예산 줄 과세구분을 '${mode.tax}'로 골라 주세요.`); }
       pb.lines.filter(l => l.cut).forEach(l => this.log(`  ${l.memo || pb.label}: 품의 한도 ${pb.limit.toLocaleString('ko-KR')}원이라 ${l.cut.toLocaleString('ko-KR')}원 깎아 ${l.amount.toLocaleString('ko-KR')}원만 청구`));
-      if (pb.dropped) this.log(`  한도를 다 써서 영수증 ${pb.dropped}건은 청구에서 뺐어요 (증빙은 보고서에 그대로 첨부)`);
+      if (pb.dropped) this.log(`  한도를 다 써서 영수증 ${pb.dropped}건은 청구에서 뺐어요 (청구 안 한 영수증은 첨부도 안 해요)`);
       await this.selectBudgetRow(pb.index, pb.label);   // 이 예산 줄 선택 → 아래 채주내역이 이 줄 것 (선택 확인까지)
       await this.deleteStalePayees(payee, pb.lines);   // 전에 넣어 둔 다른 채주 줄은 지움 (남겨 두면 한도 넘어 그룹웨어가 "채주내역 등록/수정중 오류")
       for (const [k, l] of pb.lines.entries()) {
@@ -1207,10 +1238,22 @@ class Amaranth {
     }
     // 저장 확인: 예산 줄을 다시 골라 채주가 남아 있는지 (화면에만 있던 값은 다른 줄을 고르면 사라진다)
     for (const pb of plan.filter(x => x.lines.length && !x.manual)) {
+      // 같은 줄을 다시 눌러선 채주가 새로 안 그려진다 → 다른 예산 줄을 갔다 와야 저장 안 된 값이 사라져 보임 (채주 넣은 줄이 하나뿐일 때 확인이 헛돌았음)
+      const other = budgets.findIndex((_, i) => i !== pb.index);
+      if (other >= 0) await this.selectBudgetRow(other, '다른 줄').catch(() => {});
       await this.selectBudgetRow(pb.index, pb.label);
       let got = 0; for (const l of pb.lines) if ((await this.payeeRow({ payee, memo: l.memo, supply: l.supply })) >= 0) got++;   // 줄마다 내용으로 찾기 (보이는 줄만 그려져서 개수 세기는 안 믿음)
       this.log(`저장 확인 ${pb.label}: 채주 ${got}/${pb.lines.length}줄`);
       if (got < pb.lines.length) failed.push(`${pb.label} (저장 ${got}/${pb.lines.length})`);
+    }
+    // 사람에게 직접 넣게 한 줄(개인경비·법인카드 섞임): 채주가 한 줄이라도 들어갔는지는 본다 — [계속]만 누르면 빈 채로 환원·전송될 뻔
+    for (const pb of plan.filter(x => x.manual)) {
+      const other = budgets.findIndex((_, i) => i !== pb.index);
+      if (other >= 0) await this.selectBudgetRow(other, '다른 줄').catch(() => {});
+      await this.selectBudgetRow(pb.index, pb.label);
+      const n = await p.eval(() => { const g = grid('거래처코드'); return g ? rows(g).map((_, i) => rowVals(g, i) || {}).filter(v => String(v['거래처명'] || '').trim()).length : 0; });
+      this.log(`저장 확인 ${pb.label}: 직접 넣은 채주 ${n}줄`);
+      if (!n) failed.push(`${pb.label} (직접 넣을 채주가 없음)`);
     }
     if (left.length) await ui.assist(`신청 품의에 없는 예산과목이라 못 넣은 경비가 있어요: ${left.map(l => `${l.label} ${l.supply.toLocaleString('ko-KR')}원`).join(', ')}. 그룹웨어에서 직접 처리해 주세요.`);
 
@@ -1226,6 +1269,9 @@ class Amaranth {
       this.log('[환원] 눌렀어요');
     } catch (e) { if (/창이 닫혔/.test(e.message)) throw e; await this.debugDump('settle-refund', '결의서전송'); await ui.assist(`[환원]을 못 했어요(${e.message}). [작업 중인 창 열기]에서 결의내역의 [환원]을 누르고 환원 줄이 생기면 [계속]을 눌러 주세요.`); }
     await this.debugDump('settle-done', '결의서전송');
+    // 환원이 필요했는데 끝내 환원 줄이 없으면(도움 요청 뒤 [계속]만 누름) 자동 [전송]하지 않는다 — 남은 품의 금액이 안 돌아감
+    const needRefund = !plan.every(pb => pb.lines.reduce((a, l) => a + l.amount, 0) >= pb.limit);
+    if (!failed.length && needRefund && !(await readRes()).some(v => isRefund(v) && !v['결의번호'])) { this.log('환원 줄이 없어 [전송]은 하지 않았어요.'); return { ok: false }; }
     return { ok: !failed.length };
   }
 
@@ -1489,15 +1535,17 @@ class Amaranth {
     const sent = this.lastSent && this.lastSent.no === resNo ? this.lastSent : null;
     const find = () => p.eval((y, d, q, amt, purpose) => { const g = grid('결의구분'); const num = s => Number(String(s || '').replace(/[^\d]/g, '')) || 0;
       const vs = rows(g).map((_, i) => ({ i, v: rowVals(g, i) || {} }));
-      const cand = vs.filter(({ v }) => v['결의연월'] === y && String(Number(v['결의일'])) === d && /지출결의서/.test(v['결의구분'] || '') && /상신대기/.test(v['결재상태'] || '')
+      const cand = vs.filter(({ v }) => v['결의연월'] === y && String(Number(v['결의일'])) === d && /지출결의서/.test(v['결의구분'] || '')
         && (!purpose || norm(v['집행용도'] || '').startsWith(norm(purpose).slice(0, 10))) && (!amt || num(v['총금액']) === amt));
-      const hit = cand.find(({ v }) => v['순번'] === q) || cand[cand.length - 1];
+      const wait = cand.filter(({ v }) => /상신대기/.test(v['결재상태'] || ''));   // 상신대기 우선. 없으면 아래에서 '이미 결재 중' 이라고 알려 줌
+      const pool = wait.length ? wait : cand;
+      const hit = pool.find(({ v }) => v['순번'] === q) || pool[pool.length - 1];
       return hit ? hit.i : -1; }, ym, day, seq, sent ? sent.amount : 0, sent ? sent.purpose : '');
     let ri = await find();
     // 화면을 막 열면 목록이 안 불려 와 빈 줄만 있을 때가 있다 (2026-10-28 최병관) → 돋보기(조회)를 눌러 다시 불러와 찾는다
     for (let i = 0; ri < 0 && i < 3; i++) {
       this.log('목록에 결의가 안 보여 [조회]를 다시 눌러요.');
-      try { await p.clickWhere(() => document.querySelector('#tutorial-conditionPanel-search, [class*=OBTConditionPanel_searchButton]')); } catch (e) { await p.key('Enter'); }
+      try { await p.clickWhere(() => all('#tutorial-conditionPanel-search, [class*=OBTConditionPanel_searchButton]').filter(vis).pop()); } catch (e) { await p.key('Enter'); }
       ri = (await p_wait(p, async () => (await find()) >= 0, 6000)) ? await find() : -1;
     }
     if (ri < 0) {

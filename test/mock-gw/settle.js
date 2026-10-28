@@ -38,7 +38,7 @@
         + `</div></div>${opts.vr && rows.length > opts.vr ? `<div class="rg-vscrollbar" style="position:relative;width:14px;height:60px;background:#eee"><div class="rg-scrolltrack" style="position:absolute;inset:0"></div><div class="rg-scrollthumb" style="position:absolute;left:0;width:14px;height:20px;top:${Math.round(40 * (opts.vy || 0) / Math.max(1, rows.length - opts.vr))}px;background:#999"></div></div>` : ''}<div class="rg-hscrollbar" style="height:14px;position:relative;background:#eee;width:${opts.vw}px"><div class="rg-scrolltrack" style="position:absolute;inset:0"></div><div class="rg-scrollthumb" style="position:absolute;top:0;height:14px;width:${tw}px;left:${tl}px;background:#999"></div></div></div>`;
     }
     return `<div class="rg-root" id="${gid}"><table class="rg-header"><tr><td class="rg-head-cell rg-checkbar-head"></td>${cols.map(c => `<td class="rg-header-cell"><span class="rg-header-renderer">${c}</span></td>`).join('')}</tr></table>
-      <table class="rg-body">${(opts.vr ? rows.map((r, i) => [r, i]).slice(opts.vy || 0, (opts.vy || 0) + opts.vr) : rows.map((r, i) => [r, i])).map(([r, i]) => `<tr class="rg-data-row${opts.focus === i ? ' rg-focused-row' : ''}" data-g="${gid}" data-r="${i}"><td class="rg-checkbar-cell" data-g="${gid}" data-i="${i}"><input type="checkbox" class="rg-checkbox"${ck.has(i) ? ' checked' : ''}></td>${cols.map(c => `<td class="rg-data-cell" data-g="${gid}" data-r="${i}" data-c="${c}"><div class="rg-renderer">${esc(r[c] ?? '')}</div></td>`).join('')}</tr>`).join('')}</table></div>`;
+      <table class="rg-body">${(opts.vr ? rows.map((r, i) => [r, i]).slice(opts.vy || 0, (opts.vy || 0) + opts.vr) : rows.map((r, i) => [r, i])).map(([r, i]) => `<tr class="rg-data-row${opts.focus === i ? ' rg-focused-row' : ''}${ck.has(i) ? ' rg-checked-row' : ''}" data-g="${gid}" data-r="${i}"><td class="rg-checkbar-cell" data-g="${gid}" data-i="${i}"><input type="checkbox" class="rg-checkbox" style="display:none"><span class="rg-checkbar-${ck.has(i) ? 'checked' : 'unchecked'}" style="display:inline-block;width:12px;height:12px;border:1px solid #888${ck.has(i) ? ';background:#36c' : ''}"></span></td>${cols.map(c => `<td class="rg-data-cell" data-g="${gid}" data-r="${i}" data-c="${c}"><div class="rg-renderer">${esc(r[c] ?? '')}</div></td>`).join('')}</tr>`).join('')}</table></div>`;
   }
   function confirmBox(msg, onOk) {
     const d = document.createElement('div'); d.className = 'OBTConfirm_root'; d.setAttribute('data-orbit-component', 'OBTConfirm');
@@ -73,7 +73,7 @@
     A.rows = shown;
     $('#app').innerHTML = css + `<div class="s-root"><h3>품의서승인(복수)</h3><div><span>품의일자</span> <span><input type="text" id="sFrom" value="${from}"> ~ <input type="text" value="${today().replace(/-/g, '')}"></span> <button class="OBTConditionPanel_searchButton__x" id="sFind">조회</button> <button id="sOpen">결의서전송/취소</button></div>${grid('appr', TOPC, shown, { check: A.check })}</div>`;
     $('#sFind').onclick = () => { A.from = $('#sFrom').value.replace(/\D/g, '').slice(0, 8) || monthStart(); A.check.clear(); approvePage(); };
-    $('#sOpen').onclick = () => { const k = [...A.check][0]; if (k == null) return alertBox('품의를 선택해 주세요.'); openTransfer(A.rows[k]); };
+    $('#sOpen').onclick = () => { const k = [...A.check][0]; if (k == null) return alertBox('품의를 선택해 주세요.'); if (A.check.size > 1) return alertBox('한 건의 품의서만 전송할 수 있습니다.'); openTransfer(A.rows[k]); };   // 실제처럼 두 건 이상 체크면 막음
   }
 
   // ---------- 결의서전송/취소 창 ----------
@@ -198,10 +198,12 @@
 
   // ---------- 결의서입력 ----------
   const RLC = ['결의연월', '결의일', '순번', '결의구분', '집행용도', '총금액', '결재상태', '결재문서번호', '진행상태'];
-  let RL = { check: new Set() };
+  // 실제처럼: resLazy 면 화면을 막 열었을 땐 목록이 안 불려 옴([조회]를 눌러야 나옴), resPreChecked 면 첫 줄이 체크돼 '보이지만' 선택으론 안 잡힘 (풀었다 다시 체크해야 됨 — 2026-10-28)
+  let RL = { check: new Set(), vis: new Set(), loaded: true };
   function resolutionPage() {
-    $('#app').innerHTML = css + `<div class="s-root"><h3>결의서입력</h3>${grid('rl', RLC, [...T.resList, { 결의연월: today().slice(0, 7), 결의일: String(Number(today().slice(8))) }], { check: RL.check })}</div>
+    $('#app').innerHTML = css + `<div class="s-root"><h3>결의서입력</h3><div style="display:none"><button id="tutorial-conditionPanel-search" class="OBTConditionPanel_searchButton">조회</button></div><button id="tutorial-conditionPanel-search" class="OBTConditionPanel_searchButton">조회</button>${grid('rl', RLC, [...(RL.loaded ? T.resList : []), { 결의연월: today().slice(0, 7), 결의일: String(Number(today().slice(8))) }], { check: RL.vis })}</div>
       <div class="sbar"><button id="sAppr">결재상신</button></div>`;
+    document.querySelectorAll('#tutorial-conditionPanel-search')[1].onclick = () => { RL.loaded = true; resolutionPage(); };   // 실제처럼 앞의 것은 숨은 이전 화면의 [조회]
     $('#sAppr').onclick = () => {
       const rows = [...RL.check].map(i => T.resList[i]).filter(Boolean);
       if (!rows.length) return alertBox('결의서를 선택해 주세요.');
@@ -225,6 +227,7 @@
     const cb = e.target.closest('td.rg-checkbar-cell');
     if (cb) {
       const g = cb.dataset.g, i = +cb.dataset.i, set = g === 'appr' ? A.check : g === 'rl' ? RL.check : g === 'res' ? D.resCheck : g === 'pay' ? D.payCheck : null;
+      if (g === 'rl') { RL.vis.has(i) ? RL.vis.delete(i) : RL.vis.add(i); RL.vis.has(i) ? RL.check.add(i) : RL.check.delete(i); return resolutionPage(); }
       if (set) { set.has(i) ? set.delete(i) : set.add(i); if (g === 'appr') approvePage(); else if (g === 'rl') resolutionPage(); else drawTransfer(); }
       return;
     }
@@ -288,8 +291,8 @@
 
   window.settleRoute = hash => {
     { const d = $('#sDlg'); if (d) d.remove(); D = null; document.querySelectorAll('.OBTConfirm_root,.OBTAlert_root,.up').forEach(x => x.remove()); }   // 화면을 옮기면 떠 있던 창은 사라짐 (실제처럼)
-    if (hash.startsWith('#/HP/NPC1025/NCA0019')) { load().then(() => { A = { check: new Set() }; approvePage(); }); return true; }
-    if (hash.startsWith('#/HP/NPC1030/NCA0020')) { load().then(() => { RL = { check: new Set() }; resolutionPage(); }); return true; }
+    if (hash.startsWith('#/HP/NPC1025/NCA0019')) { load().then(() => { A = { check: new Set() }; if (T.apprPreChecked) T.approve.forEach((_, i) => A.check.add(i)); approvePage(); }); return true; }   // apprPreChecked: 화면을 열면 이미 전부 체크돼 있음 (2026-10-28 최병관)
+    if (hash.startsWith('#/HP/NPC1030/NCA0020')) { load().then(() => { RL = { check: new Set(), vis: new Set(T.resPreChecked ? [0] : []), loaded: !T.resLazy }; resolutionPage(); }); return true; }
     return false;
   };
   window.__settle = () => T;

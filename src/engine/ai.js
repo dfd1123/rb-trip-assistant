@@ -1,4 +1,5 @@
 'use strict';
+const { RECEIPT_KINDS } = require('./rules');
 // 개인 API 키로 문장 작성 (Claude / OpenAI / Gemini). 키가 없거나 실패하면 호출한 쪽이 템플릿으로 대체한다.
 // 금액은 AI 에게 맡기지 않는다 — 항상 규정(quick.computeExpenses)으로 계산.
 
@@ -10,7 +11,9 @@ const PROVIDERS = {
   gemini: { label: 'Gemini', model: 'gemini-3.5-flash-lite', fallback: ['gemini-flash-lite-latest'] },   // 3.8-flash 는 무료 티어에서 503 잦음, 3.5-flash 는 생각이 길어 45초 초과
 };
 
-const qtyOf = v => Math.round((Number(String(v ?? '').replace(/[^\d.]/g, '')) || 0) * 1000) / 1000;   // 수량은 소수 가능 (1.5m) — 반올림하지 않음
+// AI 답의 숫자: 글자 속 '첫 번째 수'만 ("1 SET (2EA)" → 1, "1,460,000 (VAT 146,000)" → 1460000). 숫자를 전부 이어 붙이면 12·1460000146000 이 됐음
+const firstNum = v => typeof v === 'number' ? v : (m => m ? Number(m[0].replace(/,/g, '')) : NaN)(/-?\d[\d,]*(?:\.\d+)?/.exec(String(v ?? '')));
+const qtyOf = v => Math.round((firstNum(v) || 0) * 1000) / 1000;   // 수량은 소수 가능 (1.5m) — 반올림하지 않음
 
 async function post(url, headers, body, timeoutMs = 45000) {
   // 503(혼잡)·429(한도)·529 는 잠깐 뒤 다시 (최대 3회: 2초, 5초 간격)
@@ -97,7 +100,7 @@ async function completeWithFiles({ provider, model, key }, prompt, files) {
 async function readReceipt(ai, file, items, period = '', rates = {}) {
   const list = Object.entries(items).map(([k, v]) => `- ${k}: ${v}`).join('\n');
   const prompt = `이 파일은 회사 국내·해외 출장 정산에 붙일 영수증이나 증빙이야. 결제 내역을 읽어서 JSON 배열로만 답해.
-각 항목: {"item": 예산과목 키, "amount": 결제 금액(원, 숫자만), "date": "YYYY-MM-DD" 또는 "", "time": 결제 시각 "HH:MM" 또는 "", "meal": 식대면 "조식"|"중식"|"석식", 아니면 "", "vendor": 가게·회사 이름, "people": 식대면 몇 명이 먹었는지 (숫자), 아니면 0, "memo": 무엇에 쓴 돈인지 10자 안팎. 식대는 인원과 끼니로 (예: "1인 조식", "2인 석식"), 숙박은 "숙박 1박", 교통은 "KTX 서울-부산" 식}
+각 항목: {"item": 예산과목 키, "kind": 무슨 결제인지 ${RECEIPT_KINDS.join('|')} 중 하나 (영수증의 업종·품목으로. 주유소=주유, 고속도로·하이패스=통행료, 주차장=주차, 택시·카카오T=택시), "amount": 결제 금액(원, 숫자만), "date": "YYYY-MM-DD" 또는 "", "time": 결제 시각 "HH:MM" 또는 "", "meal": 식대면 "조식"|"중식"|"석식", 아니면 "", "vendor": 가게·회사 이름, "people": 식대면 몇 명이 먹었는지 (숫자), 아니면 0, "memo": 무엇에 쓴 돈인지 10자 안팎. 식대는 인원과 끼니로 (예: "1인 조식", "2인 석식"), 숙박은 "숙박 1박", 교통은 "KTX 서울-부산" 식}
 예산과목 키 (이 중 하나만):
 ${list}
 규칙:
@@ -114,7 +117,7 @@ ${period ? `- 출장 기간: ${period}` : ''}`;
   const m = /\[[\s\S]*\]/.exec(text);
   let arr = []; try { arr = JSON.parse(m ? m[0] : text); } catch (e) { throw new Error('AI 답을 읽지 못했어요'); }
   if (!Array.isArray(arr)) arr = [arr];
-  return arr.map(r => ({ item: items[r.item] ? r.item : '', amount: Math.round(Number(String(r.amount ?? '').replace(/[^\d.]/g, '')) || 0),
+  return arr.map(r => ({ item: items[r.item] ? r.item : '', kind: RECEIPT_KINDS.includes(r.kind) ? r.kind : '', amount: Math.round(Math.abs(firstNum(r.amount)) || 0),
     date: /^\d{4}-\d{2}-\d{2}$/.test(String(r.date || '')) ? String(r.date) : '', meal: /^(조식|중식|석식)$/.test(String(r.meal || '')) ? String(r.meal) : '', time: /^\d{2}:\d{2}$/.test(String(r.time || '')) ? String(r.time) : '', vendor: String(r.vendor || '').slice(0, 40), memo: String(r.memo || '').slice(0, 40), people: Math.max(0, Math.round(Number(r.people) || 0)) })).filter(r => r.amount > 0 || r.item);
 }
 
@@ -135,7 +138,7 @@ async function readPurchaseOrder(ai, file, text = '') {
   const out = file ? await completeWithFiles(ai, prompt, [file]) : await complete(ai, `${prompt}\n\n--- 발주서 내용 (표는 탭으로 구분) ---\n${text}`);
   const m = /\{[\s\S]*\}/.exec(out);
   let j; try { j = JSON.parse(m ? m[0] : out); } catch (e) { throw new Error('AI 가 발주서를 읽지 못했어요'); }
-  const num = v => Math.round(Number(String(v ?? '').replace(/[^\d.-]/g, '')) || 0), str = (v, n = 80) => String(v || '').trim().slice(0, n);
+  const num = v => Math.round(firstNum(v) || 0), str = (v, n = 80) => String(v || '').trim().slice(0, n);
   const v = j.vendor || {};
   return { vendor: { name: str(v.name), address: str(v.address, 120), contact: str(v.contact, 40), phone: str(v.phone, 40), email: str(v.email) }, order_date: str(j.order_date, 10),
     items: (Array.isArray(j.items) ? j.items : []).map(i => ({ name: str(i.name), part_no: str(i.part_no), unit: str(i.unit, 10) || 'EA', qty: qtyOf(i.qty) || 1, unit_price: num(i.unit_price), amount: num(i.amount), due: '', urgency: /긴급/.test(String(i.urgency || '')) ? '긴급' : '' })).filter(i => i.name),
@@ -158,7 +161,7 @@ ${String(text || '').slice(0, 12000)}`;
   const out = shot ? await completeWithFiles(ai, prompt, [shot]) : await complete(ai, prompt);
   const m = /\{[\s\S]*\}/.exec(out);
   let j; try { j = JSON.parse(m ? m[0] : out); } catch (e) { throw new Error('AI 가 제품 페이지를 읽지 못했어요'); }
-  const num = v => Math.round(Number(String(v ?? '').replace(/[^\d.-]/g, '')) || 0), str = (v, n = 80) => String(v || '').trim().slice(0, n);
+  const num = v => Math.round(firstNum(v) || 0), str = (v, n = 80) => String(v || '').trim().slice(0, n);
   const v = j.vendor || {};
   return { price_vat: /별도/.test(String(j.price_vat || '')) ? 'excl' : 'incl', name: str(j.name, 120), part_no: str(j.part_no), unit: str(j.unit, 10) || 'EA', unit_price: num(j.unit_price), qty: qtyOf(j.qty) || 1, note: str(j.note, 200),
     vendor: { name: str(v.name), phone: str(v.phone, 40), email: str(v.email) }, summary: (Array.isArray(j.summary) ? j.summary : []).map(x => str(x, 160)).filter(Boolean).slice(0, 10) };
@@ -202,4 +205,4 @@ async function draftReport(ai, draft, memo) {
   return R.extractYaml(await complete(ai, R.reportPrompt(rest) + memo));
 }
 
-module.exports = { PROVIDERS, complete, completeWithFiles, readReceipt, readPurchaseOrder, readProductPage, draftPurchase, draftApply, draftReport };
+module.exports = { firstNum, PROVIDERS, complete, completeWithFiles, readReceipt, readPurchaseOrder, readProductPage, draftPurchase, draftApply, draftReport };

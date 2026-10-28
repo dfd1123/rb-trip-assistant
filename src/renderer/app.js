@@ -10,8 +10,9 @@ async function rpc(path, body){
   return window.api.call(path, body === undefined ? {} : body);
 }
 const won = n => (Number(n)||0).toLocaleString('ko-KR') + '원';
-const num = s => Number(String(s||'').replace(/[^\d]/g,'')) || 0;
-const snum = s => (/^\s*-/.test(String(s || '')) ? -1 : 1) * num(s);   // 구매 할인 줄(-5,000) — num() 은 부호를 버림
+// 금액 칸: 전각 숫자(１２０００)·쉼표·원·₩ 정리, 소수점은 반올림 (12,000.00 → 12000). 그래도 숫자 꼴이 아니면 숫자만 모음
+const num = s => { const t = String(s ?? '').normalize('NFKC').replace(/[,\s원₩]/g, ''); return /^-?\d+(\.\d+)?$/.test(t) ? Math.round(Math.abs(+t)) : Number(t.replace(/[^\d]/g, '')) || 0; };
+const snum = s => { const t = String(s ?? '').normalize('NFKC').replace(/[,\s원₩]/g, ''); return t === '' ? 0 : Number.isFinite(+t) ? +t : (/^-/.test(t) ? -1 : 1) * num(t); };   // 구매 금액: 부호(할인 -5,000)·소수점(12,000.00) 그대로. num() 은 둘 다 버려 100배가 됐음
 const qtyNum = s => Number(String(s||'').replace(/[^\d.]/g,'').replace(/(\..*)\./g, '$1')) || 0;   // 수량은 소수 가능 (1.5m). num() 은 점을 버려 1.5 → 15 가 됐음
 const radio = name => (document.querySelector(`input[name=${name}]:checked`)||{}).value;
 const setRadio = (name, v) => { const el = document.querySelector(`input[name=${name}][value="${v}"]`); if(el) el.checked = true; };
@@ -63,14 +64,20 @@ function expRow(tbody, e={}, onchange){
   const payCell = tid === 'r_exp' ? '<td><select class="pay"><option value="personal">개인</option><option value="card">법인카드</option></select><label class="novat hidden" title="항공권·주유비 등 부가세 공제가 안 되는 건: 부가세 0, 공급가액 = 결제 금액"><input type="checkbox" class="nv"> 면세</label></td>' : '';   // 결제: 법인카드면 공급가액 = 합계 − 부가세, 법인카드는 자금계획일이 익월 23일
   tr.innerHTML = `<td><select class="item">${opts}</select></td><td><input class="amt" inputmode="numeric"></td>${payCell}<td>${tid === 'r_exp' ? '<div class="memo-wrap"><span class="ppl-box"><input class="ppl" inputmode="numeric" title="몇 명이 먹었는지 (설정의 식대 기준과 가격으로 짐작해 넣어요)">명</span><input class="memo" placeholder="날짜·내용 (예: 9/28 1인 석식)"></div>' : '<input class="memo" placeholder="비우면 자동">'}</td>${proofCell}<td><button class="btn small del">✕</button></td>`;
   const sel = tr.querySelector('.item'), amt = tr.querySelector('.amt'), memo = tr.querySelector('.memo'), pay = tr.querySelector('.pay');
+  // 값부터 넣는다: 아래 식대 인원 칸·면세 자동 판정이 과목·적요를 보고 정함 (전엔 값 넣기 전에 판정해 AI 식대 줄은 인원 칸이 숨고, 법인카드 주유·항공권은 면세가 안 켜졌음)
+  sel.value = e.item || (tid==='a_exp' ? 'domestic_lodging' : 'domestic_transport');
+  amt.value = (e.amount === 0 || e.amount) && e.amount !== '' ? Number(e.amount).toLocaleString('ko-KR') : '';   // 0원도 그대로 보임
+  memo.value = e.memo || '';
+  if(e.kind) tr.dataset.kind = e.kind;   // AI 가 읽은 영수증 종류 (주유·통행료·택시…) — 면세·법인차량 차량유지비 판단
   if(pay){ pay.value = e.pay || 'personal';
     // 법인카드면 '면세(부가세 불공제)' 체크: 항공권·주유비 등은 기본으로 켬. 개인카드는 공급가액만이라 해당 없음
     const nvBox = tr.querySelector('.novat'), nv = tr.querySelector('.nv');
-    const guess = () => sel.value === 'airfare' || /항공|주유|유류|기름|휘발유|경유|LPG|면세|불공제/i.test(memo.value);
+    const guess = () => sel.value === 'airfare' || (tr.dataset.kind ? (META.noVatKinds || []).includes(tr.dataset.kind) : new RegExp(META.noVat || '$^', 'i').test(memo.value));   // 종류를 알면 종류로, 모르면(직접 쓴 줄) 적요로 짐작
     nv.checked = e.noVat === true || e.noVat === false ? e.noVat : guess(); nv.dataset.auto = e.noVat === undefined ? '1' : '';
     const showNv = () => nvBox.classList.toggle('hidden', pay.value !== 'card');
     nv.onchange = () => { nv.dataset.auto = ''; onchange(); };
     memo.addEventListener('input', () => { if(nv.dataset.auto) nv.checked = guess(); });
+    sel.addEventListener('change', () => { if(nv.dataset.auto) nv.checked = guess(); });
     pay.onchange = () => { showNv(); onchange(); }; showNv(); }
   const ppl = tr.querySelector('.ppl');
   if(ppl){   // 식대 인원: 적요의 "N인"과 같이 움직인다. 비어 있으면 금액으로 짐작
@@ -98,10 +105,7 @@ function expRow(tbody, e={}, onchange){
     draw();
   }
   if(e.date) tr.dataset.date = e.date; if(e.meal) tr.dataset.meal = e.meal;   // AI 가 영수증에서 읽은 날짜·끼니 (적요 글자 말고 이걸로 묶음)
-  sel.value = e.item || (tid==='a_exp' ? 'domestic_lodging' : 'domestic_transport');
-  amt.value = (e.amount === 0 || e.amount) && e.amount !== '' ? Number(e.amount).toLocaleString('ko-KR') : '';   // 0원도 그대로 보임
-  memo.value = e.memo || '';
-  amt.oninput = () => { delete tr.dataset.paid; delete tr.dataset.mealOk; amt.value = amt.value ? num(amt.value).toLocaleString('ko-KR') : ''; if(tid==='a_exp') autoExp = false; onchange(); };
+  amt.oninput = () => { delete tr.dataset.paid; delete tr.dataset.mealOk; amt.value = amt.value ? num(amt.value).toLocaleString('ko-KR') : ''; if(tid==='a_exp' && !tr.dataset.user) tr.dataset.user = 'edited'; onchange(); };   // 사람이 금액을 고친 줄은 규정 재계산이 덮지 않음
   sel.onchange = memo.oninput = onchange;
   tr.querySelector('.del').onclick = () => { tr.remove(); onchange(); };
   tbody.appendChild(tr); onchange();
@@ -184,16 +188,18 @@ async function fillMemo(tr){
   } catch(e){ if(ppl && meal && !ppl.value) ppl.value = guessPeople(num(tr.querySelector('.amt').value), memo.value); }   // AI 없음·실패 → 인원만 금액으로, 적요는 직접
   finally { memo.placeholder = '날짜·내용 (예: 9/28 1인 석식)'; }
 }
-const readExp = tbody => [...tbody.querySelectorAll('tr')].map(tr => {
+// keepEmpty: 화면을 다시 채울 때(자동 작성 다시 누름 등)는 금액 빈 줄도 그대로 — AI 가 금액을 못 읽은 영수증 줄과 그 증빙이 사라졌음
+const readExp = (tbody, keepEmpty = false) => [...tbody.querySelectorAll('tr')].map(tr => {
   const sel = tr.querySelector('.item'), amt = tr.querySelector('.amt'), memo = tr.querySelector('.memo'), pay = tr.querySelector('.pay');
   const e = {item: sel.value, amount: num(amt.value), memo: memo.value.trim()};
   if(pay){ e.pay = pay.value; if(pay.value === 'card') e.noVat = tr.querySelector('.nv').checked; }
   const ppl = tr.querySelector('.ppl'); if(ppl && sel.value === 'meal' && ppl.value) e.people = Number(ppl.value);
   if(tr.dataset.proofs) e.proofs = JSON.parse(tr.dataset.proofs);
   if(tr.dataset.date) e.date = tr.dataset.date; if(tr.dataset.meal) e.meal = tr.dataset.meal;
-  if(amt.value.trim() === '') e.empty = true;
+  if(tr.dataset.kind) e.kind = tr.dataset.kind;
+  if(amt.value.trim() === '') { e.empty = true; if(keepEmpty) e.amount = ''; }
   return e;
-}).filter(e => !e.empty);   // 금액을 비운 줄만 뺀다. 0원은 사용자가 넣은 값이라 그대로 올림
+}).filter(e => keepEmpty || !e.empty);   // 금액을 비운 줄만 뺀다. 0원은 사용자가 넣은 값이라 그대로 올림
 
 /* ---------- 신청서 ---------- */
 let placeGeo = null;   // 지역 검색으로 고른 출장지 {name, address, lng, lat} — 좌표로 길찾기를 바로 연다
@@ -203,8 +209,7 @@ function applyData(){
   const t = {mode};
   if(mode==='corporate'){ if($('#a_corporate_car').value) t.corporate_car = $('#a_corporate_car').value; }
   else if(mode !== 'overseas'){ t.to = $('#a_to').value.trim() || $('#a_destination').value.trim(); t.from = $('#a_from').value.trim(); if(placeGeoValid()) t.place = placeGeo; }
-  if($('#a_fare').value) t.total = num($('#a_fare').value);
-  if(fareShot) t.screenshot = fareShot;
+  if(mode === 'car' || mode === 'transit'){ if($('#a_fare').value) t.total = num($('#a_fare').value); if(fareShot) t.screenshot = fareShot; }   // 교통비는 자차·대중교통만
   return {
     reason: $('#a_reason').value.trim(), destination: $('#a_destination').value.trim(),
     dates: {start: $('#a_start').value, end: $('#a_end').value || $('#a_start').value, start_time: $('#a_start_time').value, end_time: $('#a_end_time').value},
@@ -223,8 +228,8 @@ function fillApply(d){
   const t = d.transport||{}; $$('input[name=a_mode]').forEach(x => x.checked = false); if(t.mode) setRadio('a_mode', t.mode);   // 교통편은 정해졌을 때만 (안 정했으면 비워 둠)
   $('#a_to').value = t.to||''; if(t.from) $('#a_from').value = t.from;
   placeGeo = t.place && t.place.lng ? t.place : null;
-  $('#a_fare').value = t.total ? Number(t.total).toLocaleString('ko-KR') : ''; fareShot = t.screenshot || ''; $('#a_fare_desc').textContent = '';
-  if(t.corporate_car) $('#a_corporate_car').value = t.corporate_car;
+  $('#a_fare').value = t.total === 0 || t.total ? Number(t.total).toLocaleString('ko-KR') : ''; fareShot = t.screenshot || ''; $('#a_fare_desc').textContent = '';   // 0원도 넣은 값
+  $('#a_corporate_car').value = t.corporate_car || '';   // 없으면 비움 — 전 출장의 차가 남지 않게
   $('#a_companions').value = (d.companions||[]).join(', ');
   $('#a_companion_purpose').value = d.companion_purpose||''; $('#a_purpose').value = d.purpose||'';
   $('#a_exp tbody').innerHTML = '';
@@ -232,8 +237,11 @@ function fillApply(d){
   // 해외출장: 국가 등급·환율 → 규정대로 경비 줄
   const ov = d.scope === '해외' || t.mode === 'overseas';
   setRadio('a_scope', ov ? '해외' : '국내');
-  $$('input[name=a_grade]').forEach(x => x.checked = false); if(d.grade) setRadio('a_grade', d.grade);
-  if(d.rate) setRate({ rate: d.rate, date: d.rate_date, screenshot: d.rate_shot });
+  const grade = d.grade || (d.overseas && d.overseas.grade);   // 저장된 신청([다시 신청])은 overseas.grade 에 있음 — 환율은 새로 조회 (예전 환율을 쓰지 않음)
+  $$('input[name=a_grade]').forEach(x => x.checked = false); if(grade) setRadio('a_grade', grade);
+  // 해외 입력은 이 신청 것만: 전 출장의 항공·숙박·로밍·보험·우버·환율이 남지 않게 (환율은 '신청일 환율'이라 없으면 새로 조회)
+  ['#a_air', '#a_hotel', '#a_roam', '#a_ins', '#a_uber'].forEach(id => $(id).value = '');
+  if(d.rate) setRate({ rate: d.rate, date: d.rate_date, screenshot: d.rate_shot }); else { $('#a_rate').value = ''; setRate({}); }
   refreshApply();
   if(ov){ if(!$('#a_uber').value) $('#a_uber').value = (META.config.rates && META.config.rates.uberUsdPerDay) || ''; recalcOverseas(); if(!d.rate && META.config.fxKeySet) lookupRate(); }
   applyCarRule();
@@ -241,13 +249,18 @@ function fillApply(d){
 /** 신청서 전체 비우기 ([새로 작성], 그룹웨어 입력이 끝났을 때) */
 function resetApply(scope = '국내'){
   quickSeq++;   // 진행 중인 [자동 작성] 답은 버림
-  fillApply({}); autoExp = true; fareShot = '';
+  fillApply({}); fareShot = '';
   $('#q_memo').value = ''; $('#q_status').textContent = ''; $('#a_err').textContent = '';
-  ['#a_air', '#a_hotel', '#a_roam', '#a_ins'].forEach(id => $(id).value = ''); setRadio('a_scope', scope); refreshApply();
+  setRadio('a_scope', scope); refreshApply();   // 해외 입력칸은 fillApply 가 비움
   markNeed([]); showMealPlan(null);
 }
 $('#btnNewApply').onclick = () => { resetApply(); $('#q_memo').focus(); };
 let titleTimer;
+/** 신청 교통비 = 지도 왕복(자차·대중교통만) + 여유분(교통비가 있을 때만 — 엔진 runApply 와 같은 규칙). 합계·티켓이 같이 씀 */
+function fareParts(){
+  const mode = isOverseas() ? 'overseas' : radio('a_mode'), fare = mode === 'car' || mode === 'transit' ? num($('#a_fare').value) : 0;
+  return { fare, margin: fare ? (META.config.rates.fareMargin || 0) : 0 };
+}
 function refreshApply(){
   const ovs = isOverseas();
   $('#a_ovCard').classList.toggle('hidden', !ovs);
@@ -258,8 +271,7 @@ function refreshApply(){
   $('#a_cp_row').classList.toggle('hidden', !list($('#a_companions').value).length);
   if(!ovs){ $('#a_route').classList.toggle('hidden', !mode || mode==='corporate');   // 교통편을 고르기 전엔 교통비 칸 숨김
     $('#a_car_row').classList.toggle('hidden', mode!=='corporate'); }
-  const fare = mode==='corporate' || ovs ? 0 : num($('#a_fare').value);
-  const margin = mode!=='corporate' && !ovs && fare ? (META.config.rates.fareMargin || 0) : 0;   // 자차·대중교통 교통비 여유분
+  const { fare, margin } = fareParts();
   const sum = readExp($('#a_exp tbody')).reduce((s,e)=>s+e.amount,0) + fare + margin;
   $('#a_total').textContent = won(sum) + (!ovs && mode!=='corporate' && !$('#a_fare').value ? ' + 교통비' : margin ? ` (교통비 여유 ${won(margin)} 포함)` : '');
   clearTimeout(titleTimer);
@@ -270,7 +282,7 @@ function refreshApply(){
 }
 $$('#tab-apply input, #tab-apply textarea, #tab-apply select').forEach(el => el.addEventListener('input', refreshApply));
 $$('#tab-apply input[type=radio]').forEach(el => el.addEventListener('change', refreshApply));
-$('#btnAddExp').onclick = () => expRow($('#a_exp tbody'), {}, refreshApply);
+$('#btnAddExp').onclick = () => { expRow($('#a_exp tbody'), {}, refreshApply); $('#a_exp tbody').lastElementChild.dataset.user = 'added'; };
 $('#a_fare').addEventListener('input', () => { const v=$('#a_fare'); v.value = v.value ? num(v.value).toLocaleString('ko-KR') : ''; fareShot=''; $('#a_fare_desc').textContent='직접 입력'; });
 
 $('#btnPrompt').onclick = async () => {
@@ -334,7 +346,9 @@ function pickPlace(pl){
   const m = radio('a_mode'); if(!isOverseas() && (m === 'car' || m === 'transit')) lookupFare(true);   // 고른 곳으로 교통비 새로
 }
 attachAc($('#a_destination'), $('#a_dest_ac'), { onPick: pickPlace, skip: placeGeoValid });
-$('#a_destination').addEventListener('input', () => { placeGeo = null; });
+// 출장지를 직접 고치면 거기서 나온 값(지도 검색어·교통비·캡처)은 옛 장소 것 → 비우고, 다 고친 뒤(change) 다시 조회
+$('#a_destination').addEventListener('input', () => { placeGeo = null; $('#a_to').value = ''; $('#a_fare').value = ''; fareShot = ''; $('#a_fare_desc').textContent = ''; refreshApply(); });
+$('#a_destination').addEventListener('change', () => { const m = radio('a_mode'); if(!isOverseas() && (m === 'car' || m === 'transit')) lookupFare(false); });
 /** 네이버 지도에서 찾은 도착지로 출장지 칸 채우기: 검색어(예: KAI) 그대로면 '정식 이름 (주소)', 주소가 없으면 뒤에 (주소) */
 function setDestinationFromPlace(place){
   if(!place || !place.address) return;
@@ -344,7 +358,8 @@ function setDestinationFromPlace(place){
   dest.classList.remove('need'); refreshApply();
 }
 function setFare(r, label = ''){
-  if(!r || !r.total) return;
+  if(!r || r.total == null || r.total === '') return;   // 0원도 값 (직접 넣은 0)
+  if(r.mode && r.mode !== radio('a_mode')) return;   // 조회하는 동안 교통편을 바꿨으면(법인차량 등) 옛 결과는 버림
   if(r.query && r.query !== ($('#a_to').value.trim() || $('#a_destination').value.trim())){   // 조회 중에 출장지를 고쳐 줬으면 그걸로
     $('#a_to').value = r.query; $('#a_destination').value = r.query;
   }
@@ -369,7 +384,13 @@ $$('input[name=a_mode]').forEach(r => r.addEventListener('change', () => {
 }));
 
 /* ---------- 한 줄 자동 작성 ---------- */
-let autoExp = true;
+/** 규정으로 계산한 줄만 새 값으로: 사람이 직접 추가한 줄(added)·금액을 고친 줄(edited)은 그대로 두고, 고친 과목은 규정 줄을 다시 넣지 않음 */
+function replaceRuleRows(tb, isRuled, expenses){
+  const rows = [...tb.querySelectorAll('tr')], edited = new Set(rows.filter(tr => tr.dataset.user === 'edited').map(tr => tr.querySelector('.item').value));
+  rows.filter(tr => !tr.dataset.user && isRuled(tr)).forEach(tr => tr.remove());
+  const keep = [...tb.querySelectorAll('tr')]; tb.innerHTML = '';
+  expenses.filter(e => !edited.has(e.item)).forEach(e => expRow(tb, e, refreshApply)); keep.forEach(tr => tb.appendChild(tr));
+}
 async function recalcExpenses(){
   if(isOverseas()) return recalcOverseas();   // 해외는 규정이 달라서 따로
   const start = $('#a_start').value, end = $('#a_end').value || start;
@@ -377,10 +398,8 @@ async function recalcExpenses(){
   const r = await rpc('/api/expenses', {start, end, start_time: $('#a_start_time').value, end_time: $('#a_end_time').value, reason: $('#a_reason').value.trim()});
   // 규정으로 계산하는 숙박비·식대 줄만 새로 바꾸고, 직접 추가한 다른 경비 줄은 그대로 둔다
   const tb = $('#a_exp tbody'), ruled = new Set(r.expenses.map(e => e.item).concat(['domestic_lodging', 'meal']));
-  [...tb.querySelectorAll('tr')].filter(tr => ruled.has(tr.querySelector('.item').value)).forEach(tr => tr.remove());
-  const keep = [...tb.querySelectorAll('tr')]; tb.innerHTML = '';
-  r.expenses.forEach(e => expRow(tb, e, refreshApply)); keep.forEach(tr => tb.appendChild(tr));
-  showMealPlan(r); autoExp = true; refreshApply();
+  replaceRuleRows(tb, tr => ruled.has(tr.querySelector('.item').value), r.expenses);
+  showMealPlan(r); refreshApply();
 }
 /* ---------- 해외출장 ---------- */
 const isOverseas = () => radio('a_scope') === '해외';
@@ -407,9 +426,7 @@ async function recalcOverseas(){
   const v = id => $(id).value.trim() === '' ? '' : $(id).value;
   const r = await rpc('/api/overseas-expenses', { start, end, grade, rate, airfare: v('#a_air'), lodging: v('#a_hotel'), uber: v('#a_uber'), roaming: v('#a_roam'), insurance: v('#a_ins') });
   const tb = $('#a_exp tbody');
-  [...tb.querySelectorAll('tr')].filter(tr => OV_ITEMS.has(tr.querySelector('.item').value) || ['domestic_lodging', 'meal'].includes(tr.querySelector('.item').value)).forEach(tr => tr.remove());   // 규정으로 계산하는 줄만 새로
-  const keep = [...tb.querySelectorAll('tr')]; tb.innerHTML = '';
-  r.expenses.forEach(e => expRow(tb, e, refreshApply)); keep.forEach(tr => tb.appendChild(tr));
+  replaceRuleRows(tb, tr => OV_ITEMS.has(tr.querySelector('.item').value) || ['domestic_lodging', 'meal'].includes(tr.querySelector('.item').value), r.expenses);   // 규정으로 계산하는 줄만 새로
   $('#a_meal_plan').textContent = `해외 ${r.nights}박 ${r.days}일 · ${grade} 등급 일비 $${grade === '가' ? 90 : 50}/일${$('#a_hotel').value.trim() ? '' : ` · 숙박은 한도 $${grade === '가' ? 200 : 150}/박으로 계산 (견적이 있으면 숙박 칸에 넣으세요)`}`;
   refreshApply();
 }
@@ -424,7 +441,7 @@ $$('input[name=a_scope]').forEach(r => r.addEventListener('change', async () => 
     resetApply(now);
   }
   $('#a_exp tbody').innerHTML = ''; $('#a_meal_plan').textContent = '';
-  if(isOverseas()){ if(!$('#a_uber').value) $('#a_uber').value = (META.config.rates && META.config.rates.uberUsdPerDay) || ''; if(!radio('a_grade')){ const g = /미국|유럽|캐나다|싱가포르|영국|프랑스|독일|이탈리아|스페인|네덜란드|스위스/.test($('#a_destination').value) ? '가' : ''; if(g) setRadio('a_grade', g); } recalcOverseas(); if(!$('#a_rate').value && META.config.fxKeySet) lookupRate(); }
+  if(isOverseas()){ if(!$('#a_uber').value) $('#a_uber').value = (META.config.rates && META.config.rates.uberUsdPerDay) || ''; recalcOverseas(); if(!$('#a_rate').value && META.config.fxKeySet) lookupRate(); }
   else recalcExpenses();
   refreshApply();
 }));
@@ -467,7 +484,7 @@ $('#btnQuick').onclick = async () => {
   try {
     const r = await rpc('/api/quick', {memo});
     if(seq !== quickSeq) return;   // 그 사이 새로 작성함
-    fillApply(r.data); autoExp = true; markNeed(r.missing); showMealPlan(r.meals);
+    fillApply(r.data); markNeed(r.missing); showMealPlan(r.meals);
     const by = r.source === 'template' ? '템플릿으로 작성' : `${r.source}로 작성`;
     $('#q_status').innerHTML = '';
     const b = document.createElement('b'); b.textContent = by; $('#q_status').append(b,
@@ -717,7 +734,7 @@ function deleteGwRows(pick){
 async function repeatTrip(id, keep = false){
   const {data} = await rpc('/api/repeat', {id, keep});
   $$('nav button')[0].click();
-  fillApply(data); autoExp = true; markNeed(keep ? [] : ['날짜']); showMealPlan(null);
+  fillApply(data); markNeed(keep ? [] : ['날짜']); showMealPlan(null);
   if(keep) recalcExpenses();
   $('#q_status').textContent = keep ? '반려된 신청을 그대로 불러왔어요. 반려 사유대로 고친 뒤 [그룹웨어에 입력하기]를 누르세요. 반려된 품의는 목록에서 [삭제]로 지울 수 있어요.' : '지난 출장 내용을 불러왔어요. 날짜만 고르면 경비는 규정대로 다시 계산돼요.';
   $('#a_start').focus();
@@ -766,20 +783,24 @@ function lookupFuel(){
     if(!r || !r.total) return;
     const tb = $('#r_exp tbody');
     const proofName = tr => (JSON.parse(tr.dataset.proofs || '[]')[0] || '').split(/[\\/]/).pop();
-    [...tb.querySelectorAll('tr')].filter(tr => tr.querySelector('.item').value === 'domestic_transport' && /^(교통비_car.*)?$/.test(proofName(tr))).forEach(tr => tr.remove());   // 증빙 없는 교통비 줄·이전 지도 캡처 줄은 새 값으로 (영수증 붙은 줄은 그대로)
+    // 이전 지도 캡처 줄·신청 때 예상 유류비 줄(증빙 없음, '출장 유류비…')만 새 값으로. 영수증 붙은 줄, 사람이 직접 쓴 통행료·택시 줄(증빙 없어도)은 그대로
+    const memoOf = tr => tr.querySelector('.memo').value.trim();
+    [...tb.querySelectorAll('tr')].filter(tr => tr.querySelector('.item').value === 'domestic_transport' && (/^교통비_car/.test(proofName(tr)) || (!proofName(tr) && (!memoOf(tr) || /^출장 유류비/.test(memoOf(tr)))))).forEach(tr => tr.remove());
     expRow(tb, { item: 'domestic_transport', amount: (Number(r.fuel) || 0) * 2, memo: `출장 유류비 (왕복, ${r.basis || '연비 8km/L'} 네이버 지도 기준)`, proofs: r.screenshot ? [r.screenshot] : [] }, refreshReport);   // 유류대만. 통행료·하이패스는 영수증으로
     refreshReport();
   });
 }
+let reportOpenSeq = 0;   // 마지막으로 연 보고서 — 앞서 연 출장의 불러오기가 늦게 끝나 지금 화면을 덮지 않게
 async function openReport(id){
+  const seq = ++reportOpenSeq;
   const {trips} = await rpc('/api/trips'); const t = trips.find(x => x.id === id);
   if(t && t.gwReport && !t.report){   // 이 PC엔 내용이 없고 그룹웨어에 보고 품의가 있음 → 경비를 그룹웨어에서
-    return runJob('보고서 불러오기', '/api/job/report-load', {id}, async res => { const pr = await rpc('/api/draft', {id}); showReport(id, {...pr, draft: res.draft}, res.fromGw ? ` · 그룹웨어 보고 품의에서 경비 ${res.fromGw}줄을 불러왔어요. 증빙과 보고사항은 다시 넣어 주세요` : ''); }, {quiet: true});
+    return runJob('보고서 불러오기', '/api/job/report-load', {id}, async res => { if(seq !== reportOpenSeq) return; const pr = await rpc('/api/draft', {id}); showReport(id, {...pr, draft: res.draft}, res.fromGw ? ` · 그룹웨어 보고 품의에서 경비 ${res.fromGw}줄을 불러왔어요. 증빙과 보고사항은 다시 넣어 주세요` : ''); }, {quiet: true, userAction: true});
   }
-  showReport(id, await rpc('/api/draft', {id}));
+  const d = await rpc('/api/draft', {id}); if(seq === reportOpenSeq) showReport(id, d);
 }
 async function showReport(id, r, extra = ''){
-  if(!currentTrip || currentTrip.trip_id !== r.draft.trip_id){ rqFiles = []; $('#rq_memo').value = ''; }   // 다른 출장으로 바뀌면 영수증·메모 비움
+  if(!currentTrip || currentTrip.trip_id !== r.draft.trip_id){ rqFiles = []; $('#rq_memo').value = ''; ['#r_err', '#rq_status', '#rErr'].forEach(id => { const x = $(id); if(x) x.textContent = ''; }); if($('#rPaste')) $('#rPaste').value = ''; }   // 다른 출장으로 바뀌면 영수증·메모·이전 출장의 오류 문구 비움
   currentTrip = r.draft; reportPrompt = r.prompt;
   renderRqFiles();
   $('#r_heading').textContent = r.draft.reason; $('#r_trip').textContent = `신청 ID ${id}` + (r.resumed ? ' · 전에 작성하던 보고서를 불러왔어요' : '') + extra;
@@ -789,13 +810,13 @@ async function showReport(id, r, extra = ''){
   $('#reportView').classList.toggle('pre', !r.resumed);   // 처음 쓰는 보고서: 영수증·한 줄 칸만 → [✦ 자동 작성]하면 아래가 펼쳐짐
   if(r.resumed) maybeFuel();
 }
-function reportData(){
+function reportData(keepEmpty = false){
   return {...currentTrip, category: radio('r_category'), fund: radio('r_fund') || '', project: $('#r_project').value.trim(),
     period: $('#r_period').value.trim(), destination: $('#r_destination').value.trim(),
     visit_org: $('#r_visit_org').value.trim(), companions: list($('#r_companions').value),
     purpose: $('#r_purpose').value.trim(), report: $('#r_report').value.trim(),
     schedule: [...$('#r_sched tbody').querySelectorAll('tr')].map(tr => { const [d,p,x]=tr.querySelectorAll('input,textarea'); return {date:d.value, place:p.value, detail:x.value}; }),
-    expenses: readExp($('#r_exp tbody')), attachments: reportAttachments, transport: reportTransport};
+    expenses: readExp($('#r_exp tbody'), keepEmpty).map(({empty, ...e}) => e), attachments: reportAttachments, transport: reportTransport};
 }
 /* 보고서 자동 작성: 영수증 파일들 + 한 줄 메모를 다 넣은 뒤 [자동 작성] → 메모로 보고사항·일정, 영수증은 AI 로 경비 줄 */
 let rqFiles = [];
@@ -832,8 +853,8 @@ $('#btnRQuick').onclick = async () => {
   const btn = $('#btnRQuick'); btn.disabled = true; btn.dataset.busy = '1'; $('#rq_status').textContent = '보고사항 작성 중…';
   try {
     const r = await rpc('/api/report-quick', {id: currentTrip.trip_id, memo: $('#rq_memo').value});
-    const cur = reportData();
-    fillReport({...cur, ...r.data, expenses: cur.expenses.length ? cur.expenses : r.data.expenses, attachments: cur.attachments});   // 화면에서 고친 경비·증빙은 유지
+    const cur = reportData(true);
+    fillReport({...cur, ...r.data, expenses: cur.expenses.some(e => e.amount !== '' || (e.proofs || []).length) ? cur.expenses : r.data.expenses, attachments: cur.attachments});   // 화면에서 고친 경비·증빙은 유지
     revealReport();
     const how = (r.source === 'template' ? '템플릿으로 작성' : `${r.source}로 작성`) + (r.note ? ` · ${r.note}` : '');
     $('#rq_status').textContent = how + ' · 영수증 읽는 중…';
@@ -864,7 +885,7 @@ $('#btnRPrompt').onclick = async () => {
 };
 $('#btnRFill').onclick = async () => {
   $('#rErr').textContent = '';
-  try { const d = (await rpc('/api/parse', {text: $('#rPaste').value})).data; fillReport({...reportData(), ...d}); }
+  try { const d = (await rpc('/api/parse', {text: $('#rPaste').value})).data; fillReport({...reportData(true), ...d}); }
   catch(e){ $('#rErr').textContent = e.message; }
 };
 /* 영수증: 끌어다 놓기·파일 고르기 → 자동 작성 때 AI 분류 → 경비 줄로 */
@@ -880,7 +901,7 @@ function applyReceipts(got){
     const proofs = g.proofs || [];
     const memo = g.failed ? '' : [g.date && g.date.slice(5).split('-').map(Number).join('/'), g.memo || g.vendor].filter(Boolean).join(' ');   // 거래처비고 형식 "10/2 1인 조식"
     const people = (g.item || 'meal') === 'meal' && !g.failed ? (g.people || guessPeople(g.amount, g.memo || '')) : 0;
-    expRow(tb, { item: g.item || 'meal', amount: g.amount || '', memo: people ? withPeople(memo, people) : memo, people, proofs, date: g.failed ? '' : g.date, meal: g.failed ? '' : g.meal }, refreshReport);
+    expRow(tb, { item: g.item || 'meal', amount: g.amount || '', memo: people ? withPeople(memo, people) : memo, people, proofs, date: g.failed ? '' : g.date, meal: g.failed ? '' : g.meal, kind: g.failed ? '' : (g.kind || '') }, refreshReport);
     const tr = tb.lastElementChild; tr.classList.add('fromai');
     if(g.failed || !g.item || !g.amount) tr.querySelectorAll('select,input').forEach(x => x.classList.add('need'));
   });
@@ -986,9 +1007,9 @@ function loadAiSettings(){
   sel.innerHTML = '<option value="none">사용 안 함 (템플릿)</option>' + Object.entries(META.providers).map(([k,v]) => `<option value="${k}">${v.label}</option>`).join('');
   sel.value = c.aiProvider || (c.aiBuiltin ? 'gemini' : 'none'); $('#s_model').value = c.aiModel || '';
   $('#s_model').placeholder = META.providers[sel.value] ? `기본: ${META.providers[sel.value].model}` : '비우면 기본 모델';
-  const keyHint = () => { const k = $('#s_ai').value; $('#s_key').placeholder = c.aiKeySet && !c.aiBuiltin ? '저장됨 (바꾸려면 새 키 입력)' : k === 'gemini' && c.aiBuiltin ? '팀 공용 Gemini 키 사용 중 (개인 키를 넣으면 그게 우선)' : k === 'none' ? '' : 'API 키 붙여넣기 (필수)'; };
+  const keyHint = () => { const k = $('#s_ai').value; $('#s_key').placeholder = c.aiKeySet && !c.aiBuiltin && c.aiProvider && k !== c.aiProvider && k !== 'none' ? '이 회사의 API 키를 넣어 주세요 (예전 회사 키는 이 회사에 쓰지 않아요)' : c.aiKeySet && !c.aiBuiltin ? '저장됨 (바꾸려면 새 키 입력)' : k === 'gemini' && c.aiBuiltin ? '팀 공용 Gemini 키 사용 중 (개인 키를 넣으면 그게 우선)' : k === 'none' ? '' : 'API 키 붙여넣기 (필수)'; };
   $('#btnAiClear').hidden = !(c.aiKeySet && !c.aiBuiltin);   // 개인 키가 있을 때만. 팀 공용 키는 앱에 들어 있어 지울 수 없음
-  $('#s_key').value = ''; keyHint(); $('#s_ai').addEventListener('change', keyHint);
+  $('#s_key').value = ''; keyHint(); sel.oninput = keyHint;   // 설정을 열 때마다 리스너가 쌓이지 않게 (덮어쓰기)
 
   const r = c.rates; $('#s_lodging').value = r.lodgingPerNight; $('#s_breakfast').value = r.breakfast; $('#s_lunch').value = r.lunch; $('#s_dinner').value = r.dinner; $('#s_fare_margin').value = r.fareMargin ?? 20000;
   $('#s_rank').value = c.rank || 'staff'; $('#s_car_fuel').value = c.carFuel || 'gasoline'; $('#s_car_type').value = c.carType || '1'; $('#s_has_car').value = c.hasCar === false ? 'no' : 'yes';
@@ -1005,7 +1026,8 @@ $('#btnAiTest').onclick = async () => {
   try { const r = await rpc('/api/ai/test'); $('#s_ai_msg').textContent = `연결됨: "${r.reply}"`; } catch(e){ $('#s_ai_msg').textContent = e.message; }
 };
 $('#btnRateSave').onclick = async () => {
-  const rates = {...META.config.rates, lodgingPerNight: num($('#s_lodging').value), breakfast: num($('#s_breakfast').value), lunch: num($('#s_lunch').value), dinner: num($('#s_dinner').value), fareMargin: num($('#s_fare_margin').value)};
+  const old = META.config.rates, rv = (id, k) => $(id).value.trim() === '' ? old[k] : num($(id).value);   // 비운 칸은 그대로 (0 은 넣은 값, 빈 칸은 안 넣은 것)
+  const rates = {...old, lodgingPerNight: rv('#s_lodging', 'lodgingPerNight'), breakfast: rv('#s_breakfast', 'breakfast'), lunch: rv('#s_lunch', 'lunch'), dinner: rv('#s_dinner', 'dinner'), fareMargin: rv('#s_fare_margin', 'fareMargin')};
   await rpc('/api/config', {rates, rank: $('#s_rank').value, carFuel: $('#s_car_fuel').value, carType: $('#s_car_type').value, hasCar: $('#s_has_car').value === 'yes'}); META = await rpc('/api/meta'); applyCarRule(); $('#s_rate_msg').textContent = '저장됨';
 };
 
@@ -1029,7 +1051,7 @@ function loadPurchaseList(){
       el.querySelector('.sub').textContent = `${x.date || ''}${x.docNo ? ' · ' + x.docNo : ''}${x.local ? ` · 이 PC에서 작성` : ''}`;
       const btns = el.querySelector('.inline');
       if(x.local && x.local.data){ const b = document.createElement('button'); b.className = 'btn small'; b.textContent = '다시 불러오기'; b.title = '그때 입력한 내용을 아래 칸에 다시 채워요'; b.onclick = () => { puView('new'); fillPurchase(x.local.data); puRead = (x.local.data.link && x.local.data.link.url) || x.local.data.file || ''; revealPurchase(); $('#pu_status').textContent = '전에 작성한 내용을 불러왔어요.'; }; btns.appendChild(b); }
-      if(x.local && !x.docNo){ const d = document.createElement('button'); d.className = 'btn small danger'; d.textContent = '기록 삭제'; d.onclick = async () => { await rpc('/api/purchase/forget', {title: x.title}); loadPurchaseList(); }; btns.appendChild(d); }
+      if(x.local && !x.docNo){ const d = document.createElement('button'); d.className = 'btn small danger'; d.textContent = '기록 삭제'; d.onclick = async () => { await rpc('/api/purchase/forget', {created: x.local.created}); loadPurchaseList(); }; btns.appendChild(d); }
       box.appendChild(el);
     });
   }, {quiet: true});
@@ -1049,15 +1071,15 @@ function puItemRow(it = {}){
   const tr = document.createElement('tr');
   tr.innerHTML = '<td><input class="name"></td><td><input class="unit"></td><td><input class="qty" inputmode="numeric"></td><td><input class="price" inputmode="numeric"></td><td><input class="amt" inputmode="numeric"></td><td><input class="due" type="date"></td><td><input class="note" placeholder="예: 옵션 1.0M"></td><td><button class="btn small del" type="button">✕</button></td>';
   const q = c => tr.querySelector('.' + c);
-  q('name').value = it.part_no && !(it.name || '').includes(it.part_no) ? `${it.name || ''} (${it.part_no})`.trim() : (it.name || ''); q('unit').value = it.unit || 'EA'; q('qty').value = it.qty ?? 1; q('price').value = it.unit_price != null ? Number(it.unit_price).toLocaleString('ko-KR') : ''; q('amt').value = it.amount != null ? Number(it.amount).toLocaleString('ko-KR') : ''; q('due').value = it.due || ''; q('note').value = it.note || '';
-  const recalc = () => { q('amt').value = Math.round(qtyNum(q('qty').value) * snum(q('price').value)).toLocaleString('ko-KR'); puRender(); };
+  q('name').value = it.part_no && !(it.name || '').includes(it.part_no) ? `${it.name || ''} (${it.part_no})`.trim() : (it.name || ''); q('unit').value = it.unit || 'EA'; q('qty').value = it.qty ?? 1; q('price').value = it.unit_price != null && it.unit_price !== '' ? Number(it.unit_price).toLocaleString('ko-KR') : '';   // 비운 단가는 비운 채로 (0 아님) q('amt').value = it.amount != null ? Number(it.amount).toLocaleString('ko-KR') : ''; q('due').value = it.due || ''; q('note').value = it.note || '';
+  const recalc = () => { if(q('price').value.trim() !== '') q('amt').value = Math.round(qtyNum(q('qty').value) * snum(q('price').value)).toLocaleString('ko-KR'); puRender(); };   // 단가를 비워 두면 금액은 그대로 (단가 = 금액 ÷ 수량은 보낼 때)
   q('qty').addEventListener('input', recalc); q('price').addEventListener('input', recalc);
   q('amt').addEventListener('input', puRender); q('due').addEventListener('change', puRender); q('note').addEventListener('input', puRender);
   q('del').onclick = () => { tr.remove(); puRender(); };
   $('#pu_items tbody').appendChild(tr);
   return tr;
 }
-function puItems(){ return [...$('#pu_items tbody').querySelectorAll('tr')].map(tr => { const q = c => tr.querySelector('.' + c).value.trim(); return { name: q('name'), part_no: '', unit: q('unit') || 'EA', qty: qtyNum(q('qty')), unit_price: snum(q('price')), amount: q('amt') === '' ? '' : snum(q('amt')), due: q('due'), note: q('note') }; }); }
+function puItems(){ return [...$('#pu_items tbody').querySelectorAll('tr')].map(tr => { const q = c => tr.querySelector('.' + c).value.trim(); return { name: q('name'), part_no: '', unit: q('unit') || 'EA', qty: qtyNum(q('qty')), unit_price: q('price') === '' ? '' : snum(q('price')), amount: q('amt') === '' ? '' : snum(q('amt')), due: q('due'), note: q('note') }; }); }
 function purchaseData(){
   return { file: puLink ? '' : puFile, link: puFile ? null : puLink, summary: puSummary, memo: $('#pu_memo').value.trim(), purpose: $('#pu_purpose').value, purpose_etc: $('#pu_purpose_etc').value.trim(), project: $('#pu_project').value, project_etc: $('#pu_project_etc').value.trim(),
     urgency: radio('pu_urgency') || '일반', substitutable: radio('pu_sub') === 'yes', items: puItems(), vat_included: $('#pu_vat').checked, price_vat: puOnlineVatIn(), total: '',
@@ -1164,7 +1186,7 @@ function readUrl(next){
     const cur = purchaseData();
     puLink = { url: r.url, title: r.title, shot: r.shot, priceVat: r.price_vat, info: `${r.name || '제품 ?'} · ${won(r.unit_price)}${r.vendor.name ? ' · ' + r.vendor.name : ''}` };
     puFile = ''; poInfo = ''; renderPoChip();   // 둘 중 하나만
-    const item = { name: r.name, part_no: r.part_no, unit: r.unit, qty: r.qty, unit_price: r.unit_price, amount: r.qty * r.unit_price, due: $('#pu_due_all').value, note: r.note || '' };
+    const item = { name: r.name, part_no: r.part_no, unit: r.unit, qty: r.qty, unit_price: r.unit_price, amount: Math.round(r.qty * r.unit_price), due: $('#pu_due_all').value, note: r.note || '' };
     if(r.price_vat === 'excl') cur.vat_included = true;   // 'VAT 별도' 가격 → 합계는 부가세 더해서 VAT포함
     fillPurchase({ ...cur, file: '', link: puLink, items: [...cur.items.filter(i => i.name), item], vendor: { name: cur.vendor.name || r.vendor.name, contact: cur.vendor.contact || r.vendor.name, phone: cur.vendor.phone || r.vendor.phone, email: cur.vendor.email || r.vendor.email },
       memo: cur.memo || r.note, vat_included: cur.vat_included });
@@ -1230,20 +1252,29 @@ $('#btnPurchase').onclick = async () => {
 /* ---------- 작업 패널 ---------- */
 let jobTimer = null, jobSince = 0;
 async function runJob(title, path, body, onDone, opt = {}){
-  try { const r = await rpc(path, {...body, title}); if(r && r.skipped) return; } catch(e){ alertErr(e.message); return; }   // skipped: 다른 작업 중이라 뒤에서 하는 확인은 건너뜀
-  watchJob(title, onDone, opt);
+  // skipped: 다른 작업 중이라 뒤에서 하는 확인은 건너뜀 (사람이 누른 거면 알림). 시작 못 했으면 opt.onEnd 도 불러 기다리던 쪽이 멈추지 않게
+  let r;
+  try { r = await rpc(path, {...body, title}); if(r && r.skipped){ if(opt.userAction) alertErr('다른 작업이 진행 중이에요. 끝난 뒤 다시 눌러 주세요.'); if(opt.onEnd) opt.onEnd(); return; } } catch(e){ alertErr(e.message); if(opt.onEnd) opt.onEnd(); return; }
+  watchJob(title, onDone, {...opt, id: r && r.id});
 }
 /** 진행 중인 작업 화면에 붙기 (새 작업 시작, 또는 새로고침 후 이어보기) */
-function watchJob(title, onDone, {quiet = false} = {}){
+let watchedJobId = 0;   // 지금 보고 있는 작업 번호 (답·상태가 다른 작업 것과 섞이지 않게)
+let watchEnd = null;    // 지금 감시의 onEnd — 새 작업이 감시를 넘겨받으면 앞 감시를 끝난 것으로 알림 (기다리던 쪽이 멈추지 않게)
+function watchJob(title, onDone, {quiet = false, onEnd = null, id = 0} = {}){   // onEnd: 성공·실패·취소 상관없이 끝나면
   $('#jobTitle').textContent = title; $('#jobLog').textContent = ''; jobSince = 0; $('#jobShow').classList.add('hidden');
   if(quiet){ $('#gwRefreshIcon').classList.add('on'); $('#btnGwList').disabled = true; }
   if(!quiet) $('#jobPanel').style.display = 'block';   // quiet: 물어볼 게 있거나 실패할 때만 창을 띄움
   const dimQuiet = quiet && !gwMap;   // 조용한 갱신은 보여줄 게 없을 때만 딤
   if(!quiet || dimQuiet){ $('#dim').classList.add('on'); $('#dimStep').textContent = quiet ? '잠시만 기다려 주세요' : ''; }
   $('#jobCancel').classList.remove('hidden'); $('#jobSpin').classList.add('on'); $$('main .btn.primary').forEach(b => b.disabled = true);
-  clearInterval(jobTimer);
-  jobTimer = setInterval(async () => {
+  clearInterval(jobTimer); watchedJobId = id;
+  if(watchEnd){ const f = watchEnd; watchEnd = null; f(); }
+  watchEnd = onEnd;
+  const myTimer = jobTimer = setInterval(async () => {
     const s = await rpc('/api/job', {since: jobSince});
+    if(jobTimer !== myTimer) return;   // 그사이 새 작업을 보기 시작함 — 늦게 온 응답이 새 감시를 끊지 않게
+    if(!watchedJobId && s.id) watchedJobId = s.id;
+    if(s.id && s.id !== watchedJobId) return;   // 다른 작업의 상태
     if(s.logs && s.logs.length){ $('#jobLog').textContent += s.logs.join('\n') + '\n'; $('#jobLog').scrollTop = 1e9; jobSince = s.next; if(!quiet) $('#dimStep').textContent = s.logs[s.logs.length - 1].replace(/^[⚠✔—]\s*/, ''); }
     const q = s.question;
     $('#jobShow').textContent = '작업 중인 창 열기';
@@ -1267,13 +1298,13 @@ function watchJob(title, onDone, {quiet = false} = {}){
       clearInterval(jobTimer); jobTimer = null; $$('main .btn.primary').forEach(b => b.disabled = false); $('#btnGwList').disabled = false; $('#gwRefreshIcon').classList.remove('on'); $('#jobCancel').classList.add('hidden'); $('#jobSpin').classList.remove('on'); $('#dim').classList.remove('on'); $('#jobAsk').style.display='none';
       if(s.state==='error') $('#jobLog').textContent += '\n✖ ' + s.error + '\n';
       if(s.state==='cancelled') $('#jobLog').textContent += '\n— 취소했어요.\n';
-      if(s.state==='done' && onDone) onDone(s.result);
+      Promise.resolve(s.state==='done' && onDone ? onDone(s.result) : null).catch(e => alertErr(e.message)).finally(() => { if(onEnd && watchEnd === onEnd){ watchEnd = null; onEnd(); } });   // onDone(비동기일 수 있음)이 끝난 뒤 onEnd (한 번만)
       // 읽기만 하는 작업(영수증·발주서·페이지·교통비)은 끝나면 작업 창을 접는다 — 남아 있으면 오른쪽 [제출 준비]·입력 버튼을 가렸음
       if(s.state==='done' && ['receipts', 'po-read', 'url-read', 'fare', 'report-load'].includes(s.kind)) setTimeout(() => { if(!jobTimer) $('#jobPanel').style.display = 'none'; }, 1500);
     }
   }, 700);
 }
-async function answer(v){ $('#jobAsk').style.display='none'; await rpc('/api/job/answer', {value: v}); }
+async function answer(v){ $('#jobAsk').style.display='none'; await rpc('/api/job/answer', {value: v, id: watchedJobId}); }
 $('#jobYes').onclick = () => {
   if(!$('#jobInput').classList.contains('hidden')){ const n = num($('#jobInput').value); if(!n && $('#jobInput').value!=='0') return; $('#jobInput').value=''; return answer(n); }
   answer(true);
@@ -1308,7 +1339,7 @@ async function afterLogin(){
   await whenJobIdle();
   META = await rpc('/api/meta');   // 로그인 창에서 다른 계정으로 들어왔을 수 있으니 새로
   const c = META.config, who = c.lastLoginId || c.gwId, other = !!(who && c.profileOf && who !== c.profileOf);   // 내 정보가 다른 계정 것
-  if(!c.name || !c.budgetDept || other){ await new Promise(done => runJob('내 정보 불러오기', '/api/job/gw-profile', {force: other}, async () => { META = await rpc('/api/meta'); renderSettings(); done(); }, {quiet: true})); }
+  if(!c.name || !c.budgetDept || other){ await new Promise(done => runJob('내 정보 불러오기', '/api/job/gw-profile', {force: other}, async () => { META = await rpc('/api/meta'); renderSettings(); }, {quiet: true, onEnd: done})); }   // 실패·건너뜀이어도 다음 단계로
   if(META.config.hasCar == null) askCar();
 }
 function askCar(){

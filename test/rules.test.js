@@ -668,16 +668,157 @@ test('AI 결과 병합: AI 가 비워 둔 칸은 규칙으로 읽은 값을 지�
   assert.equal(m.reason, base.reason); assert.equal(m.destination, '킨텍스'); assert.equal(m.transport.mode, 'corporate'); assert.equal(m.dates.start, '2026-10-27'); assert.ok(m.purpose);
 });
 
-test('법인차량 출장의 주유·통행료는 차량유지비(판) 예산 줄로, 택시는 국내교통비 그대로 (최병관 2026-10-28)', () => {
+test('법인차량 출장의 주유·통행료는 차량유지비(판) 예산 줄로, 택시는 국내교통비 그대로 — 영수증 종류(AI)로 판단 (최병관 2026-10-28)', () => {
   const { settleLines } = require('../src/engine/runner');
   const rep = R.parseReport({ reason: 'x', name: '홍길동', period: '2026.10.22 - 2026.10.22', destination: 'd', purpose: 'p', report: 'r', fund: '일반경비',
     schedule: [{ date: '10/22', place: 'd', detail: 'a' }], transport: { mode: 'corporate' },
-    expenses: [{ item: 'domestic_transport', amount: 50000, memo: '10/22 주유' }, { item: 'domestic_transport', amount: 12000, memo: '10/22 택시' }] });
+    expenses: [{ item: 'domestic_transport', kind: '주유', amount: 50000, memo: '10/22 셀프주유소' }, { item: 'domestic_transport', kind: '택시', amount: 12000, memo: '10/22 서울역→판교' }] });
   const lines = settleLines(rep, {});
   assert.equal(lines.find(l => l.amount === 50000).label, '차량유지비(판)');
   assert.equal(lines.find(l => l.amount === 12000).label, '여비교통비(판)_국내교통비');
   const { plan, left } = R.planPayees([{ 예산과목: '여비교통비(판)_식대', 품의금액: '30,000' }, { 예산과목: '차량유지비(판)', 품의금액: '150,000' }], lines);
   assert.equal(plan[1].lines[0].amount, 50000); assert.deepEqual(left.map(l => l.amount), [12000]);
-  const car = R.parseReport({ ...rep, name: '홍길동', fund: '일반경비', transport: { mode: 'car' }, expenses: [{ item: 'domestic_transport', amount: 50000, memo: '10/22 주유' }] });
+  const car = R.parseReport({ ...rep, name: '홍길동', fund: '일반경비', transport: { mode: 'car' }, expenses: [{ item: 'domestic_transport', kind: '주유', amount: 50000, memo: '10/22 주유' }] });
   assert.equal(settleLines(car, {})[0].label, '여비교통비(판)_국내교통비');   // 자차는 그대로
+});
+
+test('주유비는 품의에 있는 줄로: 예전 법인차량 품의(국내교통비만) ↔ 법인차량 품의(차량유지비만), 택시는 차량유지비로 안 감 (자가 테스트 2026-10-28)', () => {
+  const VH = '차량유지비(판)', TR = '여비교통비(판)_국내교통비';
+  const L = (label, amount, memo, kind = '') => ({ label, amount, memo, kind, supply: amount, pay: 'personal' });
+  const old = R.planPayees([{ 예산과목: TR, 품의금액: '100,000' }], [L(VH, 50000, '10/22 주유', '주유')]);
+  assert.equal(old.plan[0].lines[0].amount, 50000); assert.equal(old.left.length, 0);
+  const nw = R.planPayees([{ 예산과목: VH, 품의금액: '150,000' }], [L(TR, 50000, '10/22 주유', '주유'), L(TR, 12000, '10/22 택시', '택시')]);
+  assert.equal(nw.plan[0].lines.length, 1); assert.deepEqual(nw.left.map(l => l.amount), [12000]);
+  const both = R.planPayees([{ 예산과목: TR, 품의금액: '100,000' }, { 예산과목: VH, 품의금액: '150,000' }], [L(VH, 50000, '주유', '주유'), L(TR, 12000, '택시', '택시')]);
+  assert.equal(both.plan[1].lines[0].amount, 50000); assert.equal(both.plan[0].lines[0].amount, 12000);
+});
+
+test('진단·보고 HTML 의 비밀번호 값은 속성 순서와 상관없이 지움 (자가 테스트 2026-10-28)', () => {
+  const { scrubHtml } = require('../src/engine/errreport');
+  for (const t of ['<input type="password" value="s3cret">', '<input value="s3cret" type="password">', "<input class='x' value='s3cret' id=p type=password>", '<input value=s3cret type="password" name="pw">'])
+    assert.ok(!scrubHtml(t).includes('s3cret'), t);
+  assert.equal(scrubHtml('<input type="text" value="홍길동">'), '<input type="text" value="홍길동">');
+});
+
+test('설정 파일을 못 읽으면(깨짐·잠김) 기본값으로 덮어쓰지 않음 — 로그인 정보·AI 키 보존 (자가 테스트 2026-10-28)', () => {
+  const fs = require('fs'), os = require('os'), path = require('path');
+  const { Store } = require('../src/engine/store');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ta-store-')); const s = new Store(dir);
+  s.saveConfig({ gwId: 'me', aiKeyEnc: 'K', rates: { lunch: 0 } });
+  assert.equal(s.config().rates.lunch, 0); assert.equal(s.config().rates.breakfast, 8000);
+  fs.writeFileSync(s.configPath, '{"gwId":"me","aiKe');   // 쓰다 만(깨진) 파일 → 옆에 남겨 두고 새로 (다시 켜도 안 고쳐지니 막지 않음)
+  s.saveConfig({ name: '홍길동' });
+  const broken = fs.readdirSync(dir).find(n => n.startsWith('config.json.broken-'));
+  assert.ok(broken && fs.readFileSync(path.join(dir, broken), 'utf8') === '{"gwId":"me","aiKe', '깨진 파일은 그대로 남겨야 함');
+  fs.rmSync(s.configPath); fs.mkdirSync(s.configPath);   // 못 읽는 상태(잠김 등 — 깨진 게 아님) → 덮어쓰지 않고 멈춤
+  assert.throws(() => s.saveConfig({ name: '홍길동' }), /설정 파일을 못 읽었어요/);
+  fs.rmSync(s.configPath, { recursive: true });
+  s.save('t', { a: 1 }); assert.deepEqual(s.load('t'), { a: 1 }); assert.ok(!fs.existsSync(path.join(dir, 'trips', 't', 'trip.json.tmp')));
+});
+
+test('정산 자가 테스트 2026-10-28: 미지출액 0·면세 오판·식대 묶음·대중교통 판정·카드 자금계획일·여유분', () => {
+  const L = (label, amount, memo, extra = {}) => ({ label, amount, memo, supply: amount, pay: 'personal', ...extra });
+  // 미지출액 0 = 다 쓴 줄 → 넣지 않음 (빈 칸이면 품의금액)
+  const z = R.planPayees([{ 예산과목: '여비교통비(판)_식대', 품의금액: '60,000', 미지출액: '0' }], [L('여비교통비(판)_식대', 30000, '10/19 중식')]);
+  assert.equal(z.plan[0].limit, 0); assert.equal(z.plan[0].lines.length, 0);
+  assert.equal(R.planPayees([{ 예산과목: '여비교통비(판)_식대', 품의금액: '60,000', 미지출액: '' }], []).plan[0].limit, 60000);
+  // 면세: AI 가 읽은 종류로 (적요에 '항공우주연구원'·'대전 경유'가 있어도 식사·택시면 과세). 종류 모르는 직접 쓴 줄만 적요로 짐작
+  assert.equal(R.noVatOf({ item: 'meal', kind: '식사', memo: '10/19 한국항공우주연구원 앞 식당 중식' }), false);
+  assert.equal(R.noVatOf({ item: 'domestic_transport', kind: '택시', memo: '대전 경유 택시' }), false);
+  assert.equal(R.noVatOf({ item: 'domestic_transport', kind: '주유', memo: '10/19 셀프' }), true);
+  assert.equal(R.noVatOf({ item: 'domestic_transport', memo: '10/19 주유' }), true);
+  // 개인경비 식대는 면세 여부와 상관없이 같은 날 한 줄
+  assert.equal(R.mergeMealRows([{ item: 'meal', amount: 8000, date: '2026-10-19', memo: '10/19 1인 조식', pay: 'personal', noVat: false }, { item: 'meal', amount: 15000, date: '2026-10-19', memo: '10/19 항공 1인 중식', pay: 'personal', noVat: true }]).length, 1);
+  // 법인차량: 종류로만 — 택시는 국내교통비, KTX역 주차장은 차량유지비, 종류 모르는 직접 쓴 줄은 고른 과목 그대로
+  assert.equal(R.vehicleItem({ item: 'domestic_transport', kind: '택시', memo: '서울역→판교' }, 'corporate').item, 'domestic_transport');
+  assert.equal(R.vehicleItem({ item: 'domestic_transport', kind: '주차', memo: '오송역' }, 'corporate').item, 'vehicle');
+  assert.equal(R.vehicleItem({ item: 'domestic_transport', memo: '10/22 주유' }, 'corporate').item, 'domestic_transport');
+  // 법인카드 자금계획일 = 그 영수증을 쓴 달의 다음 달 23일 (월을 넘긴 출장)
+  const { settleLines, reportDraft } = require('../src/engine/runner');
+  const rep = R.parseReport({ reason: 'x', name: '홍길동', period: '2026.10.30 - 2026.11.02', destination: 'd', purpose: 'p', report: 'r', fund: '일반경비', schedule: [{ date: '10/30', place: 'd', detail: 'a' }],
+    expenses: [{ item: 'meal', amount: 15000, memo: '11/01 1인 중식', date: '2026-11-01', pay: 'card' }, { item: 'meal', amount: 15000, memo: '10/30 1인 중식', date: '2026-10-30', pay: 'card' }] });
+  assert.deepEqual(settleLines(rep, {}).map(l => l.planDate), ['2026-11-23', '2026-12-23']);
+});
+
+test('보고서 초안: 자차 교통비를 지도 조회값으로 못 바꾸면 신청 때 더한 여유분은 뺌 (자가 테스트 2026-10-28)', () => {
+  const fs = require('fs'), os = require('os'), path = require('path');
+  const { Store } = require('../src/engine/store'); const { reportDraft } = require('../src/engine/runner');
+  const s = new Store(fs.mkdtempSync(path.join(os.tmpdir(), 'ta-draft-')));
+  s.save('t', { apply: { reason: 'r', destination: 'd', start: '2026-10-30', end: '2026-10-30', purpose: 'p', companions: [], transport: { mode: 'car', to: 'd' },
+    expenses: [{ item: 'domestic_transport', amount: 80000, memo: '출장 유류비 및 통행료 (왕복 + 여유 20,000원)' }] }, fare: { total: 60000, source: 'input' } });
+  const e = reportDraft(s, {}, 't').expenses[0];
+  assert.equal(e.amount, 60000); assert.ok(!/여유/.test(e.memo), e.memo);
+});
+
+test('한 줄 메모 자가 테스트 2026-10-28: 모델명 숫자·요일 조사·주말 걸친 범위·잘못된 M/D·해 넘김·새벽 출발·밤 12시·장소', () => {
+  const qa = (m, today = new Date(2026, 9, 28)) => Q.quickApply(m, { today, places: PLACES, rates: Q.DEFAULT_RATES }).data;
+  let d = qa('10/30 판교 RBY1 시연'); assert.equal(d.dates.start_time, ''); assert.ok(d.reason.includes('RBY1 시연'), d.reason);
+  assert.equal(qa('RB5 시운전 10/30').dates.start_time, '');
+  assert.equal(qa('판교 RBY1 일정 협의').dates.start, '');   // 'RBY1 일정' 의 1일 아님
+  assert.deepEqual([qa('다음주 화요일부터 목요일까지 판교 회의').dates.start, qa('다음주 화요일부터 목요일까지 판교 회의').dates.end], ['2026-11-03', '2026-11-05']);
+  assert.equal(qa('다음주 수요일날 판교 회의').dates.start, '2026-11-04');
+  d = qa('이번주 금~월 부산 공장'); assert.deepEqual([d.dates.start, d.dates.end], ['2026-10-30', '2026-11-02']);
+  assert.equal(qa('판교 v2.3 펌웨어 배포 10/30').dates.start, '2026-10-30');
+  assert.equal(qa('13/5 회의').dates.start, '');
+  d = qa('12/30~1/2 판교 회의', new Date(2027, 0, 5)); assert.deepEqual([d.dates.start, d.dates.end], ['2026-12-30', '2027-01-02']);
+  d = qa('10/30 판교 회의 6시 출발 13시 복귀'); assert.deepEqual([d.dates.start_time, d.dates.end_time], ['06:00', '13:00']);
+  assert.equal(qa('10/30 회의 9시 출발 3시 복귀').dates.end_time, '15:00');
+  assert.equal(qa('10/30 회의 9시 출발 밤 12시 복귀').dates.end_time, '23:59');
+  assert.equal(qa('다음주 월 출발 금 복귀 대전 공장').destination, '대전 공장');
+  assert.equal(qa('10/30 LG전자(창원) 공장 설치').destination, 'LG전자(창원) 공장');
+  assert.equal(qa('10/30 회의 9시~18시 대전 공장').destination, '대전 공장');
+  assert.equal(R.parseTripPeriod('2026.12.30 ~ 1.2', '2026-12-20').end, '2027-01-02');
+  for (const t of ['10/27 인천공항 장비 통관', '제주 항공권', '고객사 장비 인도 지원', '10/30 파리바게뜨 평택공장']) assert.equal(R.overseasGuess(t).overseas, false, t);
+  assert.deepEqual(R.overseasGuess('1/6 라스베이거스 CES'), { overseas: true, grade: '가' });
+  assert.equal(R.overseasGuess('하노이 빈패스트 미팅').grade, '나');
+});
+
+test('개인경비 자금계획일이 지난 날짜가 되지 않음: 10/24(토) 올림 → 25일이 일요일이라 앞 평일 10/23 은 지났으니 다음 자금일 (자가 테스트 2026-10-28)', () => {
+  const f = d => R.fundPlanDate('personal', { today: new Date(`${d}T00:00:00`) });
+  assert.equal(f('2026-10-24'), '2026-11-10');
+  assert.equal(f('2026-10-19'), '2026-10-20');
+  assert.equal(f('2026-10-26'), '2026-11-10');
+  assert.equal(f('2026-12-28'), '2027-01-08');   // 1/10 일요일 → 1/8
+});
+
+test('발주서 글자 읽기: 엑셀 빈 칸(<c/>)·건너뛴 칸에서 열이 안 밀림, 워드 변경 추적의 지운 글자는 뺌 (자가 테스트 2026-10-28)', () => {
+  const { officeText } = require('../src/engine/office'); const F = n => require('path').join(__dirname, 'fixtures', n);
+  assert.equal(officeText(F('po_empty_cells.xlsx')), '품명\t규격\t수량\t단가\n모션 컨트롤러\t\t2\t105000\n\t모션 컨트롤러');
+  assert.equal(officeText(F('po_sparse_row.xlsx')), '품명\t규격\t수량\n모션 컨트롤러\t\t2');
+  assert.equal(officeText(F('po_tracked_changes.docx')), '수량\t20\nA\nB');   // 10 → 20 으로 고친 문서
+});
+
+test('네이버 자차 경로: 통행료는 첫 경로 줄에서만 — 첫 경로가 무료면 0 (다음 경로 통행료를 읽으면 안 됨) (실제 화면 글자, 2026-10-28)', () => {
+  const page = '1실시간 추천\n1시간 36분127km\n택시비163,320원통행료6,400원연료비29,498원\n원활경부고속도로103km\n상세보기\n2세종포천고속도로\n택시비179,850원통행료6,100원연료비32,441원\n';
+  assert.deepEqual(R.parseCarText(page), { fuel: 29498, toll: 6400 });
+  const free = '1무료우선\n2시간 14분142km\n택시비182,770원통행료 무료연료비32,825원\n상세보기\n2큰길우선\n택시비170,520원통행료7,100원연료비30,801원\n';
+  assert.deepEqual(R.parseCarText(free), { fuel: 32825, toll: 0 });
+});
+
+test('AI 답 숫자는 첫 번째 수만 ("1 SET (2EA)" → 1, "1,460,000 (VAT 146,000)" → 1460000) (자가 테스트 2026-10-28)', () => {
+  const { firstNum } = require('../src/engine/ai');
+  assert.equal(firstNum('1 SET (2EA)'), 1); assert.equal(firstNum('1,460,000 (VAT 146,000)'), 1460000); assert.equal(firstNum('12,000.00'), 12000); assert.equal(firstNum('-5,000'), -5000); assert.equal(firstNum(0), 0);
+});
+
+test('정산 자가 테스트 2026-10-28 (2): 같은 날짜 예산 줄 둘이면 차례로 채움 · 출장 전달에 쓴 영수증(9/28)은 그해', () => {
+  const T = '여비교통비(판)_식대';
+  const p = R.planPayees([{ 예산과목: T, 예산과목비고: '10/19 조식', 품의금액: '8,000' }, { 예산과목: T, 예산과목비고: '10/19 중식·석식', 품의금액: '30,000' }],
+    [{ label: T, amount: 38000, memo: '10/19 1인 조식·중식·석식', date: '2026-10-19', supply: 38000, pay: 'personal' }]);
+  assert.deepEqual(p.plan.map(x => x.lines.map(l => l.amount)), [[8000], [30000]]);
+  const { settleLines } = require('../src/engine/runner');
+  const rep = R.parseReport({ reason: 'x', name: 'a', period: '2026.10.30 - 2026.11.02', destination: 'd', purpose: 'p', report: 'r', fund: '일반경비', schedule: [{ date: '10/30', place: 'd', detail: 'a' }],
+    expenses: [{ item: 'domestic_transport', amount: 50000, memo: '9/28 KTX 예매', pay: 'card' }, { item: 'meal', amount: 8000, memo: '10/32 1인 조식', pay: 'card' }] });
+  const ls = settleLines(rep, {});
+  assert.equal(ls.find(l => l.amount === 50000).date, '2026-09-28'); assert.equal(ls.find(l => l.amount === 50000).planDate, '2026-10-23');
+  assert.equal(ls.find(l => l.amount === 8000).date, '');   // 오타 날짜는 날짜 없음 → 자금계획일은 출장 시작 기준
+  assert.equal(ls.find(l => l.amount === 8000).planDate, '2026-11-23');
+});
+
+test('해외 판정: 흔한 말과 같은 이름(빈도·빈 시간·US 고객)만으론 해외 아님, 등급만 정함 / 법인차량·해외 신청엔 교통비 줄 없음 (자가 테스트 2026-10-28)', () => {
+  for (const t of ['점검 빈도 확인차 창원 방문', '10/30 대전 빈 시간에 고객사 방문', 'US 고객 미팅 판교', '10/30 파리바게뜨 평택공장']) assert.equal(R.overseasGuess(t).overseas, false, t);
+  assert.deepEqual(R.overseasGuess('오스트리아 빈 전시회'), { overseas: true, grade: '가' });
+  assert.deepEqual(R.overseasGuess('미국출장 LA 지사'), { overseas: true, grade: '가' });
+  const base = { reason: 'r', destination: 'd', dates: { start: '2026-10-30', end: '2026-10-30', start_time: '09:00', end_time: '18:00' }, purpose: 'p', companions: [] };
+  assert.equal(R.parseApply({ ...base, transport: { mode: 'corporate', total: 60000, screenshot: '/x.png' } }).transport.total, null);   // 숨은 칸에 남은 교통비
+  assert.equal(R.parseApply({ ...base, transport: { mode: 'car', to: 'd', total: 0 } }).transport.total, 0);   // 0원은 넣은 값
 });

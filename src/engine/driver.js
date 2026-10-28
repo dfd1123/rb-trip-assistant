@@ -79,8 +79,9 @@ const rgSelect = (r, i) => {
   return false;
 };
 const grid = hdr => all('.rg-root').find(r => vis(r) && all('.rg-header-cell', r).some(h => norm(h.textContent) === norm(hdr)));
-const headers = g => all('.rg-header-cell', g).map(h => norm(h.textContent));
-const rows = g => all('tr.rg-data-row', g);
+// 그리드가 없으면(창이 닫힘) 빈 목록 — all(sel, undefined) 는 문서 전체라 아래 화면 그리드를 건드렸음 (자가 테스트 2026-10-28)
+const headers = g => g ? all('.rg-header-cell', g).map(h => norm(h.textContent)) : [];
+const rows = g => g ? all('tr.rg-data-row', g) : [];
 // 칸 찾기: 헤더 순서가 아니라 '헤더 바로 아래 위치'로 (채주내역 '계좌번호'처럼 헤더 하나가 칸 두 개를 덮으면 순서가 어긋난다)
 const cellUnder = (h, r) => { const a = h.getBoundingClientRect(), x = a.left + a.width / 2;
   return all('td.rg-data-cell', r).find(td => { const b = td.getBoundingClientRect(); return b.width > 0 && b.left <= x && b.right >= x; }) || null; };
@@ -212,7 +213,9 @@ class Page {
     const reqs = new Map(); const pending = [];
     const onMsg = (e, method, params) => {
       if (method === 'Network.requestWillBeSent' && /xhr|fetch/i.test(params.type || '')) {
-        const r = params.request; reqs.set(params.requestId, { url: r.url, method: r.method, headers: r.headers, postData: r.postData || '' });
+        // 인증 헤더(로그인 토큰·서명·쿠키)는 기록하지 않는다 — 진단 파일이 슬랙 등으로 나갈 수 있음 (자가 테스트 2026-10-28)
+        const r = params.request, headers = Object.fromEntries(Object.entries(r.headers || {}).filter(([k]) => !/authorization|cookie|token|sign|secret|session/i.test(k)));
+        reqs.set(params.requestId, { url: r.url, method: r.method, headers, postData: r.postData || '' });
       }
       if (method === 'Network.responseReceived' && reqs.has(params.requestId)) Object.assign(reqs.get(params.requestId), { status: params.response.status, mime: params.response.mimeType });
       if (method === 'Network.loadingFinished' && reqs.has(params.requestId))

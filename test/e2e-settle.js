@@ -210,6 +210,25 @@ app.whenReady().then(async () => {
       console.log('E2E 정산 결재 중 신청·전액 환원 OK');
     }
 
+    if (run(11)) {
+      // ---- 11) 법인차량 출장 (최병관 2026-10-28): 품의에 차량유지비 줄 → 주유 영수증(국내교통비로 읽힘)은 차량유지비 채주로.
+      //      결의서입력은 막 열면 목록이 비어 있고([조회] 해야 나옴), 첫 줄이 체크돼 보이지만 선택으론 안 잡힘 → 풀었다 다시 체크해야 [결재상신]이 됨
+      const st11 = STATE({ resLazy: true, resPreChecked: true, apprPreChecked: true });
+      st11.approve.push({ ...APPLY(), key: '2026-10|14|5', 순번: '5', 적요: '다른 출장' });   // 품의서승인에 두 건이 미리 체크돼 있음 → 한 건만 남기고 풀어야 [결의서전송/취소]가 됨
+      Object.assign(st11.approve[0], { 총금액: '210,000', budgets: [
+        { 부서: '매니퓰레이터 사업부', 예산과목: '여비교통비(판)_식대', 예산과목비고: '10/22 - 2인 중식', 품의금액: '30,000' },
+        { 부서: '매니퓰레이터 사업부', 예산과목: '여비교통비(판)_기타', 예산과목비고: '10/22 - 주차비용', 품의금액: '30,000' },
+        { 부서: '매니퓰레이터 사업부', 예산과목: '차량유지비(판)', 예산과목비고: '10/22 - 차량 주유비', 품의금액: '150,000' }] });
+      mock.setSettle(st11); asked.length = 0;
+      await runner.runReport(env, { ...report([E('meal', 30000, '10/22 2인 중식', '2026-10-22', '중식', 2, 'c1.png'), { ...E('domestic_transport', 50000, '10/22 주유', '2026-10-22', '', 0, 'c2.png'), kind: '주유' }]), transport: { mode: 'corporate' } });
+      const s11 = mock.getSettle(), e11 = s11.approve[0].resolutions.find(r => r.결의구분 === '지출결의서');
+      assert.deepEqual(e11.budgets.map(b => b.payees.map(p => p.총금액)), [['30,000'], [], ['50,000']], '주유는 차량유지비 줄로');
+      assert.equal(s11.approve[0].resolutions.find(r => r.결의구분 === '환원').금액, 210000 - 80000);
+      assert.deepEqual(s11.approvalFor, [e11.결의번호], '결의서입력에서 그 결의로 결재상신');
+      assert.equal((s11.alertTexts || []).length, 0, '오류 창: ' + (s11.alertTexts || []).join(' / '));
+      console.log('E2E 정산 법인차량·결의서입력 늦게 뜨는 목록 OK');
+    }
+
   } catch (e) {
     code = 1; console.error('E2E 정산 실패:', e.stack || e);
     try { const w = BrowserWindow.getAllWindows().find(x => /127\.0\.0\.1/.test(x.webContents.getURL()));   // 화면 상태 (칸 위치·맨 위 요소)
@@ -220,4 +239,4 @@ app.whenReady().then(async () => {
     try { const s = mock.getSettle(); console.error(JSON.stringify({ buttons: s.buttons, closed: s.closed, alerts: s.alertTexts, res: s.approve[0].resolutions.map(r => [r.결의구분, r.결의번호, (r.budgets || []).map(b => b.payees.length)]) })); } catch (x) { /* */ }
   } finally { srv.close(); app.exit(code); }
 });
-setTimeout(() => { console.error('E2E 정산 시간 초과'); process.exit(3); }, 1200000);
+setTimeout(() => { console.error('E2E 정산 시간 초과'); process.exit(3); }, 2400000);   // 11가지 시나리오 (한 번에 다 돌리면 20분을 넘김)

@@ -38,7 +38,8 @@ function centralSizes(buf) {
 }
 
 const unesc = s => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&#(\d+);/g, (_, d) => String.fromCharCode(d)).replace(/&amp;/g, '&');
-const xmlText = (xml, cellBreak) => unesc(String(xml).replace(/(<\/w:p>\s*)+<\/w:tc>/g, cellBreak).replace(/<\/w:tr>/g, '\n').replace(/<\/w:p>/g, '\n').replace(/<w:tab\/>/g, '\t').replace(/<[^>]+>/g, '')).replace(/\t+\n/g, '\n');
+// 변경 추적으로 지운 글자(w:del)·필드 코드(w:instrText)는 빼고, 줄바꿈(w:br)은 살림
+const xmlText = (xml, cellBreak) => unesc(String(xml).replace(/<w:del\b[^>]*\/>|<w:del\b[^>]*>[\s\S]*?<\/w:del>/g, '').replace(/<w:instrText\b[^>]*\/>|<w:instrText\b[^>]*>[\s\S]*?<\/w:instrText>/g, '').replace(/<w:br\s*\/>/g, '\n').replace(/(<\/w:p>\s*)+<\/w:tc>/g, cellBreak).replace(/<\/w:tr>/g, '\n').replace(/<\/w:p>/g, '\n').replace(/<w:tab\/>/g, '\t').replace(/<[^>]+>/g, '')).replace(/\t+\n/g, '\n');
 
 /** .docx / .xlsx → 글자. 표는 칸을 탭으로, 줄은 줄바꿈으로 */
 function officeText(file) {
@@ -57,9 +58,13 @@ function officeText(file) {
     for (const k of sheets) {
       for (const row of z.get(k).toString('utf8').matchAll(/<row[^>]*>([\s\S]*?)<\/row>/g)) {
         const cells = [];
-        for (const c of row[1].matchAll(/<c\b([^>]*)>([\s\S]*?)<\/c>/g)) {
-          const t = /t="([^"]+)"/.exec(c[1]); const v = /<v>([\s\S]*?)<\/v>/.exec(c[2]); const is = /<t[^>]*>([\s\S]*?)<\/t>/.exec(c[2]);
-          cells.push(t && t[1] === 's' && v ? (ss[Number(v[1])] || '') : t && t[1] === 'inlineStr' && is ? unesc(is[1]) : v ? unesc(v[1]) : '');
+        // 빈 칸은 <c r="B2" s="3"/> 로 닫힘 — 이걸 못 보면 다음 칸 내용을 삼켜 열이 밀림. 칸 위치는 r="B2" 의 열 글자로 (빈 칸을 건너뛴 줄도 열이 맞게)
+        const colOf = r => { const m = /^([A-Z]+)/.exec(r || ''); return m ? [...m[1]].reduce((a, ch) => a * 26 + ch.charCodeAt(0) - 64, 0) - 1 : cells.length; };
+        for (const c of row[1].matchAll(/<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g)) {
+          const body = c[2] || '', t = /\bt="([^"]+)"/.exec(c[1]), v = /<v>([\s\S]*?)<\/v>/.exec(body), is = /<t[^>]*>([\s\S]*?)<\/t>/.exec(body);
+          const col = colOf((/\br="([^"]+)"/.exec(c[1]) || [])[1]);
+          while (cells.length < col) cells.push('');
+          cells[col] = t && t[1] === 's' && v ? (ss[Number(v[1])] || '') : t && t[1] === 'inlineStr' && is ? unesc(is[1]) : v ? unesc(v[1]) : '';
         }
         if (cells.some(Boolean)) lines.push(cells.join('\t').replace(/\t+$/, ''));
       }

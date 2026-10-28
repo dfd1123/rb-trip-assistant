@@ -131,7 +131,7 @@ function updateApply(){
   $('#tkDays').textContent = days > 0 ? (days === 1 ? '당일' : `${days - 1}박 ${days}일`) : '';
   countTo($('#tkTotal'), totalNum);
   const by = {}; exps.forEach(e => { const k = (META.items[e.item] || e.item).replace('여비교통비(판)_', ''); by[k] = (by[k] || 0) + e.amount; });
-  if(!ovs && mode !== 'corporate' && fareTxt) by['교통비'] = (by['교통비'] || 0) + num(fareTxt);
+  { const f = fareParts(); if(f.fare + f.margin) by['교통비'] = (by['교통비'] || 0) + f.fare + f.margin; }   // 합계와 같은 계산 (여유분 포함)
   $('#tkBreak').innerHTML = ''; Object.entries(by).filter(([, v]) => v).forEach(([k, v]) => { const sp = document.createElement('span'); sp.textContent = `${k} ${won(v)}`; $('#tkBreak').appendChild(sp); });
   if(!ovs && !mode){ const sp = document.createElement('span'); sp.className = 'need'; sp.textContent = '교통비 · 교통편 선택 필요'; $('#tkBreak').appendChild(sp); }   // 안 골랐으면 합계에 교통비가 빠져 있다는 표시
   const companions = list($('#a_companions').value);
