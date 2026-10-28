@@ -263,7 +263,7 @@ function assertFilesExist(paths, what) {
 }
 async function readReceipts(env, ai, paths, period) {
   const fs = require('fs');
-  const items = Object.fromEntries(Object.entries(R.BUDGET_ITEMS).map(([k, [, label]]) => [k, label.replace('여비교통비(판)_', '')]));
+  const items = Object.fromEntries(Object.entries(R.BUDGET_ITEMS).filter(([k]) => k !== 'vehicle').map(([k, [, label]]) => [k, label.replace('여비교통비(판)_', '')]));
   const out = [];
   let i = 0;
   const one = async p => {
@@ -535,7 +535,7 @@ async function route(p, body = {}) {
       const ai = aiSettings(cfg); if (!ai) return { memo: '' };
       const f = String(body.path || ''), ext = path.extname(f).slice(1).toLowerCase(), mime = PROOF_MIME[ext];
       if (!mime) return { memo: '' };
-      const items = Object.fromEntries(Object.entries(R.BUDGET_ITEMS).map(([k, [, label]]) => [k, label.replace('여비교통비(판)_', '')]));
+      const items = Object.fromEntries(Object.entries(R.BUDGET_ITEMS).filter(([k]) => k !== 'vehicle').map(([k, [, label]]) => [k, label.replace('여비교통비(판)_', '')]));
       const rows = await AI.readReceipt(ai, { mime, data: require('fs').readFileSync(f).toString('base64') }, items, String(body.period || ''), cfg.rates);
       const r = rows.find(x => x.item === body.item) || rows[0];
       if (!r) return { memo: '' };

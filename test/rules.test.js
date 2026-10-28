@@ -667,3 +667,17 @@ test('AI 결과 병합: AI 가 비워 둔 칸은 규칙으로 읽은 값을 지�
   const m = Q.mergeAi(base, { reason: '', purpose: null, destination: '', transport: { mode: '' }, companions: [], dates: { start: '' } }, PLACES, { defaultOrigin: '세종' });
   assert.equal(m.reason, base.reason); assert.equal(m.destination, '킨텍스'); assert.equal(m.transport.mode, 'corporate'); assert.equal(m.dates.start, '2026-10-27'); assert.ok(m.purpose);
 });
+
+test('법인차량 출장의 주유·통행료는 차량유지비(판) 예산 줄로, 택시는 국내교통비 그대로 (최병관 2026-10-28)', () => {
+  const { settleLines } = require('../src/engine/runner');
+  const rep = R.parseReport({ reason: 'x', name: '홍길동', period: '2026.10.22 - 2026.10.22', destination: 'd', purpose: 'p', report: 'r', fund: '일반경비',
+    schedule: [{ date: '10/22', place: 'd', detail: 'a' }], transport: { mode: 'corporate' },
+    expenses: [{ item: 'domestic_transport', amount: 50000, memo: '10/22 주유' }, { item: 'domestic_transport', amount: 12000, memo: '10/22 택시' }] });
+  const lines = settleLines(rep, {});
+  assert.equal(lines.find(l => l.amount === 50000).label, '차량유지비(판)');
+  assert.equal(lines.find(l => l.amount === 12000).label, '여비교통비(판)_국내교통비');
+  const { plan, left } = R.planPayees([{ 예산과목: '여비교통비(판)_식대', 품의금액: '30,000' }, { 예산과목: '차량유지비(판)', 품의금액: '150,000' }], lines);
+  assert.equal(plan[1].lines[0].amount, 50000); assert.deepEqual(left.map(l => l.amount), [12000]);
+  const car = R.parseReport({ ...rep, name: '홍길동', fund: '일반경비', transport: { mode: 'car' }, expenses: [{ item: 'domestic_transport', amount: 50000, memo: '10/22 주유' }] });
+  assert.equal(settleLines(car, {})[0].label, '여비교통비(판)_국내교통비');   // 자차는 그대로
+});

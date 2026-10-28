@@ -1020,13 +1020,14 @@ class Amaranth {
   /** 전송된 결의면 { ok, resNo } (환원이 빠졌으면 [환원]만 다시). 아니면 null — 아무것도 안 함 */
   /** 그리드(gridHdr)에서 k번째 줄만 체크: 다른 줄에 남아 있던 체크(사람이 전에 해 둔 것 등)는 풀어 준다.
    *  체크 칸은 데이터 줄(tr) 안이 아니라 옆의 tr.rg-row-bar 에 있어 그리드 안 td.rg-checkbar-cell 순서 = 줄 순서 */
-  async checkOnly(gridHdr, k) {
+  async checkOnly(gridHdr, k, { fresh = false } = {}) {
     const p = this.page;
     const state = () => p.eval(h => { const g = grid(h); return all('td.rg-checkbar-cell', g).map(c => { const i = c.querySelector('input[type=checkbox]'); return i ? i.checked : /(^|\s)checked/.test(c.textContent || ''); }); }, gridHdr);
     const toggle = async i => { await p.clickWhere((h, i) => { const g = grid(h); const c = all('td.rg-checkbar-cell', g)[i]; return c && (all('span, label, input', c).find(vis) || c); }, gridHdr, i); await sleep(400); };
     let st = await state();
     for (let i = 0; i < st.length; i++) if (i !== k && st[i]) { await toggle(i); this.log(`  (다른 줄 ${i + 1} 체크 풀음)`); }
     st = await state();
+    if (fresh && st[k]) { await toggle(k); st = await state(); }   // 이미 체크돼 있으면 풀었다가 다시 (그대로 두면 그룹웨어가 선택으로 안 받는 화면이 있음)
     if (!st[k]) await toggle(k);
     st = await state();
     if (!st[k] || st.some((on, i) => on && i !== k)) this.log(`  (체크 상태 확인 못 함: ${st.map((on, i) => on ? i + 1 : '').filter(Boolean).join(',') || '없음'} 체크됨)`);
@@ -1486,22 +1487,32 @@ class Amaranth {
     await sleep(1500);
     // 결의서입력 목록의 순번은 결의번호 끝자리와 다를 수 있다 (순번 23 ↔ 20261022-00024 — 2026-10-22). 날짜·지출결의서·집행용도·금액·상신대기로 찾고, 여럿이면 순번이 맞는 것, 없으면 마지막 것
     const sent = this.lastSent && this.lastSent.no === resNo ? this.lastSent : null;
-    const ri = await p.eval((y, d, q, amt, purpose) => { const g = grid('결의구분'); const num = s => Number(String(s || '').replace(/[^\d]/g, '')) || 0;
+    const find = () => p.eval((y, d, q, amt, purpose) => { const g = grid('결의구분'); const num = s => Number(String(s || '').replace(/[^\d]/g, '')) || 0;
       const vs = rows(g).map((_, i) => ({ i, v: rowVals(g, i) || {} }));
       const cand = vs.filter(({ v }) => v['결의연월'] === y && String(Number(v['결의일'])) === d && /지출결의서/.test(v['결의구분'] || '') && /상신대기/.test(v['결재상태'] || '')
         && (!purpose || norm(v['집행용도'] || '').startsWith(norm(purpose).slice(0, 10))) && (!amt || num(v['총금액']) === amt));
       const hit = cand.find(({ v }) => v['순번'] === q) || cand[cand.length - 1];
       return hit ? hit.i : -1; }, ym, day, seq, sent ? sent.amount : 0, sent ? sent.purpose : '');
+    let ri = await find();
+    // 화면을 막 열면 목록이 안 불려 와 빈 줄만 있을 때가 있다 (2026-10-28 최병관) → 돋보기(조회)를 눌러 다시 불러와 찾는다
+    for (let i = 0; ri < 0 && i < 3; i++) {
+      this.log('목록에 결의가 안 보여 [조회]를 다시 눌러요.');
+      try { await p.clickWhere(() => document.querySelector('#tutorial-conditionPanel-search, [class*=OBTConditionPanel_searchButton]')); } catch (e) { await p.key('Enter'); }
+      ri = (await p_wait(p, async () => (await find()) >= 0, 6000)) ? await find() : -1;
+    }
     if (ri < 0) {
       await this.debugDump('resolution-find', '결의서입력');
       await this.ui.assist(`결의서입력 목록에서 결의(${resNo}${sent ? `, ${sent.amount.toLocaleString('ko-KR')}원` : ''})를 못 찾았어요. [작업 중인 창 열기]에서 그 행만 체크하고 [계속]을 눌러 주세요.`);
+      ri = await find();   // 사람이 [조회]해서 목록이 나왔으면 아래에서 앱이 직접 체크 (사람이 누른 체크만으론 [결재상신]이 안 먹었음 — 2026-10-28)
+    }
+    if (ri < 0) {
       const checked = await p.eval(() => { const g = grid('결의구분'); return rows(g).some(tr => all('td.rg-checkbar-cell input', tr).some(x => x.checked) || /rg-checked|checked/.test(tr.className)); }).catch(() => false);
       if (!checked) throw new Error(`결의서입력 목록에서 결의(${resNo}) 행이 체크되지 않았어요. 다시 [그룹웨어 보내기]를 눌러 주세요.`);
       return;
     }
     const v = await this.rowVals('결의구분', ri);
     if (!/상신대기/.test(v['결재상태'] || '')) throw new Error(`결의(${resNo})가 이미 '${v['결재상태']}' 상태예요. 결재상신은 상신대기일 때만 해요.`);
-    await this.checkOnly('결의구분', ri);
+    await this.checkOnly('결의구분', ri, { fresh: true });   // 체크된 채로 두면 [결재상신]이 안 먹는다 → 풀었다가 다시 체크 (사용자 확인 2026-10-28)
     await sleep(300);
     this.log(`결의 선택: ${ym}-${day} 순번 ${seq} (${v['총금액']}원)`);
   }

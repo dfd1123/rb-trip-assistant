@@ -21,7 +21,12 @@ const BUDGET_ITEMS = {
   airfare: ['8120007', '여비교통비(판)_항공권'],
   overseas_per_diem: ['8120008', '여비교통비(판)_해외일비'],
   travel_etc: ['8120001', '여비교통비(판)_기타'],   // 해외 로밍(여행잡비)·여행자 보험
+  vehicle: ['8220000', '차량유지비(판)'],   // 법인차량 주유·통행료·주차 (회계팀: 법인차량 비용은 차량유지비로 — 2026-10-15 결재의견)
 };
+// 법인차량 출장의 국내교통비 영수증은 차량유지비로. 택시·대중교통은 그대로 국내교통비
+const PUBLIC_TRANSIT = /택시|버스|기차|KTX|SRT|ITX|지하철|전철|철도|코레일|항공/i;
+const vehicleItem = (e, mode) => mode === 'corporate' && e.item === 'domestic_transport' && !PUBLIC_TRANSIT.test(`${e.memo || ''} ${e.vendor || ''}`)
+  ? { ...e, item: 'vehicle', code: BUDGET_ITEMS.vehicle[0], label: BUDGET_ITEMS.vehicle[1] } : e;
 
 const TRANSPORT_MODES = {
   car: { check: ['자차'], autoFare: true },
@@ -211,6 +216,7 @@ function parseReport(data) {
     schedule: (data.schedule || []).map(r => ({ date: String(r.date || ''), place: String(r.place || ''), detail: String(r.detail || '').trim() })),
     expenses: parseExpenses(data.expenses, 'expenses', reason),
     attachments: (data.attachments || []).map(String),
+    transport_mode: String((data.transport && data.transport.mode) || ''),
   };
   if (!out.schedule.length || out.schedule.some(r => !r.detail)) throw new InputError('출장일정의 세부 활동 내용은 날짜마다 필수예요.');
   // 정산할 경비가 없을 수도 있다(전액 환원). 증빙도 없을 수 있다 — 화면에서 두 번 확인받고 넘어온다. 줄마다 증빙 여러 개 가능(채주 한 줄에 다 붙임), 이미지·PDF만
@@ -487,5 +493,5 @@ module.exports = {
   InputError, ro, applyTitle, reportTitle, budgetMemo, parseCarText, parseTransitText, roundTrip,
   parseApply, parseReport, parseExpenses, transportExpense, fuelOnlyExpense, applyPrompt, reportPrompt, extractYaml,
   OVERSEAS_GRADES, OVERSEAS_RATES, OVERSEAS_RATES_EXEC, overseasGuess, overseasExpenses,
-  FUNDS, PAY_MODES, fundPlanDate, supplyAmount, vatAmount, noVatOf, capToBudget, planPayees, mergeMealRows, capMealRows,
+  FUNDS, PAY_MODES, vehicleItem, fundPlanDate, supplyAmount, vatAmount, noVatOf, capToBudget, planPayees, mergeMealRows, capMealRows,
 };

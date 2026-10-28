@@ -132,7 +132,7 @@ function settleLines(rep, cfg, log = () => {}) {
   // 같은 날 식대 영수증 여러 장 → 채주 한 줄 (영수증 날짜 필드로. 직접 쓴 줄은 적요 앞 "10/20" + 출장 연도)
   const year = usedOn.slice(0, 4) || String(new Date().getFullYear());
   const startM = Number(usedOn.slice(5, 7)) || 0;
-  const dated = rep.expenses.map(e => { if (e.date) return e; const m = /^(\d{1,2})\/(\d{1,2})\b/.exec(e.memo || ''); const y = m && startM && +m[1] < startM ? +year + 1 : year;   // 12/30~1/2 출장의 '1/1' 은 다음 해
+  const dated = rep.expenses.map(e => R.vehicleItem(e, rep.transport_mode)).map(e => { if (e.date) return e; const m = /^(\d{1,2})\/(\d{1,2})\b/.exec(e.memo || ''); const y = m && startM && +m[1] < startM ? +year + 1 : year;   // 12/30~1/2 출장의 '1/1' 은 다음 해
     return { ...e, date: m ? `${y}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}` : '' }; });   // 날짜는 AI 가 읽은 필드 우선, 없으면(직접 쓴 줄) 적요 앞 M/D
   const capped = R.capMealRows(dated, cfg.rates);
   capped.filter(e => e.capped).forEach(e => log(`${e.memo}: ${e.paid.toLocaleString('ko-KR')}원 → 식대 규정 한도 ${e.amount.toLocaleString('ko-KR')}원으로 조정`));
