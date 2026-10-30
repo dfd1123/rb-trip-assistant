@@ -1687,9 +1687,10 @@ class Amaranth {
     const on = () => all('div, p, span').some(e => vis(e) && /임시\s*저장\s*본문이\s*있습니다/.test(e.textContent || '') && e.children.length <= 3);
     const tmp = waitMs ? await pp.waitFor(on, [], { timeout: waitMs }).catch(() => null) : await pp.eval(on).catch(() => false);
     if (!tmp) return;
+    await pp.waitFor(() => !obtBusy(), [], { timeout: 15000 }).catch(() => {});   // 불러오는 덮개가 [취소] 클릭을 먹지 않게
     try { await pp.clickWhere(() => { const msg = all('div, p, span').filter(e => vis(e) && /임시\s*저장\s*본문이\s*있습니다/.test(e.textContent || '')).pop();
       for (let box = msg; box; box = box.parentElement) { const b = all('button', box).find(x => vis(x) && norm(x.textContent) === '취소'); if (b) return b; } return null; });
-      this.log('임시 저장 본문은 불러오지 않고 새로 작성해요'); await sleep(800);
+      await sleep(800); if (!(await pp.eval(on).catch(() => true))) this.log('임시 저장 본문은 불러오지 않고 새로 작성해요');   // 클릭이 빗나갔으면 다음 확인 때 다시
     } catch (e) { await this.ui.assist('작성 창의 "임시 저장 본문을 불러올까요?"에서 [취소]를 눌러 주세요. 그 뒤 [계속]을 누르면 이어서 채워요.'); }
   }
 
@@ -1708,8 +1709,18 @@ class Amaranth {
     const titleVal = () => pp.eval(`() => { const i = (${TITLE_INPUT})(); return i ? i.value : null; }`).catch(() => null);
     const cur = await titleVal();
     if (cur !== null && cur !== title) {
-      await pp.clickWhere(TITLE_INPUT);
-      await pp.selectAll(); await pp.type(title); await sleep(300);
+      // 클릭이 칸에 포커스를 줬는지 확인하고 친다 — 작성 창이 아직 불러오는 중이면 전체 덮개(OBTLoading)가 클릭을 먹어,
+      // 전체 선택이 화면 전체에 걸리고 글자는 허공으로 갔다 (2026-10-28 구매의뢰서). 빗나가면 무엇이 가렸는지 남기고 칸에 직접 포커스
+      for (let i = 0; i < 3 && (await titleVal()) !== title; i++) {
+        await pp.waitFor(() => !obtBusy(), [], { timeout: 15000 }).catch(() => {});
+        await this.dismissTempDraft(pp, 0);
+        const pt = await pp.clickWhere(TITLE_INPUT);
+        const miss = await pp.eval(`(x, y) => { const i = (${TITLE_INPUT})(); if (!i || document.activeElement === i) return '';
+          const d = e => e ? e.tagName + '.' + String(e.className).slice(0, 50) : '-', at = d(document.elementFromPoint(x, y)), ae = d(document.activeElement);
+          i.focus(); return '클릭 위치 ' + at + ', 포커스 ' + ae; }`, pt.x, pt.y).catch(e => e.message);
+        if (miss) this.log(`(제목 칸 클릭이 빗나감: ${miss})`);
+        await pp.selectAll(); await pp.type(title); await sleep(300);
+      }
       if ((await titleVal()) !== title) await ui.assist(`제목을 못 넣었어요. 작성 창 제목 칸에 "${title}"를 넣고 [계속]을 눌러 주세요.`);
     } else if (cur === null) await ui.assist(`제목 칸을 못 찾았어요. 작성 창 제목 칸에 "${title}"를 넣고 [계속]을 눌러 주세요.`);
 

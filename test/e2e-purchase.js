@@ -16,6 +16,7 @@ if (app.dock) app.dock.hide();
 app.whenReady().then(async () => {
   let code = 0;
   process.env.MOCK_TEMPDRAFT = process.env.MOCK_TEMPDRAFT || '1';
+  process.env.MOCK_LOADING = process.env.MOCK_LOADING || '2500';   // 작성 창 불러오는 덮개가 제목 칸 클릭을 먹는 경우
   const { srv, url } = await mock.start();
   try {
     const store = new Store(fs.mkdtempSync(path.join(os.tmpdir(), 'ta-pu-')));

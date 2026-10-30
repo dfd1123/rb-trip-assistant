@@ -10,6 +10,7 @@ const norm = s => (s || '').replace(/[\s​ ]/g, '');
 const vis = el => { if (!el) return false; const r = el.getBoundingClientRect(); const st = getComputedStyle(el);
   return r.width > 0 && r.height > 0 && st.visibility !== 'hidden' && st.display !== 'none'; };
 const all = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+const obtBusy = () => all('[data-orbit-component=OBTLoading]').some(e => vis(e) && !/closed/i.test(e.className));   // 아마란스 불러오는 중 전체 덮개 (클릭을 먹음)
 const ownText = e => Array.from(e.childNodes).some(n => n.nodeType === 3 && n.textContent.trim());
 const byText = (text, root = document, exact = true) => { const t = norm(text);
   const hits = all('*', root).filter(e => vis(e) && (exact ? norm(e.textContent) === t : norm(e.textContent).includes(t)));

@@ -176,6 +176,9 @@ inp.addEventListener('input',()=>{ close(); const q=inp.value.trim(); if(!q) ret
   u.querySelectorAll('li').forEach((li,i)=>li.onclick=()=>{ add(hits[i]); inp.value=''; close(); }); });
 inp.addEventListener('keydown',e=>{ if(e.key==='Enter'){ const q=inp.value.trim(); const h=ORG.filter(o=>o.includes(q))[0]; if(h){ add(h); inp.value=''; close(); } } });
 document.getElementById('files').addEventListener('change',e=>{ window.__files=[...e.target.files].map(f=>f.name); });
+// 불러오는 동안 전체 덮개(OBTLoading)가 클릭을 먹는다 — 편집기는 이미 떠 있어도 (실제 구매의뢰서 작성 창, 2026-10-28)
+if (__LOADING__) { const l=document.createElement('div'); l.setAttribute('data-orbit-component','OBTLoading'); l.className='OBTLoading_root OBTLoading_full'; l.style.cssText='position:fixed;inset:0;z-index:30;background:rgba(255,255,255,.01)'; document.body.appendChild(l);
+  setTimeout(()=>{ l.className='OBTLoading_root OBTLoading_full OBTLoading_closed'; l.style.display='none'; }, __LOADING__); }
 if (__TEMPDRAFT__) setTimeout(()=>{ const d=document.createElement('div'); d.className='tmp'; d.innerHTML='<div class="b"><p>작성 중이던 임시 저장 본문이 있습니다. 불러오시겠습니까?</p><button id="tc">취소</button><button id="to">확인</button></div>'; document.body.appendChild(d);
   document.getElementById('tc').onclick=()=>{ d.remove(); window.__tempdraft='cancel'; }; document.getElementById('to').onclick=()=>{ d.remove(); window.__tempdraft='load'; document.getElementById('title').value='옛 임시 제목'; }; }, __TEMPDELAY__);
 </script></body></html>`;
@@ -207,7 +210,7 @@ function start(port = 0) {
     if (req.url === '/' || req.url.startsWith('/?')) return send(INDEX.replace('__SEARCH__', process.env.MOCK_SEARCH || 'button'));
     if (req.url.startsWith('/popup.html')) return send(POPUP);
     if (req.url === '/compose.js') return send(fs.readFileSync(path.join(__dirname, 'compose.js'), 'utf8'), 'text/javascript; charset=utf-8');
-    if (req.url.startsWith('/compose.html')) return send(COMPOSE.replace('__TEMPDRAFT__', process.env.MOCK_TEMPDRAFT ? 'true' : 'false').replace('__TEMPDELAY__', String(Number(process.env.MOCK_TEMPDRAFT) > 1 ? Number(process.env.MOCK_TEMPDRAFT) : 700)));
+    if (req.url.startsWith('/compose.html')) return send(COMPOSE.replace('__TEMPDRAFT__', process.env.MOCK_TEMPDRAFT ? 'true' : 'false').replace(/__LOADING__/g, String(Number(process.env.MOCK_LOADING) || 0)).replace('__TEMPDELAY__', String(Number(process.env.MOCK_TEMPDRAFT) > 1 ? Number(process.env.MOCK_TEMPDRAFT) : 700)));
     if (req.url.startsWith('/compose-editor.html')) return send(`<!doctype html><html><head><meta charset="utf-8"></head><body contenteditable="true">${fs.readFileSync(path.join(FIX, 'purchase_body.html'), 'utf8')}</body></html>`);
     if (req.url.startsWith('/editor.html'))
       return send(`<!doctype html><html><head><meta charset="utf-8"></head><body contenteditable="true">${fs.readFileSync(path.join(FIX, process.env.MOCK_FORM || 'apply_form_body.html'), 'utf8')}</body></html>`);
