@@ -121,6 +121,8 @@
     if (name === '전송') {
       const r = checked.find(x => x.결의구분 === '지출결의서');
       if (!r || r.결의번호) return alertBox('전송할 결의서를 선택해 주세요.');
+      // 실제 (정효빈 0원 동행자 품의, 2026-11-03): 저장된 채주가 한 줄도 없고 환원도 없으면 전송 거부. 환원만 있는 경우(전액 환원)는 실제로 확인 못 해 막지 않음
+      if (!r.budgets.some(b => b.payees.some(p => p.saved)) && !ap.resolutions.some(x => x.결의구분 === '환원' && !x.결의번호)) return alertBox('채주내역이 존재하지 않습니다.');
       return confirmBox('선택한 결의서를 전송하시겠습니까?', () => {
         const ymd = r.결의일자.replace(/-/g, ''); r.결의번호 = `${ymd}-${String(T.nextResNo++).padStart(5, '0')}`;
         T.resList.push({ 결의연월: r.결의일자.slice(0, 7), 결의일: String(Number(r.결의일자.slice(8))), 순번: String(T.nextGisuSq++), 결의구분: '지출결의서', 집행용도: r.집행용도, 총금액: won(sumRes(r)), 결재상태: '상신대기', 결재문서번호: '', 진행상태: '결의대기', 결의번호: r.결의번호, apKey: ap.key });

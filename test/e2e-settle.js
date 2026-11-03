@@ -229,6 +229,23 @@ app.whenReady().then(async () => {
       console.log('E2E 정산 법인차량·결의서입력 늦게 뜨는 목록 OK');
     }
 
+    if (run(12)) {
+      // ---- 12) 0원 품의 (정효빈 2026-11-03): 동행자 일괄 품의라 품의금액 0원, 영수증 없음. 채주가 없으면 그룹웨어가 [전송]을 거부
+      //      ("채주내역이 존재하지 않습니다") → 본인 0원 채주 한 줄 + 결제수단·과세구분 외상·기타, 환원 없이 전송
+      const st12 = STATE();
+      Object.assign(st12.approve[0], { 총금액: '0', budgets: [{ 부서: '4족 로봇 사업부', 예산과목: '여비교통비(판)_기타', 예산과목비고: '동행자 일괄 품의', 품의금액: '0' }] });
+      mock.setSettle(st12); asked.length = 0;
+      await runner.runReport(env, report([]));
+      const s12 = mock.getSettle(), e12 = s12.approve[0].resolutions.find(r => r.결의구분 === '지출결의서');
+      assert.equal((s12.alertTexts || []).length, 0, '오류 창: ' + (s12.alertTexts || []).join(' / '));
+      assert.ok(e12 && e12.결의번호, '0원 품의도 결의서 전송');
+      assert.deepEqual(e12.budgets[0].payees.map(p => [p.거래처명, p.공급가액, p.거래처비고, !!p.saved]), [['이정우(임직원)', '0', '경비 없음 (0원 품의)', true]], '본인 0원 채주 한 줄');
+      assert.deepEqual([e12.budgets[0].결제수단, e12.budgets[0].과세구분], ['외상', '기타']);
+      assert.ok(!s12.approve[0].resolutions.some(r => r.결의구분 === '환원'), '돌려줄 돈이 없으니 환원 없음');
+      assert.deepEqual(s12.approvalFor, [e12.결의번호], '그 결의로 결재상신까지');
+      console.log('E2E 정산 0원 품의 (본인 0원 채주) OK');
+    }
+
   } catch (e) {
     code = 1; console.error('E2E 정산 실패:', e.stack || e);
     try { const w = BrowserWindow.getAllWindows().find(x => /127\.0\.0\.1/.test(x.webContents.getURL()));   // 화면 상태 (칸 위치·맨 위 요소)

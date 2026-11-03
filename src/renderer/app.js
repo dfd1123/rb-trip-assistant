@@ -1267,7 +1267,7 @@ async function initVisitor(){
     $$('.vs-shoot').forEach(c => c.addEventListener('change', () => {   // 해당없음 ↔ 다른 항목은 같이 못 고름
       if(c.checked) $$('.vs-shoot').forEach(x => { if(x !== c && (c.value === '해당없음' || x.value === '해당없음')) x.checked = false; }); vsRender(); }));
     $('#vs_date').addEventListener('change', vsCheckUrgent);
-    try { const d = JSON.parse(localStorage.vs_draft || 'null'); if(d){ fillVisitor(d); vsDrafted = d.drafted || ''; if(d.name || d.org || d.purpose) $('#vsNew').classList.remove('pre'); } } catch(e){ /* 저장된 초안 없음 */ }   // 쓰던 게 있으면 바로 펼침
+    try { const d = JSON.parse(localStorage.vs_draft || 'null'); if(d){ fillVisitor(d); vsDrafted = d.drafted || ''; } } catch(e){ /* 저장된 초안 없음 */ }   // 쓰던 값은 되살리되 폼은 접은 채 (보낼 때 모달이 물음)
   }
   const c = META.config || {};
   if(!$('#vs_dept').value) $('#vs_dept').value = c.budgetDept || '';
@@ -1317,6 +1317,7 @@ async function vsCheckUrgent(){
   try { vsUrgent = date ? (await rpc('/api/visitor/urgent', { date })).urgent : false; } catch(e){ vsUrgent = false; }
   vsRender();
 }
+const vsBlank = () => ({ ...Object.fromEntries(VS_TEXT.map(k => [k, ''])), time: '', count: 1, urgent_reason: '', shoot_scope: '', memo: '', title: '', areas: [], shoot: [] });
 function vsRender(){
   const d = visitorData(), bc = d.type === 'B' || d.type === 'C', shootOn = d.shoot.length && !d.shoot.includes('해당없음');
   $('#vs_bc').classList.toggle('hidden', !bc);
@@ -1329,7 +1330,7 @@ function vsRender(){
     // rows: 보낼 때 모달로 옮겨 묻는 칸 · confirm: AI 가 채웠어도 사람이 한 번 보는 칸 (결재선·출입 구역이 갈림)
     { label: '방문 유형', ok: !!d.type, focus: '#vs_type_seg', rows: ['#vs_type_seg'], confirm: true },
     { label: '방문자 성명·소속', ok: !!(d.name && d.org), focus: d.name ? '#vs_org' : '#vs_name', rows: ['#vs_name', '#vs_org', '#vs_position', '#vs_count'] },
-    { label: '방문 일정', ok: !!d.date, focus: '#vs_date', rows: ['#vs_date'] },
+    { label: '방문 일정', ok: !!d.date, focus: '#vs_date', rows: ['#vs_date'], confirm: true },   // 날짜로 긴급 사유가 갈리고, 메모에 없어도 AI 가 오늘로 짐작할 때가 있음
     { label: '방문 시간', ok: !!d.time, focus: $('#vs_t1').value ? '#vs_t2' : '#vs_t1', rows: ['#vs_t1'] },
     { label: '방문 목적', ok: !!d.purpose, focus: '#vs_purpose', rows: ['#vs_purpose'] },
     { label: '요청 부서·담당자', ok: !!(d.dept && d.host), focus: d.dept ? '#vs_host' : '#vs_dept', rows: ['#vs_dept', '#vs_host'] },
@@ -1345,7 +1346,7 @@ $('#vs_title').addEventListener('input', () => { $('#vs_title').dataset.manual =
 function revealVisitor(){ const v = $('#vsNew'); if(!v.classList.contains('pre')) return; v.classList.remove('pre'); v.classList.add('reveal'); setTimeout(() => v.classList.remove('reveal'), 600); }
 $('#vsManual').onclick = e => { e.preventDefault(); revealVisitor(); };
 $('#vs_memo').addEventListener('keydown', e => { if(e.key === 'Enter' && (e.metaKey || e.ctrlKey)) $('#btnVsSend').click(); });
-$('#btnNewVisitor').onclick = () => { $('#vsNew').classList.add('pre'); delete $('#vs_title').dataset.manual; vsDrafted = ''; vsConfirmed.clear(); fillVisitor({ ...Object.fromEntries(VS_TEXT.map(k => [k, ''])), time: '', count: 1, urgent_reason: '', memo: '', title: '', areas: [], shoot: [] }); $('#vs_status').textContent = ''; initVisitor(); };
+$('#btnNewVisitor').onclick = () => { $('#vsNew').classList.add('pre'); delete $('#vs_title').dataset.manual; vsDrafted = ''; vsConfirmed.clear(); fillVisitor(vsBlank()); $('#vs_status').textContent = ''; initVisitor(); };
 function loadVisitorList(){
   runJob('방문 신청 목록', '/api/job/visitor-list', {}, r => {
     const box = $('#vsList'); box.innerHTML = r.rows.length ? '' : '<p class="sub">최근 3개월에 올린 방문객 신청서가 없어요. [✍️ 새 방문 신청]에서 올리면 여기에 결재 상태와 인쇄 버튼이 생겨요.</p>';
@@ -1377,7 +1378,9 @@ async function vsDraft(memo){
   $('#vs_status').textContent = '메모로 칸을 채우는 중…';
   try {
     const r = await rpc('/api/visitor/draft', { memo });
-    const cur = visitorData(), pick = (a, b) => a === '' || a == null ? b : a;
+    // 폼을 펼쳐 직접 고치던 중이면 그 값 위에 채우고, 아니면 새로: 메모가 바뀌었는데 이전 신청 값(날짜·구역 등)이 남아 안 묻고 넘어가면 안 됨
+    if($('#vsNew').classList.contains('pre')) delete $('#vs_title').dataset.manual;
+    const cur = $('#vsNew').classList.contains('pre') ? { ...vsBlank(), dept: $('#vs_dept').value.trim(), host: $('#vs_host').value.trim(), memo } : visitorData(), pick = (a, b) => a === '' || a == null ? b : a;
     vsDrafted = memo; vsConfirmed.clear();   // 새로 채웠으면 확인도 다시
     fillVisitor({ ...cur, ...Object.fromEntries(VS_TEXT.map(k => [k, pick(r[k], cur[k])])), count: r.count || cur.count, type: r.type || cur.type, time: pick(r.time, cur.time),
       areas: r.areas.length ? r.areas : cur.areas, shoot: r.shoot.length ? r.shoot : cur.shoot, urgent_reason: pick(r.urgent_reason, cur.urgent_reason), title: $('#vs_title').dataset.manual ? cur.title : '' });

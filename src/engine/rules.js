@@ -328,6 +328,10 @@ function planPayees(budgets, lines) {
   for (const m of items) { if (m.left <= 0) continue; if (m.last) m.last.cut = m.left; else if (m.src.amount > 0) (m.row || [...rows].reverse().find(r => r.lab === m.lab)).dropped++; }
   // 같은 예산 줄에 적요·공급가액이 똑같은 채주가 둘이면(같은 날 택시 2번 등) 그룹웨어에서 '이미 넣은 줄'로 보고 하나를 건너뛴다 → 적요 뒤에 (2) 를 붙여 구분
   for (const r of rows) { const seen = {}; for (const l of r.lines) { const k = `${l.memo}|${l.supply}`; seen[k] = (seen[k] || 0) + 1; if (seen[k] > 1) l.memo = `${l.memo} (${seen[k]})`; } }
+  // 품의가 통째로 0원(동행자 일괄 품의 등)이면 넣을 채주가 없는데, 그룹웨어는 채주가 한 줄도 없으면 [전송]을 안 받는다 ("채주내역이 존재하지 않습니다")
+  // → 첫 예산 줄에 본인 0원 채주 한 줄 (개인경비라 결제수단·과세구분도 외상·기타로 바뀜). 사용자 확인 2026-11-03
+  if (rows.length && budgets.every(b => String(b['품의금액'] ?? '').trim() !== '' && num(b['품의금액']) === 0) && rows.every(r => !r.lines.length))
+    rows[0].lines.push({ label: rows[0].label, pay: 'personal', amount: 0, supply: 0, vat: 0, cut: 0, memo: '경비 없음 (0원 품의)', planDate: fundPlanDate('personal'), proofs: [] });
   const plan = rows.map(({ index, label, limit, lines, dropped }) => ({ index, label, limit, lines, dropped }));
   const left = lines.filter(l => !rows.some(r => r.lab === labOf(l)));
   return { plan, left };

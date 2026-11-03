@@ -312,6 +312,17 @@ test('예산과목비고에 날짜가 있는 예산 줄: 그 날짜 영수증만
   assert.equal(z.plan[0].dropped, 1);
 });
 
+test('품의가 통째로 0원(동행자 일괄 품의)이면 본인 0원 채주 한 줄 — 채주가 없으면 그룹웨어가 [전송]을 안 받음', () => {
+  const zero = [{ 예산과목: '여비교통비(판)_기타', 예산과목비고: '동행자 일괄 품의', 품의금액: '0', 미지출액: '0' }];
+  const { plan } = R.planPayees(zero, []);
+  assert.equal(plan[0].lines.length, 1);
+  const l = plan[0].lines[0];
+  assert.deepEqual([l.pay, l.amount, l.supply], ['personal', 0, 0]);
+  assert.match(l.planDate, /^\d{4}-\d{2}-\d{2}$/);
+  // 품의에 돈이 있는 줄이 하나라도 있으면 그대로 (쓴 돈이 없으면 환원으로 돌려줌)
+  assert.equal(R.planPayees([...zero, { 예산과목: '여비교통비(판)_식대', 품의금액: '30,000', 미지출액: '30,000' }], []).plan.every(pb => !pb.lines.length), true);
+});
+
 test('같은 과목 예산 줄이 여러 개(비고에 날짜 없음): 영수증은 한 번만, 앞 줄부터 채우고 넘치면 다음 줄로', () => {
   const budgets = [
     { 예산과목: '여비교통비(판)_식대', 품의금액: '30,000', 미지출액: '30,000' },
