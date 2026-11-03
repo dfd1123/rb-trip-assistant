@@ -822,3 +822,28 @@ test('해외 판정: 흔한 말과 같은 이름(빈도·빈 시간·US 고객)�
   assert.equal(R.parseApply({ ...base, transport: { mode: 'corporate', total: 60000, screenshot: '/x.png' } }).transport.total, null);   // 숨은 칸에 남은 교통비
   assert.equal(R.parseApply({ ...base, transport: { mode: 'car', to: 'd', total: 0 } }).transport.total, 0);   // 0원은 넣은 값
 });
+
+test('외부 방문객 신청: 1영업일 전 상신·유형별 칸·검증', () => {
+  const thu = new Date('2026-11-05T10:00:00'), fri = new Date('2026-11-06T10:00:00'), sat = new Date('2026-11-07T10:00:00');
+  assert.equal(R.visitorUrgent('2026-11-09', thu), false);   // 목요일에 월요일 방문 = 전 영업일(금)보다 먼저
+  assert.equal(R.visitorUrgent('2026-11-09', fri), true);    // 금요일에 월요일 방문 = 전 영업일 당일 → 긴급
+  assert.equal(R.visitorUrgent('2026-11-09', sat), true);    // 토요일에 월요일 방문 = 늦음
+  assert.equal(R.visitorUrgent('2026-11-06', fri), true);    // 당일
+  assert.equal(R.visitorUrgent('2026-10-12', new Date('2026-10-07T10:00:00')), false);   // 10/9 한글날 낀 수→월: 전 영업일은 목요일
+  assert.equal(R.visitorUrgent('2026-10-12', new Date('2026-10-08T10:00:00')), true);
+  const today = new Date('2026-11-02T09:00:00');
+  const base = { type: 'B', name: '김철수', org: '현대자동차', count: '3', date: '2026-11-05', time: '14:00~16:00', purpose: 'p', dept: 'd', host: 'h', areas: [{ area: '7층', detail: '외부회의실' }], shoot: ['해당없음'] };
+  const v = R.parseVisitor(base, { today });
+  assert.equal(v.count, 3); assert.equal(v.period, '2026-11-05 (목)'); assert.equal(v.title, '외부 방문객 내부 공간 출입 승인 요청의 건 (11/5 현대자동차 김철수 외 2명)');
+  assert.deepEqual(R.parseVisitor({ ...base, type: 'A' }, { today }).areas, [], '유형 A 는 구역 비움');
+  assert.throws(() => R.parseVisitor({ ...base, areas: [] }, { today }), /출입 요청 구역/);
+  assert.throws(() => R.parseVisitor({ ...base, time: ' ' }, { today }), /방문 시간/);
+  assert.throws(() => R.parseVisitor({ ...base, shoot: ['해당없음', '사진 촬영 필요'] }, { today }), /같이/);
+  assert.throws(() => R.parseVisitor({ ...base, shoot: ['사진 촬영 필요'] }, { today }), /촬영\/녹음 목적/);
+  assert.throws(() => R.parseVisitor({ ...base, date: '2026-11-02' }, { today }), /긴급 방문 사유/);
+  assert.throws(() => R.parseVisitor({ ...base, date: '2026-11-03' }, { today }), /긴급 방문 사유/, '내일 방문(오늘이 전 영업일)도 긴급');
+  assert.equal(R.parseVisitor({ ...base, date: '2026-11-02', urgent_reason: '당일 확정' }, { today }).urgent, true);
+  assert.throws(() => R.parseVisitor({ ...base, date: '2026-11-01' }, { today }), /지났어요/);
+  assert.throws(() => R.parseVisitor({ ...base, count: 0 }, { today }), /1 이상/);
+  assert.equal(R.parseVisitor({ ...base, date_end: '2026-11-05' }, { today }).date_end, '', '같은 날이면 하루');
+});

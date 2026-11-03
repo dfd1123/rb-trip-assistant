@@ -192,6 +192,29 @@ function todayLine(today = new Date()) {
   return `${today.getFullYear()}-${p(today.getMonth() + 1)}-${p(today.getDate())} (${WEEK[today.getDay()]}요일)`;
 }
 
+/** 한 줄 메모 → 외부 방문객 신청 칸. 모르는 칸은 비움 (사람이 화면에서 채움) */
+async function draftVisitor(ai, memo, { today = new Date() } = {}) {
+  const prompt = `회사에 외부 손님이 방문해서 '외부 방문객 내부 공간 출입 신청서'를 쓴다. 메모를 읽고 JSON 하나로만 답해. 메모에 없는 건 "" (지어내지 마).
+오늘: ${todayLine(today)}
+{"name": 대표 방문자 이름, "org": 소속 회사·기관, "position": 직위, "phone": 연락처, "count": 방문 인원 숫자 (예: "김철수 외 2명" = 3),
+ "car": 차량 번호·차종, "date": 방문 첫날 YYYY-MM-DD, "date_end": 여러 날이면 마지막 날 YYYY-MM-DD 아니면 "", "time": 방문 시간 24시간제 "HH:MM~HH:MM" (예: "오후 2~4시" → "14:00~16:00", 모르면 ""),
+ "purpose": 방문 목적 한 문장 (존댓말 아닌 명사형, 예: "AMR 공동 개발 협업 미팅"),
+ "type": "A"(1층 로비·쇼룸 견학만) | "B"(층별 복도·공용 라운지·외부 회의실) | "C"(사무실·연구 공간 내부 출입) — 장소로 판단, 모르면 "",
+ "areas": [{"area": "1층"|"3층"|"4층"|"5층"|"6층"|"7층"|"7층 대회의실", "detail": 그 층 세부 장소 (예: "외부회의실")}],
+ "shoot": ["해당없음"|"사진 촬영 필요"|"영상 촬영 필요"|"기타"] — 촬영·녹음 말이 없으면 [],
+ "shoot_purpose": 촬영 목적, "urgent_reason": 긴급 방문 사유}
+메모: ${memo}`;
+  const text = await complete(ai, prompt);
+  const m = /\{[\s\S]*\}/.exec(text);
+  let j = {}; try { j = JSON.parse(m ? m[0] : text); } catch (e) { throw new Error('AI 답을 못 읽었어요. 다시 눌러 보거나 직접 입력해 주세요.'); }
+  const str = (x, n = 80) => String(x ?? '').trim().slice(0, n);
+  const date = x => /^\d{4}-\d{2}-\d{2}$/.test(str(x)) ? str(x) : '';
+  return { name: str(j.name, 40), org: str(j.org), position: str(j.position, 30), phone: str(j.phone, 40), count: Math.max(1, Math.round(firstNum(j.count) || 1)), car: str(j.car, 60),
+    date: date(j.date), date_end: date(j.date_end), time: str(j.time, 40), purpose: str(j.purpose, 200), type: ['A', 'B', 'C'].includes(j.type) ? j.type : '',
+    areas: (Array.isArray(j.areas) ? j.areas : []).map(a => ({ area: str(a && a.area, 20), detail: str(a && a.detail, 60) })).filter(a => R.VISITOR_AREAS.includes(a.area)),
+    shoot: (Array.isArray(j.shoot) ? j.shoot : []).map(x => str(x, 20)).filter(x => R.VISITOR_SHOOTS.includes(x)), shoot_purpose: str(j.shoot_purpose, 120), urgent_reason: str(j.urgent_reason, 200) };
+}
+
 /** 한 줄 메모 → 신청서 YAML (금액 제외) */
 async function draftApply(ai, memo, { places = [], today = new Date() } = {}) {
   const known = places.length ? `\n자주 가는 곳(이름을 그대로 써): ${places.map(p => p.name).join(' / ')}` : '';
@@ -205,4 +228,4 @@ async function draftReport(ai, draft, memo) {
   return R.extractYaml(await complete(ai, R.reportPrompt(rest) + memo));
 }
 
-module.exports = { firstNum, PROVIDERS, complete, completeWithFiles, readReceipt, readPurchaseOrder, readProductPage, draftPurchase, draftApply, draftReport };
+module.exports = { firstNum, PROVIDERS, complete, completeWithFiles, readReceipt, readPurchaseOrder, readProductPage, draftPurchase, draftApply, draftReport, draftVisitor };

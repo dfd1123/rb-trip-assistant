@@ -50,6 +50,26 @@ app.whenReady().then(async () => {
     assert.equal(pu.supply, 210000 + 15000 - 10000); assert.equal(pu.total, Math.round(215000 * 1.1));
     assert.equal(store.purchases().length, 1);
     console.log('E2E 구매의뢰 작성 창 OK');
+
+    // ---- 외부 방문객 출입 신청서: 같은 결재작성 → 양식 이름 정확히 같은 줄('방문자 신청' 아님) → 제목·본문·수신및참조(경영지원부) ----
+    for (const w of BrowserWindow.getAllWindows()) if (w !== gw && !w.isDestroyed()) w.destroy();
+    const vdate = (() => { const d = new Date(); d.setDate(d.getDate() + 14); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })();
+    const vdata = { type: 'C', name: '김철수', org: '현대자동차', position: '부장', count: 3, date: vdate, time: '14:00~16:00', purpose: 'AMR 협업 미팅', dept: '자율주행팀', host: '이정우',
+      areas: [{ area: '7층', detail: '외부회의실' }, { area: '7층 대회의실' }], shoot: ['해당없음'] };
+    const vr = await runner.runVisitor(env, vdata);
+    const vpop = BrowserWindow.getAllWindows().find(w => !w.isDestroyed() && /compose\.html/.test(w.webContents.getURL()) && /방문객|%EB%B0%A9%EB%AC%B8%EA%B0%9D/.test(w.webContents.getURL()));
+    assert.ok(vpop, '방문객 작성 창: ' + BrowserWindow.getAllWindows().map(w => w.isDestroyed() ? '' : w.webContents.getURL()).join(' | '));
+    const vs = await vpop.webContents.executeJavaScript(`({ title: document.getElementById('title').value, chips: window.__chips || [],
+      note: (document.getElementById('__taNote') || {}).innerText || '', body: document.getElementById('editorView_UBAP001').contentDocument.body.innerText.replace(/\\s+/g, ' '), checked: document.getElementById('editorView_UBAP001').contentDocument.querySelectorAll('table input[checked]').length })`);
+    assert.equal(vs.title, vr.title); assert.ok(vs.title.includes('현대자동차 김철수 외 2명'), vs.title);
+    assert.deepEqual(vs.chips, ['경영지원부(전자결재용)'], '수신및참조: 경영지원부만');
+    for (const needle of ['김철수', '현대자동차', '3명', '(외부회의실)', 'AMR 협업 미팅', '14:00~16:00'])
+      assert.ok(vs.body.includes(needle), `본문에 '${needle}' 없음: ${vs.body.slice(0, 600)}`);
+    assert.equal(vs.checked, 3, '7층·7층 대회의실·해당없음');
+    assert.ok(ui.logs.some(m => /방문 사무실 사업부서장/.test(m)), '유형 C 결재선 안내');
+    assert.ok(/유형 C 결재선/.test(vs.note) && /방문 사무실 사업부서장/.test(vs.note) && /3부/.test(vs.note), '작성 창 결재선 안내 카드: ' + vs.note);
+    assert.ok(!vs.body.includes('결재선'), '안내 카드는 본문에 안 들어감');
+    console.log('E2E 방문객 신청 작성 창 OK');
   } catch (e) { code = 1; console.error('E2E 구매의뢰 실패:', e.stack || e); }
   finally { srv.close(); app.exit(code); }
 });

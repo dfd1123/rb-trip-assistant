@@ -58,6 +58,7 @@ if($('#a_reason').value.trim() || $('#a_destination').value.trim() || $('#a_star
 wrapFill('fillReport', '#reportView');
 wrapFill('applyReceipts', '#reportView');
 wrapFill('fillPurchase', '#tab-purchase');
+wrapFill('fillVisitor', '#tab-visitor');
 
 /* ---------- 세부 내용 접기: 기본은 접힘. 고칠 칸(주황)이 생기거나 체크리스트에서 고르면 펼침 ---------- */
 function setFold(id, open){ const f = $(id); if(f) f.classList.toggle('open', open); }
@@ -74,7 +75,7 @@ function foldBadge(id){   // 접혀 있을 때 고칠 칸 개수 표시
 /* ---------- 떠 있는 제출 버튼: 원래 버튼이 화면 밖이면 오른쪽 아래에 ---------- */
 const fab = $('#fabSubmit');
 function updateFab(){
-  const btn = !$('#tab-apply').classList.contains('hidden') ? $('#btnApply') : !$('#reportView').classList.contains('hidden') ? $('#btnReport') : !$('#tab-purchase').classList.contains('hidden') ? $('#btnPurchase') : null;
+  const btn = !$('#tab-apply').classList.contains('hidden') ? $('#btnApply') : !$('#reportView').classList.contains('hidden') ? $('#btnReport') : !$('#tab-purchase').classList.contains('hidden') ? $('#btnPurchase') : !$('#tab-visitor').classList.contains('hidden') ? $('#btnVisitor') : null;
   if(!btn){ fab.classList.add('hidden'); return; }
   const r = btn.getBoundingClientRect(), off = r.bottom < 0 || r.top > innerHeight;
   const jp = $('#jobPanel'), busy = jp && getComputedStyle(jp).display !== 'none';   // 작업 창(토스트)과 겹치지 않게
@@ -253,6 +254,22 @@ const GUIDES = {
     ['#puReady', '제출 준비', '빠진 게 있으면 여기에 남아요. 다 되면 [그룹웨어에 입력하기].'],
     ['#btnPurchase', '그룹웨어에 입력하기', '본문·첨부·수신및참조까지 채워 작성 창을 띄워요. 시행자·결재라인은 꼭 직접 선택하고 [상신]을 눌러 주세요.'],
   ],
+  visitor: [
+    ['#vs_memo', '한 줄 메모', '누가·언제·어디로·왜 오는지 한 줄. 예) "11/5 14시 현대자동차 김철수 부장 외 2명, 7층 외부회의실 협업 미팅"'],
+    ['#btnVsSend', '✦ 그룹웨어에 보내기', 'AI가 메모로 칸을 채우고, 빠진 칸과 꼭 확인할 칸(방문 유형·출입 구역·촬영/녹음)만 하나씩 물어봐요. 마지막에 요약을 보고 보내요.'],
+    ['#vsManual', '직접 입력', '전체 칸을 펼쳐 놓고 직접 채우고 싶으면 이걸 누르세요.'],
+  ],
+  visitorResult: [
+    ['#vs_type_seg', '방문 유형', 'A 1층 로비 견학 · B 층별 투어 · C 사무실·연구 공간 내부. B·C면 출입 구역과 촬영/녹음을 꼭 골라요.'],
+    ['#vsNew .ready', '제출 준비', '빠진 게 있으면 여기에 남아요. 방문 전 영업일이나 당일에 올리면 긴급 방문 사유가 필요해요.'],
+    ['#btnVisitor', '그룹웨어에 입력하기', '본문·수신및참조(경영지원부)까지 채워 작성 창을 띄워요. 결재선은 유형에 맞게 직접 지정하고 [상신]을 눌러 주세요.'],
+  ],
+  visitorList: [
+    ['#vsList', '신청한 방문', '그룹웨어에 올린 방문객 신청서와 결재 상태예요 (최근 3개월).'],
+    ['#vsList .item .inline button:nth-child(1)', '🖨 신청서', '그룹웨어 문서의 [인쇄 › 결재문서]를 대신 눌러 결재란까지 그대로 인쇄 창에 띄워요. 파일로 받으려면 인쇄 창에서 PDF로 저장하세요.'],
+    ['#vsList .item .inline button:nth-child(2)', '🖨 보안서약서', '유형 B·C 결재가 끝나면 생겨요. 방문 인원수만큼 인쇄돼요. 신청서와 함께 경영지원부에 내고 방문증을 받으세요.'],
+    ['#btnVsList', '새로고침', '그룹웨어에서 결재 상태를 다시 읽어요.'],
+  ],
 };
 GUIDES.applyAll = [...GUIDES.apply.filter(x => x[0] !== '#aManual'), ...GUIDES.applyResult];   // [❓ 가이드]를 펼친 뒤에 누르면 전부
 let gd = null;
@@ -287,18 +304,21 @@ addEventListener('keydown', e => { if(!gd) return; if(e.key === 'Escape') gdEnd(
 addEventListener('resize', () => { if(gd) gdShow(); });
 GUIDES.reportAll = [...GUIDES.report.filter(x => x[0] !== '#rManual'), ...GUIDES.reportResult];
 GUIDES.purchaseAll = [...GUIDES.purchase.filter(x => x[0] !== '#puManual'), ...GUIDES.purchaseResult];
-const ALL = { apply: ['#tab-apply', 'applyAll'], report: ['#reportView', 'reportAll'], purchase: ['#puNew', 'purchaseAll'] };   // 펼친 뒤 [❓ 가이드] = 전부
+GUIDES.visitorAll = [...GUIDES.visitor.filter(x => x[0] !== '#vsManual'), ...GUIDES.visitorResult];
+const ALL = { apply: ['#tab-apply', 'applyAll'], report: ['#reportView', 'reportAll'], purchase: ['#puNew', 'purchaseAll'], visitor: ['#vsNew', 'visitorAll'] };   // 펼친 뒤 [❓ 가이드] = 전부
 $$('[data-guide]').forEach(b => b.addEventListener('click', () => { const a = ALL[b.dataset.guide]; gdStart(a && !$(a[0]).classList.contains('pre') ? a[1] : b.dataset.guide, true); }));
 // 보고서가 펼쳐지면(자동 작성 뒤) 펼친 부분 가이드
-for (const id of ['#reportView', '#puNew']) { const v = $(id); new MutationObserver(() => { if(!v.classList.contains('pre') && !v.classList.contains('hidden')) maybeGuide(); }).observe(v, { attributes: true, attributeFilter: ['class'] }); }
+for (const id of ['#reportView', '#puNew', '#vsNew']) { const v = $(id); new MutationObserver(() => { if(!v.classList.contains('pre') && !v.classList.contains('hidden')) maybeGuide(); }).observe(v, { attributes: true, attributeFilter: ['class'] }); }
 // 화면에 처음 들어올 때: 지금 보이는 화면의 가이드 (작업 중 딤·모달이 떠 있으면 다음 기회에)
 function currentGuide(){
   if(!$('#tab-apply').classList.contains('hidden')) return $('#tab-apply').classList.contains('pre') ? 'apply' : (seenGuide('apply') ? 'applyResult' : 'apply');
   if(!$('#tab-trips').classList.contains('hidden')) return $('#reportView').classList.contains('hidden') ? 'trips' : $('#reportView').classList.contains('pre') ? 'report' : (seenGuide('report') ? 'reportResult' : 'report');
   if(!$('#tab-purchase').classList.contains('hidden') && !$('#puNew').classList.contains('hidden')) return $('#puNew').classList.contains('pre') ? 'purchase' : (seenGuide('purchase') ? 'purchaseResult' : 'purchase');
+  if(!$('#tab-visitor').classList.contains('hidden') && !$('#vsHistory').classList.contains('hidden')) return $('#vsList .item') ? 'visitorList' : null;   // 빈 목록이면 자동 가이드는 아껴 둠
+  if(!$('#tab-visitor').classList.contains('hidden')) return $('#vsNew').classList.contains('pre') ? 'visitor' : (seenGuide('visitor') ? 'visitorResult' : 'visitor');
   return '';
 }
-function maybeGuide(){ setTimeout(() => { const busy = $('#dim').classList.contains('on') || $$('#cfmModal.on, #askModal.on, #carModal.on, #loginModal.on').length; const k = currentGuide(); if(k && !busy) gdStart(k); }, 600); }
+function maybeGuide(){ setTimeout(() => { const busy = $('#dim').classList.contains('on') || $$('#cfmModal.on, #askModal.on, #carModal.on, #loginModal.on, #vsAskModal.on').length; const k = currentGuide(); if(k && !busy) gdStart(k); }, 600); }
 $$('nav button, .trip-view label, input[name=pu_view]').forEach(b => b.addEventListener(b.tagName === 'INPUT' ? 'change' : 'click', maybeGuide));
 if(typeof window.showReport === 'function'){ const _sr = window.showReport; window.showReport = async function(...a){ const r = await _sr.apply(this, a); maybeGuide(); return r; }; }
 maybeGuide();

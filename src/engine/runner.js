@@ -6,7 +6,7 @@ const R = require('./rules');
 const { Amaranth } = require('./gw');
 const { lookupFare, carBasis } = require('./naver');
 const { searchPlaces } = require('./places');
-const { applyPayload, reportPayload, purchasePayload } = require('./editorFill');
+const { applyPayload, reportPayload, purchasePayload, visitorPayload } = require('./editorFill');
 
 function planApply(data, cfg) {
   if (!cfg.budgetDept) throw new R.InputError('설정에서 예산 부서를 골라 주세요. (그룹웨어에 로그인하면 목록을 받아와요)');
@@ -51,6 +51,40 @@ async function runPurchase(env, data) {
     beforeShow: () => gw.addRecipients(popup, R.PURCHASE_RECIPIENTS, { withDept: true }) });   // 수신및참조까지 다 넣고 나서 창을 띄움
   env.store.addPurchase({ title: pu.title, created: new Date().toISOString(), data, total: pu.total, vendor: pu.vendor.name, items: pu.items.length });   // 다시 불러오기·목록용
   return { title: pu.title };
+}
+
+/** 외부 방문객 내부 공간 출입 신청서: 결재작성 › 양식을 열어 본문·수신및참조(경영지원부)를 채운다. 결재선·[상신]은 사람이 */
+async function runVisitor(env, data) {
+  const { cfg, ui, log } = env;
+  const v = R.parseVisitor(data);
+  log(`[방문객 신청] 유형 ${v.type} · ${v.title}`);
+  const gw = new Amaranth({ win: env.gwWindow(), baseUrl: cfg.baseUrl, ui, log, debugDir: env.debugDir, creds: env.creds });
+  await gw.ensureLogin();
+  const popup = await gw.openForm(R.VISITOR_FORM);
+  await gw.fillAndKeep(popup, { title: v.title, probe: '방문자 성명', payload: visitorPayload(v), save: false,
+    beforeShow: () => gw.addRecipients(popup, R.VISITOR_RECIPIENTS) });
+  const steps = R.VISITOR_LINES[v.type];
+  const after = v.type === 'A' ? [] : [`결재 완료되면 앱의 '신청한 방문'에서 신청서와 보안 준수 서약서(${v.count}부)를 인쇄해 경영지원부에 내고 방문증을 받아요.`];
+  await gw.showNote(popup, { title: `유형 ${v.type} 결재선 — 직접 지정하고 [상신]`, steps,
+    lines: [v.type === 'C' ? '방문 사무실 사업부서장을 꼭 추가해요.' : '', '앱은 결재선을 넣지 않아요.', ...after].filter(Boolean) }).catch(e => log(`(결재선 안내 못 띄움: ${e.message})`));
+  log(`결재선: ${steps.join(' → ')} (최종). 작성 창에서 직접 지정하고 [상신]을 눌러 주세요.`);
+  for (const a of after) log(a);
+  return { title: v.title };
+}
+
+/** 신청한 방문 목록: 그룹웨어 결재 문서(양식 '외부 방문객…'). 결재 끝난 문서는 본문에서 인원·서약서 대상(B·C) 여부를 읽음 */
+async function runVisitorList(env, { from = '', to = '' } = {}) {
+  const gw = new Amaranth({ win: env.gwWindow(), baseUrl: env.cfg.baseUrl, ui: env.ui, log: env.log, debugDir: env.debugDir, creds: env.creds });
+  const r = listRange(from, to);
+  const docs = (await gw.apiApprovalDocs(r.from.replace(/-/g, ''), r.to.replace(/-/g, ''))).filter(d => d.form === R.VISITOR_FORM);
+  const rows = [];
+  for (const d of docs) {
+    let info = null;
+    if (/완료|종결/.test(d.status)) try { info = await gw.apiVisitorDoc(d.docId, d.formId); } catch (e) { env.log(`(본문 못 읽음 ${d.docNo}: ${String(e.message).slice(0, 80)})`); }
+    rows.push({ docId: d.docId, formId: d.formId, docNo: d.docNo, title: d.title, status: d.status, date: d.date, count: info ? info.count : 0, pledge: info ? info.pledge : null });
+  }
+  env.log(`방문객 신청서 ${docs.length}건`);
+  return { rows, from: r.from, to: r.to };
 }
 
 /** 신청한 구매의뢰 목록: 그룹웨어 결재 문서(양식 '구매의뢰서') + 이 PC 기록(아직 상신 안 한 것) */
@@ -354,4 +388,4 @@ async function runDeleteTrip(env, id) {
   return { rows };
 }
 
-module.exports = { cachedFare, settleLines, listRange, runRefundCheck, runProfile, runLoadReport, planApply, runFare, runApply, runPurchase, runPurchaseList, reportDraft, runReport, runLogin, runListBudget, runDeleteBudget, runDeleteTrip };
+module.exports = { cachedFare, settleLines, listRange, runRefundCheck, runProfile, runLoadReport, planApply, runFare, runApply, runPurchase, runVisitor, runVisitorList, runPurchaseList, reportDraft, runReport, runLogin, runListBudget, runDeleteBudget, runDeleteTrip };

@@ -210,8 +210,8 @@ function start(port = 0) {
     if (req.url === '/' || req.url.startsWith('/?')) return send(INDEX.replace('__SEARCH__', process.env.MOCK_SEARCH || 'button'));
     if (req.url.startsWith('/popup.html')) return send(POPUP);
     if (req.url === '/compose.js') return send(fs.readFileSync(path.join(__dirname, 'compose.js'), 'utf8'), 'text/javascript; charset=utf-8');
-    if (req.url.startsWith('/compose.html')) return send(COMPOSE.replace('__TEMPDRAFT__', process.env.MOCK_TEMPDRAFT ? 'true' : 'false').replace(/__LOADING__/g, String(Number(process.env.MOCK_LOADING) || 0)).replace('__TEMPDELAY__', String(Number(process.env.MOCK_TEMPDRAFT) > 1 ? Number(process.env.MOCK_TEMPDRAFT) : 700)));
-    if (req.url.startsWith('/compose-editor.html')) return send(`<!doctype html><html><head><meta charset="utf-8"></head><body contenteditable="true">${fs.readFileSync(path.join(FIX, 'purchase_body.html'), 'utf8')}</body></html>`);
+    if (req.url.startsWith('/compose.html')) return send(COMPOSE.replace('/compose-editor.html', '/compose-editor.html' + (req.url.split('?')[1] ? '?' + req.url.split('?')[1] : '')).replace('__TEMPDRAFT__', process.env.MOCK_TEMPDRAFT ? 'true' : 'false').replace(/__LOADING__/g, String(Number(process.env.MOCK_LOADING) || 0)).replace('__TEMPDELAY__', String(Number(process.env.MOCK_TEMPDRAFT) > 1 ? Number(process.env.MOCK_TEMPDRAFT) : 700)));
+    if (req.url.startsWith('/compose-editor.html')) return send(`<!doctype html><html><head><meta charset="utf-8"></head><body contenteditable="true">${fs.readFileSync(path.join(FIX, /방문객/.test(decodeURIComponent(req.url)) ? 'visitor_body.html' : 'purchase_body.html'), 'utf8')}</body></html>`);   // 양식마다 실제 본문
     if (req.url.startsWith('/editor.html'))
       return send(`<!doctype html><html><head><meta charset="utf-8"></head><body contenteditable="true">${fs.readFileSync(path.join(FIX, process.env.MOCK_FORM || 'apply_form_body.html'), 'utf8')}</body></html>`);
     res.writeHead(404); res.end();

@@ -466,16 +466,17 @@ function watchForDev() {
   // 실제로 이 앱이 켜진 뒤에 수정된 소스 파일(.js/.html/.css)일 때만 반응한다. 작업 중이면 끝날 때까지 미룬다.
   const fs = require('fs');
   const started = Date.now();
-  let timer = null, pending = false;
+  let pending = false;
   const changedSinceStart = file => { try { return fs.statSync(file).mtimeMs > started; } catch (e) { return false; } };
   // 엔진: 앱을 다시 켜지 않고 모듈만 다시 읽는다 (작업 중이면 끝난 뒤 조용히). main/preload/updater: 한가하면 바로 다시 켜고, 작업 중이면 띠만 띄움
   const reload = () => { if (jobBusy()) { if (!pending) { pending = true; console.log('[dev] 작업 중 — 끝나면 엔진 다시 읽음'); } return setTimeout(reload, 1000); } pending = false; try { reloadEngine(); } catch (e) { console.error('[dev] 엔진 다시 읽기 실패:', e.message); } };
   const restart = () => { if (jobBusy()) { console.log('[dev] main 코드가 바뀌었어요 — 작업 중이라 띠만 띄움'); if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('dev-stale'); return; } app.relaunch(); app.exit(0); };
-  const watch = (target, recursive, action) => {
+  const watch = (target, recursive, action, only = () => true) => {
+    let timer = null;   // 감시마다 따로: 같이 쓰면 main 직후 renderer 가 바뀔 때 재시작이 새로고침에 덮여 사라짐
     try {
       fs.watch(target, { recursive }, (_ev, f) => {
-        const file = recursive ? path.join(target, f || '') : target;
-        if (!/\.(js|html|css)$/.test(file) || /builtin-key/.test(file) || !changedSinceStart(file)) return;
+        const file = path.join(target, f || '');
+        if (!only(f || '') || !/\.(js|html|css)$/.test(file) || /builtin-key/.test(file) || !changedSinceStart(file)) return;
         console.log('[dev] 바뀜:', path.relative(__dirname, file));
         clearTimeout(timer); timer = setTimeout(action, 300);
       });
@@ -483,7 +484,8 @@ function watchForDev() {
   };
   watch(path.join(__dirname, 'renderer'), true, () => { if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.reloadIgnoringCache(); });
   watch(path.join(__dirname, 'engine'), true, reload);
-  for (const f of ['main.js', 'preload.js', 'updater.js']) watch(path.join(__dirname, f), false, restart);
+  // 파일이 아니라 폴더를 감시: 편집기가 새 파일로 바꿔 저장하면 파일 감시는 끊김
+  watch(__dirname, false, restart, f => ['main.js', 'preload.js', 'updater.js'].includes(f));
   console.log('[dev] 파일 변경 감시 중 (renderer → 새로고침, engine → 모듈 다시 읽기, main → 재시작)');
 }
 
@@ -492,7 +494,7 @@ async function route(p, body = {}) {
   const cfg = store.config();
   switch (p) {
     case '/api/meta':
-      return { config: publicConfig(cfg), configured: store.hasConfig(), items: Object.fromEntries(Object.entries(R.BUDGET_ITEMS).map(([k, v]) => [k, v[1]])), noVat: R.NO_VAT.source, noVatKinds: R.NO_VAT_KINDS, purchase: { purposes: R.PURCHASE_PURPOSES, projects: R.PURCHASE_PROJECTS },
+      return { config: publicConfig(cfg), configured: store.hasConfig(), items: Object.fromEntries(Object.entries(R.BUDGET_ITEMS).map(([k, v]) => [k, v[1]])), noVat: R.NO_VAT.source, noVatKinds: R.NO_VAT_KINDS, purchase: { purposes: R.PURCHASE_PURPOSES, projects: R.PURCHASE_PROJECTS }, visitor: { areas: R.VISITOR_AREAS, shoots: R.VISITOR_SHOOTS, lines: R.VISITOR_LINES },
         version: app.getVersion(), dev: !app.isPackaged, providers: Object.fromEntries(Object.entries(AI.PROVIDERS).map(([k, v]) => [k, v])) };
     case '/api/config': {
       // 화면에서 바꿀 수 있는 설정만 (그룹웨어 주소·저장된 비밀번호 같은 건 화면에서 못 바꿈 — 바뀌면 자동 로그인이 엉뚱한 곳에 비밀번호를 넣을 수 있음)
@@ -634,6 +636,27 @@ async function route(p, body = {}) {
     case '/api/job/purchase-list': return startJob('purchase-list', env => runner.runPurchaseList(env, { from: String(body.from || ''), to: String(body.to || '') }), body.title);
     case '/api/purchase/forget': store.removePurchase(String(body.created || '')); return { ok: true };
     case '/api/job/purchase': { const pu = R.parsePurchase(body.data); assertFilesExist([pu.file].filter(Boolean), '발주서'); return startJob('purchase', env => runner.runPurchase(env, body.data), body.title); }   // 보관·상신은 사람이
+    case '/api/visitor/draft': {   // 한 줄 메모 → 방문객 신청 칸
+      const ai = aiSettings(cfg); if (!ai) throw new Error('자동 채우기는 AI 가 있어야 해요. 설정 › AI 문장 작성에서 Gemini 를 골라 주세요. (직접 입력은 그대로 돼요)');
+      return AI.draftVisitor(ai, String(body.memo || '').slice(0, 1000));
+    }
+    case '/api/visitor/pledge': {   // 유형 B·C 보안 준수 서약서: 인쇄 창을 바로 띄움 (파일로 원하면 인쇄 창의 PDF로 저장). 매수 = 방문 인원
+      const w = new BrowserWindow({ show: false, webPreferences: { sandbox: true } });
+      try {
+        await w.loadFile(path.join(__dirname, '..', 'assets', 'pledge.html'));
+        const copies = Math.min(Math.max(parseInt(body.copies, 10) || 1, 1), 99);
+        const [ok, why] = await new Promise(res => w.webContents.print({ copies }, (...r) => res(r)));
+        if (!ok && !/cancel/i.test(why || '')) throw new Error(`서약서를 인쇄하지 못했어요: ${why}`);
+        return { printed: ok };   // 취소면 false → 화면이 [보내기]를 계속 막음
+      } finally { w.destroy(); }
+    }
+    case '/api/visitor/print-doc': {   // 올라간 신청서: 그룹웨어 문서 창을 그대로 띄우고 [인쇄 › 결재문서] (결재란·품의번호 포함, 창은 사람이 닫음)
+      const gw = gwFor(false); await gw.ensureLogin();
+      return { clicked: await gw.printApprovalDoc(String(body.docId || ''), String(body.formId || '')) };
+    }
+    case '/api/visitor/urgent': return { urgent: /^\d{4}-\d{2}-\d{2}$/.test(String(body.date || '')) && R.visitorUrgent(String(body.date)) };   // 전 영업일·당일 상신 → 긴급 방문 사유 필수 (공휴일 목록은 엔진에)
+    case '/api/job/visitor-list': return startJob('visitor-list', env => runner.runVisitorList(env, {}), body.title);
+    case '/api/job/visitor': { R.parseVisitor(body.data || {}); return startJob('visitor', env => runner.runVisitor(env, body.data), body.title); }   // 결재선·상신은 사람이
     case '/api/job/receipts': {   // 영수증·증빙 여러 개 → AI 가 예산과목·금액·날짜 분류
       const ai = aiSettings(cfg);
       if (!ai) throw new Error('영수증 자동 분류는 AI 가 있어야 해요. 설정 › AI 문장 작성에서 Gemini 를 골라 주세요.');

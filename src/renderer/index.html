@@ -258,8 +258,8 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
 @keyframes hintBob{0%,100%{transform:translateY(0)}50%{transform:translateY(-2px)}}
 .tk-break span.need{background:#fff3cd;color:#7a4b00;font-weight:600}
 
-#cfmModal,#askModal,#carModal,#mealModal{position:fixed;inset:0;background:rgba(15,23,42,.45);display:none;align-items:center;justify-content:center;z-index:70;backdrop-filter:blur(2px)}
-#cfmModal.on,#askModal.on,#carModal.on,#mealModal.on{display:flex;animation:cfFade .18s ease-out}
+#cfmModal,#askModal,#carModal,#mealModal,#vsAskModal{position:fixed;inset:0;background:rgba(15,23,42,.45);display:none;align-items:center;justify-content:center;z-index:70;backdrop-filter:blur(2px)}
+#cfmModal.on,#askModal.on,#carModal.on,#mealModal.on,#vsAskModal.on{display:flex;animation:cfFade .18s ease-out}
 @keyframes cfFade{from{opacity:0}to{opacity:1}}
 /* 출장지 자동완성 (네이버 지역 검색) */
 .acwrap{position:relative;min-width:0}.acwrap input{width:100%}
@@ -286,9 +286,9 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
 .pp-tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}.pp-tags span{font-size:11.5px;background:var(--accent-soft);color:var(--accent);padding:3px 9px;border-radius:999px}.pp-tags span.hot{background:#fee2e2;color:#b91c1c}.pp-tags span.need{background:#fff3cd;color:#7a4b00}
 .pu-view,.trip-view{margin:0 0 14px}.trip-view label.on span{background:#fff;color:var(--accent);box-shadow:0 4px 12px -6px rgba(27,79,143,.5)}
 /* 출장 신청: 처음엔 한 줄 칸만, 자동 작성하면 티켓·제출 준비·세부 내용이 펼쳐짐 */
-#tab-apply.pre .result,#tab-apply.pre #aFold,#reportView.pre .result,#reportView.pre #rFold,#puNew.pre .result,#puNew.pre #puFold{display:none}
-#tab-apply:not(.pre) #aManual,#reportView:not(.pre) #rManual,#puNew:not(.pre) #puManual{display:none}
-#tab-apply.reveal .result,#tab-apply.reveal #aFold,#reportView.reveal .result,#reportView.reveal #rFold,#puNew.reveal .result,#puNew.reveal #puFold{animation:revealUp .45s cubic-bezier(.2,.8,.2,1) both}
+#tab-apply.pre .result,#tab-apply.pre #aFold,#reportView.pre .result,#reportView.pre #rFold,#puNew.pre .result,#puNew.pre #puFold,#vsNew.pre .result{display:none}
+#tab-apply:not(.pre) #aManual,#reportView:not(.pre) #rManual,#puNew:not(.pre) #puManual,#vsNew:not(.pre) #vsManual{display:none}
+#tab-apply.reveal .result,#tab-apply.reveal #aFold,#reportView.reveal .result,#reportView.reveal #rFold,#puNew.reveal .result,#puNew.reveal #puFold,#vsNew.reveal .result{animation:revealUp .45s cubic-bezier(.2,.8,.2,1) both}
 @keyframes revealUp{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
 .seg label.disabled,#tkModes button:disabled{opacity:.4;cursor:not-allowed}
 .pre-skip{display:inline-block;margin-top:10px;font-size:13px;color:var(--muted);text-decoration:none}.pre-skip:hover{color:var(--accent);text-decoration:underline}
@@ -299,16 +299,19 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
 .gd-card b{display:block;font-size:15px;margin:2px 0 6px}.gd-card p{margin:0 0 12px;font-size:13.5px;line-height:1.6;color:var(--ink)}
 .gd-step{font-size:11px;font-weight:700;letter-spacing:1px;color:var(--teal)}
 .gd-foot{display:flex;justify-content:space-between;align-items:center}
+#cfYes:disabled{opacity:.45;cursor:not-allowed;box-shadow:none;animation:none}
+.cf-line{margin:0 0 14px;padding:12px 14px;border-radius:12px;background:#fff5f5;border:2px solid #e5484d}.cf-line h4{margin:0 0 8px;color:#c62828;font-size:14px}.cf-line .flow{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:14px}.cf-line .flow b{background:#fff;border:1px solid #f3b4b4;border-radius:6px;padding:3px 9px}.cf-line p{margin:8px 0 0;font-size:12.5px;color:#7a2020}
 .cf-warn{margin-top:14px;padding:10px 12px;border-radius:10px;background:#fff6e6;border:1px solid #f5d38a;color:#7a4b00;font-size:13px;line-height:1.55}
 .pu-cf{table-layout:fixed}.pu-cf th{white-space:nowrap}.pu-cf td{word-break:break-all}.pu-cf td:nth-child(2),.pu-cf td:nth-child(4){white-space:nowrap}
 .pu-info .row{grid-template-columns:104px 1fr;margin-bottom:10px}.pu-sum{display:flex;justify-content:space-between;align-items:baseline;margin-top:12px;padding-top:12px;border-top:1.5px dashed var(--line);color:var(--muted);font-size:13px}.pu-sum b{font-size:22px;color:var(--accent);letter-spacing:-.5px}
+#vs_urgent_row.warn input{border-color:#e5484d;background:#fff5f5}
 .pu-form .row{grid-template-columns:96px 1fr;margin-bottom:8px}.pu-form .row .sub{font-size:11.5px}.pu-form .seg label{padding:5px 12px;font-size:13px}.pu-form select{min-width:0}
 #pu_urlbox{margin-bottom:12px}#pu_urlbox .qrow{display:flex;gap:8px}
 .drop .empty{display:flex;flex-direction:column;align-items:center;gap:6px}#pu_urlbox .qrow input{flex:1}
 .pofile .thumb{flex:none;width:64px;height:44px;border-radius:8px;object-fit:cover;border:1px solid var(--line);background:#f3f6fa}
 #pu_items td{padding:3px 3px}#pu_items input{padding:8px 6px;min-width:0}#pu_items input[type=date]{padding:8px 4px;font-size:14px}#pu_items .del{padding:6px 8px}
 #askChoices{display:flex;flex-direction:column;gap:8px}#askChoices button{text-align:left;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:#fff;font-size:14px;cursor:pointer}#askChoices button:hover{border-color:var(--accent);background:var(--accent-soft)}#askChoices button small{display:block;color:var(--muted);margin-top:2px}
-#cfmModal .box,#askModal .box,#carModal .box,#mealModal .box{background:#fff;border-radius:16px;width:620px;max-width:calc(100vw - 32px);max-height:calc(100vh - 48px);display:flex;flex-direction:column;box-shadow:0 30px 70px -20px rgba(0,0,0,.45);animation:cfPop .22s cubic-bezier(.2,.9,.3,1.2)}
+#cfmModal .box,#askModal .box,#carModal .box,#mealModal .box,#vsAskModal .box{background:#fff;border-radius:16px;width:620px;max-width:calc(100vw - 32px);max-height:calc(100vh - 48px);display:flex;flex-direction:column;box-shadow:0 30px 70px -20px rgba(0,0,0,.45);animation:cfPop .22s cubic-bezier(.2,.9,.3,1.2)}
 @keyframes cfPop{from{transform:translateY(8px) scale(.98);opacity:.6}to{transform:none;opacity:1}}
 .cf-head{display:flex;align-items:center;padding:18px 22px 10px;font-size:17px}.cf-head .x{margin-left:auto;border:0;background:none;font-size:16px;cursor:pointer;color:var(--muted)}
 .cf-body{padding:4px 22px 10px;overflow:auto}
@@ -344,6 +347,7 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
     <button data-tab="apply" class="on">출장</button>
     <button data-tab="trips" class="hidden">출장 보고</button>
     <button data-tab="purchase">구매 의뢰</button>
+    <button data-tab="visitor">방문 신청</button>
     <button data-tab="settings">설정</button>
   </nav>
   <button class="gwpill" id="gwPill" title="그룹웨어 로그인 상태"><i></i><span>그룹웨어 확인 중</span></button>
@@ -553,6 +557,63 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
 </section>
 
 <!-- ================= 설정 ================= -->
+<section id="tab-visitor" class="hidden">
+<div class="scope pu-view" id="vs_view_seg"><label><input type="radio" name="vs_view" value="new" checked><span>✍️ 새 방문 신청</span></label><label><input type="radio" name="vs_view" value="list"><span>📋 신청한 방문</span></label></div>
+<div id="vsNew" class="pre">
+<div class="card quick hero">
+  <div class="h2row"><h2><span class="spark">✦</span> 한 줄 쓰면 외부 방문객 출입 신청서 끝</h2><span class="inline" style="gap:6px"><button class="btn small" data-guide="visitor" title="이 화면 쓰는 법을 처음부터 다시 보여 줘요">❓ 가이드</button><button class="btn small" id="btnNewVisitor" title="입력 중인 내용을 모두 비움">새로 작성</button></span></div>
+  <p class="sub">누가·언제·어디로·왜 오는지 적고 [그룹웨어에 보내기]를 누르세요. AI가 칸을 채우고, 빠졌거나 꼭 확인할 칸만 하나씩 물어봐요.</p>
+  <div class="qrow cmd"><textarea id="vs_memo" data-examples="11/5 14~16시 현대자동차 김철수 부장 외 2명, 7층 외부회의실에서 AMR 협업 미팅, 촬영 없음|다음주 화 10시 KAIST 이영희 교수 1층 쇼룸 견학|11/12~13 두산로보틱스 3명 5층 연구실 공동 시험, 시연 영상 촬영 필요" placeholder="예: 11/5 14~16시 현대자동차 김철수 부장 외 2명, 7층 외부회의실에서 AMR 협업 미팅, 촬영 없음"></textarea>
+    <button class="btn primary glow" id="btnVsSend">✦ 그룹웨어에 보내기</button></div>
+  <div class="chips"><select id="vs_hist" class="btn small" title="이전에 입력한 문장 (최근 30개)"><option value="">이전 문장…</option></select></div>
+  <div class="qstatus" id="vs_status"></div>
+  <a href="#" class="pre-skip" id="vsManual">전체 칸을 펼쳐서 직접 입력할게요 ›</a>
+</div>
+<div class="result">
+  <div class="card pu-form">
+    <div class="h2row"><h2>방문 정보</h2></div>
+    <div class="row"><label>방문 유형</label><div class="seg" id="vs_type_seg"><label title="1층 로비·쇼룸 견학만"><input type="radio" name="vs_type" value="A">A 일반 견학</label><label title="각 층 복도·공용 라운지·외부 회의실"><input type="radio" name="vs_type" value="B">B 층별 투어</label><label title="사무실·연구 공간 내부 (방문 사무실 부서장 결재 필요)"><input type="radio" name="vs_type" value="C">C 내부 공간</label></div></div>
+    <div class="row"><label>방문자 성명</label><input id="vs_name" placeholder="대표 방문자"></div>
+    <div class="row"><label>소속(회사명)</label><input id="vs_org"></div>
+    <div class="row"><label>직위</label><input id="vs_position"></div>
+    <div class="row"><label>연락처</label><input id="vs_phone"></div>
+    <div class="row"><label>방문 인원</label><div class="inline"><input id="vs_count" type="number" min="1" value="1" style="width:90px">명</div></div>
+    <div class="row"><label>방문 차량</label><input id="vs_car" placeholder="있는 경우 (차량번호·차종)"></div>
+    <div class="row"><label>방문 일정</label><div class="inline"><input type="date" id="vs_date" style="width:auto">~<input type="date" id="vs_date_end" style="width:auto" title="하루면 비워 두세요"></div></div>
+    <div class="row"><label>방문 시간</label><div class="inline" style="gap:6px"><input type="time" id="vs_t1" title="시작" style="flex:1"><span>~</span><input type="time" id="vs_t2" title="끝 (시작을 고르면 1시간 뒤로 채워져요)" style="flex:1"></div></div>
+    <div class="row"><label>방문 목적</label><input id="vs_purpose"></div>
+    <div class="row"><label>요청 부서</label><input id="vs_dept"></div>
+    <div class="row"><label>담당자</label><input id="vs_host"></div>
+    <div id="vs_bc">
+      <div class="row"><label>출입 요청 구역</label><div id="vs_areas"></div></div>
+      <div class="row"><label>촬영/녹음</label><div class="seg" id="vs_shoot"></div></div>
+      <div id="vs_shoot_more">
+        <div class="row" id="vs_shoot_etc_row"><label>기타 내용</label><input id="vs_shoot_etc"></div>
+        <div class="row"><label>촬영/녹음 목적</label><input id="vs_shoot_purpose"></div>
+        <div class="row"><label>허용 범위</label><div class="seg"><label><input type="radio" name="vs_scope" value="지정 구역 내">지정 구역 내</label><label><input type="radio" name="vs_scope" value="별도협의">별도협의</label></div></div>
+      </div>
+    </div>
+    <div class="row" id="vs_urgent_row"><label>긴급 방문 사유</label><input id="vs_urgent" placeholder="방문 전 영업일·당일에 올리는 경우"></div>
+  </div>
+  <div class="card ready">
+    <div class="rd-head"><b>제출 준비</b><span id="vsReadyPct">0%</span></div>
+    <div class="rd-bar"><i id="vsReadyBar"></i></div>
+    <ul class="rd-list" id="vsReadyList"></ul>
+    <h2 style="margin-top:14px">결재 문서 제목</h2>
+    <input id="vs_title">
+    <div class="err" id="vs_err"></div>
+    <button class="btn primary" id="btnVisitor" style="width:100%;margin-top:8px">그룹웨어에 입력하기</button>
+    <p class="sub" style="margin-top:8px">결재작성 › 외부 방문객 내부 공간 출입 승인 요청의 건 창을 열어 본문을 채우고 수신및참조에 경영지원부(전자결재용)를 넣어요. <b>결재선은 직접 선택</b>하고 [상신]을 누르세요.<br>A: 기안자 → 담당자 · B: 기안자 → 기안부서 사업부서장 · C: 기안자 → 기안부서 사업부서장 → 방문 사무실 사업부서장. 방문 전 영업일보다 먼저 상신 (전 영업일·당일이면 긴급 방문 사유 필수).</p>
+  </div>
+</div>
+</div>
+<div id="vsHistory" class="hidden">
+<div class="card">
+  <div class="h2row"><div><h2 style="margin:0">신청한 방문</h2><p class="sub" style="margin:2px 0 0">그룹웨어에 올라간 방문객 신청서와 결재 상태예요 (최근 3개월). 유형 B·C는 결재가 끝나면 신청서와 보안 준수 서약서를 인쇄해 경영지원부에 내고 방문증을 받아요.</p></div><span class="inline" style="gap:6px;flex:none"><button class="btn small" data-guide="visitorList" title="이 화면 쓰는 법을 처음부터 다시 보여 줘요">❓ 가이드</button><button class="btn small" id="btnVsList">↻ 새로고침</button></span></div>
+  <div id="vsList" class="list"><p class="sub">아직 안 읽었어요.</p></div>
+</div>
+</div>
+</section>
 <section id="tab-purchase" class="hidden">
 <div class="scope pu-view" id="pu_view_seg"><label><input type="radio" name="pu_view" value="new" checked><span>✍️ 새 구매의뢰</span></label><label><input type="radio" name="pu_view" value="list"><span>📋 신청한 구매의뢰</span></label></div>
 <div id="puNew" class="pre">
@@ -713,6 +774,9 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
 <div id="mealModal"><div class="box" style="width:680px"><div class="cf-head"><b>🍽 식대 규정 한도를 넘은 영수증이 있어요</b><button class="x" type="button" id="mealX">✕</button></div>
   <div class="cf-body"><p class="sub" id="mealRule" style="margin:0 0 12px;line-height:1.6"></p><div id="mealRows"></div></div>
   <div class="cf-foot"><span class="cf-note">한도를 넘는 금액은 정산에서 빠져요 (영수증은 그대로 첨부)</span><button class="btn primary" type="button" id="mealOk">이대로 맞춰 넣기</button></div></div></div>
+<div id="vsAskModal"><div class="box" style="width:640px"><div class="cf-head"><b id="vsAskTitle"></b><span class="sub" id="vsAskLeft" style="margin:0 12px 0 auto"></span><button class="x" type="button" id="vsAskX" style="margin-left:0">✕</button></div>
+  <div class="cf-body"><p class="sub" id="vsAskHint" style="margin:0 0 12px"></p><div id="vsAskRows" class="pu-form"></div></div>
+  <div class="cf-foot"><span class="cf-note err" id="vsAskErr"></span><button class="btn primary" type="button" id="vsAskNext">다음</button></div></div></div>
 <div id="cfmModal"><div class="box"><div class="cf-head"><b id="cfTitle">이대로 보낼까요?</b><button class="x" type="button" id="cfX">✕</button></div>
   <div class="cf-body" id="cfBody"></div>
   <div class="cf-foot"><span class="cf-note" id="cfNote"></span><button class="btn" type="button" id="cfNo">고칠게요</button><button class="btn primary glow" type="button" id="cfYes">보내기 ✦</button></div></div></div>

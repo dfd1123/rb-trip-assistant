@@ -11,9 +11,9 @@ const fillForm = (payload) => {
   const cells = () => Array.from(doc.querySelectorAll('td,th'));
   const result = { filled: [], missing: [] };
 
-  const findLabel = (labels) => {
+  const findLabel = (labels, nth = 1) => {   // nth: 같은 라벨이 여러 줄이면 n번째 (예: 출입 구역 '7층' 두 줄)
     for (const label of [].concat(labels)) {
-      const hit = cells().find(td => norm(td.textContent) === norm(label));
+      const hit = cells().filter(td => norm(td.textContent) === norm(label))[nth - 1];
       if (hit) return hit;
     }
     return null;
@@ -65,10 +65,33 @@ const fillForm = (payload) => {
     return found;
   };
 
+  // 빈칸 채우기: 칸 안 첫 '(   )'(공백만 든 괄호) 또는 '____' 를 글자로. 괄호는 남김
+  const fillBlank = (td, text) => {
+    const w = doc.createTreeWalker(td, NodeFilter.SHOW_TEXT);
+    let n;
+    while ((n = w.nextNode())) {
+      if (/\(\s*\)/.test(n.textContent)) { n.textContent = n.textContent.replace(/\(\s*\)/, () => `(${text})`); return true; }
+      if (/_{3,}/.test(n.textContent)) { n.textContent = n.textContent.replace(/_{3,}/, () => text); return true; }
+    }
+    return false;
+  };
+
   for (const f of payload.fields) {
-    const label = findLabel(f.label);
+    const name = [].concat(f.label || f.option)[0];
+    if (!f.label && f.option) {   // 라벨 칸 없는 체크박스 줄 (예: 촬영/녹음 '☐해당없음 ☐사진 촬영 필요 …'): 체크박스 뒤 글자로 그 칸을 찾아 그것만 체크
+      const want = norm(f.option);
+      const hit = cells().map(td => ({ td, opt: optionTexts(td).find(o => o.text.startsWith(want)) })).find(x => x.opt);
+      if (!hit) { result.missing.push(name); continue; }
+      hit.opt.el.checked = true; hit.opt.el.setAttribute('checked', 'checked');
+      if (f.blank && !fillBlank(hit.td, f.blank)) result.missing.push(`${name}:빈칸`);
+      result.filled.push(name);
+      continue;
+    }
+    const label = findLabel(f.label, f.nth);
     const td = label && valueCell(label);
-    if (!td) { result.missing.push([].concat(f.label)[0]); continue; }
+    if (!td) { result.missing.push(name); continue; }
+    if (f.checkAll) { optionTexts(td).forEach(({ el }) => { el.checked = true; el.setAttribute('checked', 'checked'); }); result.filled.push(name); }
+    if (f.blank !== undefined && f.blank !== '' && !fillBlank(td, f.blank)) result.missing.push(`${name}:빈칸`);
     if (f.check) {
       const found = check(td, f.check);
       if (found.length < [].concat(f.check).length) result.missing.push(`${[].concat(f.label)[0]}:${f.check}`);
@@ -198,4 +221,44 @@ function purchasePayload(p, { shotDataUrl = '' } = {}) {
   return { fields, table };
 }
 
-module.exports = { FILL_JS, FIND_JS, applyPayload, reportPayload, purchasePayload };
+/** 외부 방문객 내부 공간 출입 신청서 본문 (실제 양식 HTML: test/fixtures/visitor_body.html). 유형 A 는 구역·촬영 칸을 비워 둠 */
+function visitorPayload(v) {
+  const fields = [
+    { label: '방문자 성명', text: v.name },
+    { label: '소속(회사명)', text: v.org },
+    { label: '직위', text: v.position },
+    { label: '연락처', text: v.phone },
+    { label: '방문 인원', text: `${v.count}명` },
+    { label: '방문 차량 정보(있는 경우)', text: v.car },
+    { label: '방문 일정', text: v.period },
+    { label: '방문 시간', text: v.time },
+    { label: '방문 목적', text: v.purpose },
+    { label: '요청 부서', text: v.dept },
+    { label: '담당자', text: v.host },
+  ];
+  // 출입 구역: 줄의 체크박스를 체크하고 '(    )' 에 세부 장소. '7층 대회의실'은 두 번째 '7층' 줄
+  for (const a of v.areas) {
+    const big = a.area === '7층 대회의실';
+    fields.push({ label: big ? '7층' : a.area, nth: big ? 2 : 1, checkAll: true, ...(a.detail && a.area !== '1층' && !big ? { blank: a.detail } : {}) });
+  }
+  // 촬영/녹음: 첫 줄은 라벨 칸 없이 체크박스만 → 글자로 찾음
+  for (const o of v.shoot) fields.push({ option: o, ...(o === '기타' ? { blank: v.shoot_etc } : {}) });
+  if (v.shoot_purpose) fields.push({ label: '촬영/녹음 목적', blank: v.shoot_purpose });
+  if (v.shoot_scope) fields.push({ label: '허용 범위', check: [v.shoot_scope] });
+  if (v.urgent_reason) fields.push({ label: '긴급 방문 사유', text: v.urgent_reason });
+  return { fields };
+}
+
+/** 올라간 방문객 신청서 본문(HTML) → 방문 인원, 보안 서약서 필요 여부.
+ *  본문엔 유형 칸이 없음: 유형 A 는 출입 요청 구역을 비우고 B·C 는 하나 이상 체크 필수 → 'N층' 줄에 체크가 있으면 B·C (서약서 대상).
+ *  양식 안내문 "(ex. 7층 (경영지원부)…" 에 미리 체크된 예시 상자가 있어서 아무 체크나 세면 안 됨 */
+const readVisitorDoc = (html) => {
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const norm = s => (s || '').replace(/[\s\u200b\u00a0]/g, '');
+  const lb = [...doc.querySelectorAll('td,th')].find(td => norm(td.textContent) === '방문인원');
+  const m = lb && lb.nextElementSibling && /(\d+)/.exec(lb.nextElementSibling.textContent);
+  return { count: m ? Number(m[1]) : 0, pledge: [...doc.querySelectorAll('tr')].some(tr => tr.cells[0] && /^\d층$/.test(norm(tr.cells[0].textContent)) && [...tr.querySelectorAll('input[type=checkbox]')].some(i => i.checked || i.hasAttribute('checked'))) };
+};
+const VISITOR_READ_JS = readVisitorDoc.toString();
+
+module.exports = { FILL_JS, FIND_JS, VISITOR_READ_JS, applyPayload, reportPayload, purchasePayload, visitorPayload };

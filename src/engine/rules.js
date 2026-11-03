@@ -9,6 +9,12 @@ const PURCHASE_PURPOSES = ['생산 운영', '신규 프로젝트', '고객 요�
 const PURCHASE_RECIPIENTS = ['구매팀', '경영지원부(전자결재용)', '연구지원팀'];   // 구매의뢰서 수신및참조 기본
 const PROJECT_DETAIL_REQUIRED = ['정부과제', '기타'];   // 세부 프로젝트명 필수 (다른 프로젝트는 선택). 제목엔 세부 이름이 들어감
 const PURCHASE_PROJECTS = ['협동로봇', '천문', '2족보행', '4족보행', '양팔로봇', '관리', 'S사이족보행', '모바일로봇', 'KAI', '정부과제', '기타'];
+const VISITOR_FORM = '외부 방문객 내부 공간 출입 승인 요청의 건';   // 결재작성 › 전체 양식 (예전 '방문자 신청' 양식은 안 씀). 유형 A·B·C 모두 이 양식
+const VISITOR_RECIPIENTS = ['경영지원부(전자결재용)'];   // 방문 사실 공유
+const VISITOR_AREAS = ['1층', '3층', '4층', '5층', '6층', '7층', '7층 대회의실'];   // 양식 '3. 출입 요청 구역' 줄 순서 (7층이 두 줄)
+const VISITOR_SHOOTS = ['해당없음', '사진 촬영 필요', '영상 촬영 필요', '기타'];
+// 유형별 결재선 (외부 방문객 프로세스 4-2). 앱은 결재선을 넣지 않고 사람에게 보여 주기만 함
+const VISITOR_LINES = { A: ['기안자', '담당자'], B: ['기안자', '기안부서 사업부서장'], C: ['기안자', '기안부서 사업부서장', '방문 사무실 사업부서장'] };
 const REPORT_FORM = '출장보고서 및 경비정산 지출결의서';   // 결의서입력 → 결재상신 양식 (예전 '출장보고서 및 정산 품의서'는 안 씀)
 
 // 예산과목 (사업코드도움에서 코드로 검색)
@@ -518,7 +524,69 @@ function parsePurchase(data) {
   return { items: rows, link, price_vat, purpose, purpose_etc, project, project_etc, urgency, substitutable: Boolean(data.substitutable), vendor, supply, vat_included, total, reason, title, file, memo: String(data.memo || '').trim() };
 }
 
+/** 외부 방문객 결재 제목: "외부 방문객 내부 공간 출입 승인 요청의 건 (11/5 현대자동차 김철수 외 2명)" */
+function visitorTitle({ date, org, name, count }) {
+  const m = /^\d{4}-(\d{2})-(\d{2})$/.exec(date || '');
+  const who = [org, name && `${name}${count > 1 ? ` 외 ${count - 1}명` : ''}`].filter(Boolean).join(' ');
+  const tail = [m && `${Number(m[1])}/${Number(m[2])}`, who].filter(Boolean).join(' ');
+  return `${VISITOR_FORM}${tail ? ` (${tail})` : ''}`;
+}
+/** 방문 최소 1영업일 전 상신: 방문 전 마지막 평일(전 영업일)이 오늘이거나 지났으면 긴급 (금요일에 월요일 방문, 당일 방문 등) */
+const visitorUrgent = (date, today = new Date()) => {
+  const d = new Date(`${date}T00:00:00`); d.setDate(d.getDate() - 1);
+  return ymd(prevWorkday(d)) <= ymd(today);
+};
+const WEEK = '일월화수목금토';
+const dayLabel = iso => `${iso} (${WEEK[new Date(`${iso}T00:00:00`).getDay()]})`;
+
+/** 외부 방문객 신청 검증 (화면 → 엔진). 유형 A(1층 로비 견학)는 구역·촬영 칸을 비움 (양식: "유형 A의 경우는 기재할 필요가 없습니다") */
+function parseVisitor(data, { today = new Date() } = {}) {
+  const s = x => String(x ?? '').trim();
+  const type = s(data.type);
+  if (!['A', 'B', 'C'].includes(type)) throw new InputError('방문 유형(A·B·C)을 골라 주세요.');
+  const name = s(data.name), org = s(data.org);
+  if (!name) throw new InputError('방문자 성명을 적어 주세요.');
+  if (!org) throw new InputError('방문자 소속(회사명)을 적어 주세요.');
+  const cs = s(data.count === '' || data.count == null ? 1 : data.count).replace(/명$/, '');   // 0명은 1명으로 바꾸지 않고 오류
+  if (!/^\d{1,3}$/.test(cs) || Number(cs) < 1) throw new InputError(`방문 인원은 1 이상의 숫자여야 해요: ${data.count}`);
+  const count = Number(cs);
+  const date = s(data.date), date_end = s(data.date_end);
+  const okDate = x => /^\d{4}-\d{2}-\d{2}$/.test(x) && !isNaN(new Date(`${x}T00:00:00`));
+  if (!okDate(date)) throw new InputError('방문 일정(날짜)을 골라 주세요.');
+  if (date < ymd(today)) throw new InputError(`방문일(${date})이 지났어요.`);
+  if (date_end && (!okDate(date_end) || date_end < date)) throw new InputError('방문 마지막 날이 첫날보다 빨라요.');
+  if (!s(data.time)) throw new InputError('방문 시간을 적어 주세요. (예: 14:00~16:00)');
+  const purpose = s(data.purpose); if (!purpose) throw new InputError('방문 목적을 적어 주세요.');
+  const dept = s(data.dept), host = s(data.host);
+  if (!dept) throw new InputError('요청 부서를 적어 주세요.');
+  if (!host) throw new InputError('담당자를 적어 주세요.');
+  const urgent = visitorUrgent(date, today), urgent_reason = s(data.urgent_reason);
+  if (urgent && !urgent_reason) throw new InputError('방문 전 영업일보다 먼저 올려야 해요. 전 영업일·당일에 올리면 긴급 방문 사유를 적어 주세요.');
+  let areas = [], shoot = [], shoot_etc = '', shoot_purpose = '', shoot_scope = '';
+  if (type !== 'A') {
+    areas = (Array.isArray(data.areas) ? data.areas : []).map(a => ({ area: s(a.area), detail: s(a.detail) })).filter(a => a.area);
+    const bad = areas.find(a => !VISITOR_AREAS.includes(a.area)); if (bad) throw new InputError(`출입 구역을 모르겠어요: ${bad.area}`);
+    if (!areas.length) throw new InputError('유형 B·C는 출입 요청 구역을 하나 이상 골라야 해요.');
+    shoot = [...new Set((Array.isArray(data.shoot) ? data.shoot : []).map(s))].filter(Boolean);
+    const badS = shoot.find(x => !VISITOR_SHOOTS.includes(x)); if (badS) throw new InputError(`촬영/녹음 항목을 모르겠어요: ${badS}`);
+    if (!shoot.length) throw new InputError('유형 B·C는 촬영/녹음 필요 여부를 골라야 해요 (없으면 해당없음).');
+    if (shoot.includes('해당없음') && shoot.length > 1) throw new InputError('촬영/녹음은 해당없음과 다른 항목을 같이 고를 수 없어요.');
+    if (!shoot.includes('해당없음')) {
+      shoot_etc = shoot.includes('기타') ? s(data.shoot_etc) : '';
+      if (shoot.includes('기타') && !shoot_etc) throw new InputError('촬영/녹음 기타 내용을 적어 주세요.');
+      shoot_purpose = s(data.shoot_purpose); if (!shoot_purpose) throw new InputError('촬영/녹음 목적을 적어 주세요.');
+      shoot_scope = s(data.shoot_scope); if (!['지정 구역 내', '별도협의'].includes(shoot_scope)) throw new InputError('촬영/녹음 허용 범위(지정 구역 내·별도협의)를 골라 주세요.');
+    }
+  }
+  const v = { type, name, org, position: s(data.position), phone: s(data.phone), count, car: s(data.car), date, date_end: date_end === date ? '' : date_end, time: s(data.time), purpose, dept, host,
+    areas, shoot, shoot_etc, shoot_purpose, shoot_scope, urgent, urgent_reason };
+  v.period = v.date_end ? `${dayLabel(date)} ~ ${dayLabel(v.date_end)}` : dayLabel(date);
+  v.title = s(data.title) || visitorTitle(v);
+  return v;
+}
+
 module.exports = {
+  VISITOR_FORM, VISITOR_RECIPIENTS, VISITOR_AREAS, VISITOR_SHOOTS, VISITOR_LINES, visitorTitle, visitorUrgent, parseVisitor,
   NO_VAT, RECEIPT_KINDS, NO_VAT_KINDS, placeTokens, AMBIGUOUS_PLACES,
   APPLY_FORM, REPORT_FORM, PURCHASE_FORM, parseTripPeriod, PURCHASE_PURPOSES, PURCHASE_PROJECTS, PURCHASE_RECIPIENTS, PROJECT_DETAIL_REQUIRED, purchaseTitle, parsePurchase, BUDGET_ITEMS, TRANSPORT_MODES, CORPORATE_CARS, APPLY_CATEGORIES, REPORT_CATEGORIES,
   InputError, ro, applyTitle, reportTitle, budgetMemo, parseCarText, parseTransitText, roundTrip,

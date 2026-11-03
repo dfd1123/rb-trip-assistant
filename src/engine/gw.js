@@ -5,7 +5,7 @@
 // 자동 조작이 막히면 ui.assist() 로 사람에게 넘기고(앱 화면에 안내 + [계속]) 이어서 진행한다.
 
 const { Page, sleep } = require('./driver');
-const { FILL_JS, FIND_JS } = require('./editorFill');
+const { FILL_JS, FIND_JS, VISITOR_READ_JS } = require('./editorFill');
 
 const BUDGET_PATH = '/#/HP/NPC1023/NCA0018';
 const APPROVE_PATH = '/#/HP/NPC1025/NCA0019';
@@ -776,10 +776,45 @@ class Amaranth {
 
   /** 결재 문서 본문(HTML)에서 출장신청서 칸을 읽는다: {destination, period, start, end, start_time, end_time, category, project, transport, companions, companion_purpose, purpose}
    *  본문 API(번들에서 확인): /eap/eap111A19 {docId, formId} → resultData.docContents {basicHtml, content} */
-  async apiApplyDocFields(docId, formId) {
+  /** 결재 문서 본문 HTML (문서 보기 API) */
+  async apiDocHtml(docId, formId) {
     const data = await this.apiCall('/eap/eap111A19', { docId, formId }, 'UBA1010');
     const html = String(((data || {}).docContents || {}).basicHtml || '') + String(((data || {}).docContents || {}).content || '');
     if (!html.trim()) throw new Error('문서 본문 없음');
+    return html;
+  }
+  async apiVisitorDoc(docId, formId) { return this.page.eval(VISITOR_READ_JS, await this.apiDocHtml(docId, formId)); }
+
+  /** 결재 문서를 그룹웨어 문서 창 그대로 띄우고 [인쇄 › 결재문서]를 누른다 (그룹웨어 인쇄와 같은 모양·PDF 파일 이름).
+   *  문서 창 주소 (사람이 상신문서에서 연 창의 실제 주소, 2026-11-03):
+   *  #/popup?MicroModuleCode=eap&docAuth=0&docID=…&formId=…&pageCode=UBA1100&callComp=UBAP002&popupUUID=<uuid> — docID 는 대문자 ID.
+   *  로그인된 그룹웨어 화면에서 window.open 으로 연다 (같은 세션). 못 누르면 false → 창은 열린 채로 사람이 누름 */
+  async printApprovalDoc(docId, formId) {
+    if (!this.page.url().startsWith(this.baseUrl)) { await this.page.goto(this.baseUrl); await sleep(1500); }
+    const opened = new Promise(resolve => this.win.webContents.once('did-create-window', w => resolve(w)));
+    await this.page.eval((base, docID, formId) => {
+      const q = new URLSearchParams({ MicroModuleCode: 'eap', docAuth: '0', docID, formId, pageCode: 'UBA1100', callComp: 'UBAP002', popupUUID: crypto.randomUUID() });
+      window.open(`${base}/#/popup?${q}`, '_blank', 'width=1100,height=1000'); return true;
+    }, this.baseUrl, docId, formId);
+    const win = await Promise.race([opened, sleep(10000).then(() => null)]);
+    if (!win) throw new Error('그룹웨어 문서 창이 열리지 않았어요.');
+    // 문서 창은 숨긴 채(작업 팝업처럼 화면 밖) 두고, 결재문서가 연 인쇄 창만 보여 준다. 인쇄 창을 닫으면 문서 창도 닫음
+    win.webContents.once('did-create-window', c => { win.hide(); c.once('closed', () => { if (!win.isDestroyed()) win.destroy(); }); });
+    const p = new Page(win);
+    const ok = await Promise.race([sleep(30000).then(() => null), p.waitFor(() => {   // 창 안에서 실행이 멈춰도(문서 못 연 화면) 30초면 끝냄
+      const item = all('*').find(e => ownText(e) && e.textContent.trim() === '결재문서');
+      if (item) { setTimeout(() => item.click(), 0); return true; }   // 인쇄 창이 페이지를 멈추므로 eval 을 먼저 끝냄
+      const btn = all('[title],[alt],[aria-label],[class*=print i]').find(e => /인쇄|print/i.test([e.title, e.alt, e.getAttribute('aria-label'), e.getAttribute('class')].join(' ')));
+      if (btn && !window.__taPrint) { window.__taPrint = 1; ['mouseover', 'mouseenter', 'click'].forEach(t => btn.dispatchEvent(new MouseEvent(t, { bubbles: true }))); }   // 한 번만 (다시 누르면 메뉴가 닫힘)
+      return false;
+    }, [], { timeout: 20000, interval: 700 })]);
+    this.log(`문서 창 인쇄 › 결재문서 ${ok ? '누름' : '못 찾음'}: ${win.getTitle()}`);
+    if (!ok && !win.isDestroyed()) { win.setSkipTaskbar(false); win.center(); win.show(); win.focus(); }   // 못 누르면 문서 창을 보여 줘 사람이 누름
+    return !!ok;
+  }
+
+  async apiApplyDocFields(docId, formId) {
+    const html = await this.apiDocHtml(docId, formId);
     return this.page.eval((html) => {
       const doc = new DOMParser().parseFromString(html, 'text/html');
       const norm = s => (s || '').replace(/[\s\u200b\u00a0]/g, '');
@@ -1645,6 +1680,23 @@ class Amaranth {
 
   /** 작성 창 머리의 '수신및참조' 칸에 부서를 넣는다 (이미 든 건 건너뜀). 입력칸에 이름을 치면 조직도 자동완성(👥 경영지원부(전자결재용))이 뜨고,
    *  그 위에 경로 말풍선((주)레인보우로보틱스>본사>…)이 같이 뜬다 → 글자가 이름과 '정확히' 같은 줄만 누른다. 없으면 Enter(첫 후보) */
+  /** 작성 창 위에 띄우는 안내 카드 (본문 편집기 밖이라 문서에는 안 들어감). [닫기]로 치움 */
+  async showNote(popup, { title, steps = [], lines = [] }) {
+    await new Page(popup).eval((title, steps, lines) => {
+      document.getElementById('__taNote')?.remove();
+      const box = document.createElement('div'); box.id = '__taNote';
+      box.style.cssText = 'position:fixed;right:16px;bottom:16px;z-index:2147483647;max-width:420px;background:#fff;border:2px solid #e5484d;border-radius:12px;box-shadow:0 8px 28px rgba(0,0,0,.25);padding:14px 16px;font:13px/1.55 sans-serif;color:#222';
+      const h = document.createElement('div'); h.style.cssText = 'font-weight:700;font-size:15px;color:#c62828;margin-bottom:8px'; h.textContent = title;
+      const flow = document.createElement('div'); flow.style.cssText = 'display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:8px';
+      steps.forEach((s, i) => { if (i) flow.append(Object.assign(document.createElement('span'), { textContent: '→' }));
+        flow.append(Object.assign(document.createElement('b'), { textContent: s, style: 'background:#fff0f0;border:1px solid #f3b4b4;border-radius:6px;padding:3px 8px' })); });
+      const ul = document.createElement('div'); lines.forEach(l => ul.append(Object.assign(document.createElement('div'), { textContent: '· ' + l })));
+      const x = Object.assign(document.createElement('button'), { textContent: '닫기', style: 'margin-top:10px;padding:4px 12px;border:1px solid #ccc;border-radius:6px;background:#f6f6f6;cursor:pointer' });
+      x.onclick = () => box.remove();
+      box.append(h, flow, ul, x); document.body.append(box); return true;
+    }, title, steps, lines);
+  }
+
   async addRecipients(popup, names, { withDept = false } = {}) {
     const pp = new Page(popup), ui = this.ui;
     if (withDept) {   // 머리 표 '작성부서' 칸에 골라져 있는 부서 (예: 개발 2팀)

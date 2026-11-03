@@ -43,8 +43,9 @@ if(window.api.onDevStale) window.api.onDevStale(() => { if($('#devStale')) retur
 /* ---------- 탭 ---------- */
 $$('nav button').forEach(b => b.onclick = () => {
   $$('nav button').forEach(x => x.classList.toggle('on', x===b || (b.dataset.tab==='trips' && x.dataset.tab==='apply')));   // '출장' 메뉴 = 출장 신청 + 출장 보고
-  ['apply','trips','purchase','settings'].forEach(t => $('#tab-'+t).classList.toggle('hidden', t!==b.dataset.tab));
+  ['apply','trips','purchase','visitor','settings'].forEach(t => $('#tab-'+t).classList.toggle('hidden', t!==b.dataset.tab));
   if(b.dataset.tab==='purchase') initPurchase();
+  if(b.dataset.tab==='visitor') initVisitor();
   if(b.dataset.tab==='trips'){ $('#tripList').classList.remove('hidden'); $('#reportView').classList.add('hidden'); loadTrips(); autoGwCheck(true); }   // 탭에 들어올 때마다 그룹웨어에서 다시 읽기 (저장된 목록은 먼저 보여줌)
   if(b.dataset.tab==='settings'){ ['#s_msg', '#s_ai_msg', '#s_rate_msg'].forEach(id => $(id).textContent = ''); rpc('/api/meta').then(m => { META = m; renderSettings(); }); }   // 저장된 값으로 다시 그림, '저장됨' 같은 알림은 지움
   if(b.dataset.tab==='apply') rpc('/api/meta').then(m => { META = m; syncApplyDefaults(); applyCarRule(); });          // 쓰던 신청서는 그대로, 설정에서 온 값만 맞춤
@@ -459,20 +460,22 @@ function markNeed(missing){
   missing.forEach(m => (map[m]||[]).forEach(id => $(id).classList.add('need')));
 }
 $$('#a_start,#a_end,#a_start_time,#a_end_time,#a_destination,#a_reason,#a_fare,#a_project,#a_companion_purpose,#a_purpose').forEach(el => ['input','change'].forEach(ev => el.addEventListener(ev, () => el.classList.remove('need'))));
-/* 이전에 입력한 한 줄 문장: localStorage 에 최근 30개 */
+/* 이전에 입력한 한 줄 문장: localStorage 에 최근 30개 (출장 신청 q_hist, 방문 신청 vs_hist — select id 가 곧 저장 키) */
 const HIST_MAX = 30;
-const histLoad = () => { try { return JSON.parse(localStorage.q_hist || '[]'); } catch(e){ return []; } };
-function histRender(){
-  const sel = $('#q_hist'); sel.length = 1;
-  histLoad().forEach(m => { const o = document.createElement('option'); o.value = m; o.textContent = m.length > 60 ? m.slice(0, 60) + '…' : m; sel.appendChild(o); });
+const histLoad = key => { try { return JSON.parse(localStorage[key] || '[]'); } catch(e){ return []; } };
+function histRender(key = 'q_hist'){
+  const sel = $('#' + key); sel.length = 1;
+  histLoad(key).forEach(m => { const o = document.createElement('option'); o.value = m; o.textContent = m.length > 60 ? m.slice(0, 60) + '…' : m; sel.appendChild(o); });
   sel.style.display = sel.length > 1 ? '' : 'none';
 }
-function histSave(memo){
-  try { localStorage.q_hist = JSON.stringify([memo, ...histLoad().filter(m => m !== memo)].slice(0, HIST_MAX)); } catch(e){ /* 저장 공간 없음 */ }
-  histRender();
+function histSave(memo, key = 'q_hist'){
+  try { localStorage[key] = JSON.stringify([memo, ...histLoad(key).filter(m => m !== memo)].slice(0, HIST_MAX)); } catch(e){ /* 저장 공간 없음 */ }
+  histRender(key);
 }
-$('#q_hist').onchange = () => { if($('#q_hist').value){ $('#q_memo').value = $('#q_hist').value; $('#q_memo').focus(); } $('#q_hist').value = ''; };
-histRender();
+for (const [key, memo] of [['q_hist', '#q_memo'], ['vs_hist', '#vs_memo']]){
+  $('#' + key).onchange = () => { if($('#' + key).value){ $(memo).value = $('#' + key).value; $(memo).focus(); } $('#' + key).value = ''; };
+  histRender(key);
+}
 
 let quickSeq = 0;   // [자동 작성] 요청 번호: AI 가 늦게 답하는 사이 [새로 작성]·국내/해외 전환을 하면 늦은 답이 새 화면을 덮지 않게
 $('#btnQuick').onclick = async () => {
@@ -501,7 +504,7 @@ const escH = v => String(v ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt
 function confirmSubmit({ title, html, note, yes = '보내기 ✦' }){
   return new Promise(res => {
     $('#cfTitle').textContent = title; $('#cfBody').innerHTML = html; $('#cfNote').innerHTML = note || ''; $('#cfYes').textContent = yes;
-    $('#cfmModal').classList.add('on'); setTimeout(() => $('#cfYes').focus(), 50);
+    $('#cfYes').disabled = false; $('#cfmModal').classList.add('on'); setTimeout(() => $('#cfYes').focus(), 50);
     const done = v => { $('#cfmModal').classList.remove('on'); ['#cfYes', '#cfNo', '#cfX'].forEach(id => $(id).onclick = null); document.removeEventListener('keydown', key); res(v); };
     const key = e => { if(e.key === 'Escape') done(false); };
     $('#cfYes').onclick = () => done(true); $('#cfNo').onclick = $('#cfX').onclick = () => done(false);
@@ -1249,6 +1252,188 @@ $('#btnPurchase').onclick = async () => {
   runJob('구매의뢰서 입력', '/api/job/purchase', {data: d}, () => { $('#pu_status').textContent = '그룹웨어 작성 창에 채웠어요. 결재선을 확인하고 [상신]을 눌러 주세요.'; loadPurchaseList(); });
 };
 
+/* ---------- 외부 방문객 출입 신청 ---------- */
+const VS_TEXT = ['name', 'org', 'position', 'phone', 'car', 'date', 'date_end', 'purpose', 'dept', 'host', 'shoot_etc', 'shoot_purpose'];
+let vsInit = false, vsUrgent = false, vsReady = [], vsDrafted = '', vsConfirmed = new Set();   // vsReady: 제출 준비 항목 · vsDrafted: AI 로 채운 메모 (같으면 다시 안 채움) · vsConfirmed: 모달에서 사람이 확인한 항목
+async function initVisitor(){
+  if(!META.visitor) META = await rpc('/api/meta');   // 앱을 켜자마자 이 탭이 복원되면 설정을 아직 안 받았을 수 있음
+  if(!vsInit){
+    vsInit = true;
+    const v = META.visitor || { areas: [], shoots: [] };
+    // 출입 구역: 층마다 체크 + 세부 장소 (1층·7층 대회의실은 양식에 세부 칸이 없음)
+    $('#vs_areas').innerHTML = v.areas.map(a => `<div class="inline" style="margin-bottom:4px"><label class="inline" style="gap:4px;min-width:110px"><input type="checkbox" class="vs-area" value="${escH(a)}" style="width:auto">${escH(a)}</label>${a === '1층' || a === '7층 대회의실' ? '<span class="sub">' + (a === '1층' ? '로비/쇼룸/회의실 등 출입 게이트 내' : '') + '</span>' : `<input class="vs-detail" data-area="${escH(a)}" placeholder="세부 장소 (예: 외부회의실)">`}</div>`).join('');
+    $('#vs_shoot').innerHTML = v.shoots.map(o => `<label><input type="checkbox" class="vs-shoot" value="${escH(o)}">${escH(o)}</label>`).join('');
+    $('#tab-visitor').addEventListener('input', vsRender); $('#tab-visitor').addEventListener('change', vsRender);
+    $$('.vs-shoot').forEach(c => c.addEventListener('change', () => {   // 해당없음 ↔ 다른 항목은 같이 못 고름
+      if(c.checked) $$('.vs-shoot').forEach(x => { if(x !== c && (c.value === '해당없음' || x.value === '해당없음')) x.checked = false; }); vsRender(); }));
+    $('#vs_date').addEventListener('change', vsCheckUrgent);
+    try { const d = JSON.parse(localStorage.vs_draft || 'null'); if(d){ fillVisitor(d); vsDrafted = d.drafted || ''; if(d.name || d.org || d.purpose) $('#vsNew').classList.remove('pre'); } } catch(e){ /* 저장된 초안 없음 */ }   // 쓰던 게 있으면 바로 펼침
+  }
+  const c = META.config || {};
+  if(!$('#vs_dept').value) $('#vs_dept').value = c.budgetDept || '';
+  if(!$('#vs_host').value) $('#vs_host').value = c.name || '';
+  vsCheckUrgent();
+}
+/* 방문 시간: 시작·끝 시각 칸 두 개 ↔ 엔진·본문은 "14:00~16:00" 한 줄. 끝을 안 골랐으면 빈 값(=빠진 것) */
+const vsTimeOf = () => $('#vs_t1').value && $('#vs_t2').value ? `${$('#vs_t1').value}~${$('#vs_t2').value}` : '';
+function vsSetTime(s){   // "14:00~16:00", "14~16", "9:30-11" (AI·예전 초안) → 두 칸. 못 읽으면 비움
+  const t = [...String(s || '').matchAll(/(\d{1,2})(?:\s*[:시]\s*(\d{2}))?/g)].map(m => Number(m[1]) < 24 ? `${m[1].padStart(2, '0')}:${m[2] || '00'}` : '');
+  $('#vs_t1').value = t[0] || ''; $('#vs_t2').value = t[1] || '';
+}
+$('#vs_t1').addEventListener('change', () => {   // 시작을 고르면 끝이 비었거나 시작보다 이르면 1시간 뒤로
+  const [h, m] = $('#vs_t1').value.split(':').map(Number); if(isNaN(h)) return;
+  if(!$('#vs_t2').value || $('#vs_t2').value <= $('#vs_t1').value) $('#vs_t2').value = `${String(Math.min(h + 1, 23)).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  vsRender();
+});
+function visitorData(){
+  const d = Object.fromEntries(VS_TEXT.map(k => [k, $('#vs_' + k).value.trim()]));
+  return { ...d, time: vsTimeOf(), type: radio('vs_type') || '', count: $('#vs_count').value, urgent_reason: $('#vs_urgent').value.trim(), shoot_scope: radio('vs_scope') || '', title: $('#vs_title').value.trim(), memo: $('#vs_memo').value.trim(),
+    areas: $$('.vs-area').filter(c => c.checked).map(c => ({ area: c.value, detail: (($$('.vs-detail').find(i => i.dataset.area === c.value)) || { value: '' }).value.trim() })),
+    shoot: $$('.vs-shoot').filter(c => c.checked).map(c => c.value) };
+}
+function fillVisitor(d){
+  VS_TEXT.forEach(k => { if(d[k] !== undefined) $('#vs_' + k).value = d[k]; });
+  if(d.time !== undefined) vsSetTime(d.time);
+  if(d.count) $('#vs_count').value = d.count;
+  if(d.type) setRadio('vs_type', d.type); else $$('input[name=vs_type]').forEach(r => r.checked = false);
+  if(d.shoot_scope) setRadio('vs_scope', d.shoot_scope); else $$('input[name=vs_scope]').forEach(r => r.checked = false);
+  if(d.urgent_reason !== undefined) $('#vs_urgent').value = d.urgent_reason;
+  if(d.memo !== undefined) $('#vs_memo').value = d.memo;
+  if(d.title !== undefined){ $('#vs_title').value = d.title; if(d.title) $('#vs_title').dataset.manual = d.manual ? '1' : ''; }
+  const areas = d.areas || [];
+  $$('.vs-area').forEach(c => { const a = areas.find(x => x.area === c.value); c.checked = !!a; const i = $$('.vs-detail').find(x => x.dataset.area === c.value); if(i) i.value = a ? a.detail || '' : ''; });
+  $$('.vs-shoot').forEach(c => c.checked = (d.shoot || []).includes(c.value));
+  vsRender();
+}
+// 제목 기본값 — 엔진 R.visitorTitle 과 같은 모양 (제목 칸을 직접 고치면 그대로)
+function vsTitle(d){
+  const m = /^\d{4}-(\d{2})-(\d{2})$/.exec(d.date || ''), n = Number(d.count) || 1;
+  const who = [d.org, d.name && `${d.name}${n > 1 ? ` 외 ${n - 1}명` : ''}`].filter(Boolean).join(' ');
+  const tail = [m && `${Number(m[1])}/${Number(m[2])}`, who].filter(Boolean).join(' ');
+  return `외부 방문객 내부 공간 출입 승인 요청의 건${tail ? ` (${tail})` : ''}`;
+}
+async function vsCheckUrgent(){
+  const date = $('#vs_date').value;
+  try { vsUrgent = date ? (await rpc('/api/visitor/urgent', { date })).urgent : false; } catch(e){ vsUrgent = false; }
+  vsRender();
+}
+function vsRender(){
+  const d = visitorData(), bc = d.type === 'B' || d.type === 'C', shootOn = d.shoot.length && !d.shoot.includes('해당없음');
+  $('#vs_bc').classList.toggle('hidden', !bc);
+  $('#vs_shoot_more').classList.toggle('hidden', !shootOn); $('#vs_shoot_etc_row').classList.toggle('hidden', !d.shoot.includes('기타'));
+  $('#vs_urgent').placeholder = vsUrgent ? '필수 — 방문 전 영업일·당일에 올리는 이유' : '방문 전 영업일·당일에 올리는 경우';
+  $('#vs_urgent_row').classList.toggle('warn', vsUrgent && !d.urgent_reason);
+  if(!$('#vs_title').dataset.manual) $('#vs_title').value = vsTitle(d);
+  $('#vs_err').textContent = '';
+  const ready = [
+    // rows: 보낼 때 모달로 옮겨 묻는 칸 · confirm: AI 가 채웠어도 사람이 한 번 보는 칸 (결재선·출입 구역이 갈림)
+    { label: '방문 유형', ok: !!d.type, focus: '#vs_type_seg', rows: ['#vs_type_seg'], confirm: true },
+    { label: '방문자 성명·소속', ok: !!(d.name && d.org), focus: d.name ? '#vs_org' : '#vs_name', rows: ['#vs_name', '#vs_org', '#vs_position', '#vs_count'] },
+    { label: '방문 일정', ok: !!d.date, focus: '#vs_date', rows: ['#vs_date'] },
+    { label: '방문 시간', ok: !!d.time, focus: $('#vs_t1').value ? '#vs_t2' : '#vs_t1', rows: ['#vs_t1'] },
+    { label: '방문 목적', ok: !!d.purpose, focus: '#vs_purpose', rows: ['#vs_purpose'] },
+    { label: '요청 부서·담당자', ok: !!(d.dept && d.host), focus: d.dept ? '#vs_host' : '#vs_dept', rows: ['#vs_dept', '#vs_host'] },
+    ...(bc ? [{ label: '출입 요청 구역', ok: d.areas.length > 0, focus: '#vs_areas', rows: ['#vs_areas'], confirm: true },
+      { label: '촬영/녹음', ok: d.shoot.length > 0 && (!shootOn || !!(d.shoot_purpose && d.shoot_scope && (!d.shoot.includes('기타') || d.shoot_etc))), focus: '#vs_shoot', rows: ['#vs_shoot', '#vs_shoot_more'], confirm: true }] : []),
+    ...(vsUrgent ? [{ label: '긴급 방문 사유 (전 영업일·당일 상신)', ok: !!d.urgent_reason, focus: '#vs_urgent', rows: ['#vs_urgent'] }] : []),
+  ];
+  vsReady = ready;
+  renderReady('#vsReadyList', '#vsReadyBar', '#vsReadyPct', ready, '#btnVisitor', '그룹웨어에 입력하기');
+  try { localStorage.vs_draft = JSON.stringify({ ...d, manual: !!$('#vs_title').dataset.manual, drafted: vsDrafted }); } catch(e){ /* 저장 공간 없음 */ }
+}
+$('#vs_title').addEventListener('input', () => { $('#vs_title').dataset.manual = $('#vs_title').value.trim() ? '1' : ''; });
+function revealVisitor(){ const v = $('#vsNew'); if(!v.classList.contains('pre')) return; v.classList.remove('pre'); v.classList.add('reveal'); setTimeout(() => v.classList.remove('reveal'), 600); }
+$('#vsManual').onclick = e => { e.preventDefault(); revealVisitor(); };
+$('#vs_memo').addEventListener('keydown', e => { if(e.key === 'Enter' && (e.metaKey || e.ctrlKey)) $('#btnVsSend').click(); });
+$('#btnNewVisitor').onclick = () => { $('#vsNew').classList.add('pre'); delete $('#vs_title').dataset.manual; vsDrafted = ''; vsConfirmed.clear(); fillVisitor({ ...Object.fromEntries(VS_TEXT.map(k => [k, ''])), time: '', count: 1, urgent_reason: '', memo: '', title: '', areas: [], shoot: [] }); $('#vs_status').textContent = ''; initVisitor(); };
+function loadVisitorList(){
+  runJob('방문 신청 목록', '/api/job/visitor-list', {}, r => {
+    const box = $('#vsList'); box.innerHTML = r.rows.length ? '' : '<p class="sub">최근 3개월에 올린 방문객 신청서가 없어요. [✍️ 새 방문 신청]에서 올리면 여기에 결재 상태와 인쇄 버튼이 생겨요.</p>';
+    r.rows.forEach(x => {
+      const el = document.createElement('div'); el.className = 'item';
+      el.innerHTML = `<div><b></b>${pill('결재', x.status || '', `${x.status || ''} · ${x.docNo}`)}<div class="sub" style="margin:2px 0 0"></div></div><div class="inline"></div>`;
+      el.querySelector('b').textContent = x.title.replace(R_VISITOR_HEAD, '').replace(/^\(|\)$/g, '') || x.title;
+      el.querySelector('.sub').textContent = [x.date, x.docNo].filter(Boolean).join(' · ');
+      const doc = document.createElement('button'); doc.className = 'btn small'; doc.textContent = '🖨 신청서'; doc.title = '그룹웨어 문서 창을 열어 [인쇄 › 결재문서]를 눌러요 — 결재란까지 그룹웨어 인쇄 그대로';
+      doc.onclick = async () => { doc.disabled = true; try { const r = await rpc('/api/visitor/print-doc', { docId: x.docId, formId: x.formId }); if(!r.clicked) alertErr('그룹웨어 문서 창을 열었어요. 창 위의 [인쇄 › 결재문서]를 눌러 주세요.'); } catch(e){ alertErr(e.message); } finally { doc.disabled = false; } };
+      el.querySelector('.inline').appendChild(doc);
+      if(DONE.test(x.status) && x.pledge){   // 유형 B·C 결재 완료: 방문증 받을 때 낼 서약서
+        const n = x.count || 1, b = document.createElement('button'); b.className = 'btn small'; b.textContent = '🖨 보안서약서'; b.title = '인쇄 창을 띄워요 — 파일로 받으려면 인쇄 창에서 PDF로 저장';
+        b.onclick = async () => { try { await rpc('/api/visitor/pledge', { copies: n }); } catch(e){ alertErr(e.message); } };
+        el.querySelector('.inline').appendChild(b);
+      }
+      box.appendChild(el);
+    });
+    if(r.rows.length && typeof maybeGuide === 'function') maybeGuide();   // 목록이 그려진 뒤: 처음 온 사람에게 버튼 설명 (빈 목록이면 아껴 둠 — 보면 본 걸로 남아 버튼 설명을 못 봄)
+  }, {quiet: true});
+}
+const R_VISITOR_HEAD = /^외부 방문객 내부 공간 출입 승인 요청의 건\s*/;
+$('#btnVsList').onclick = loadVisitorList;
+function vsView(v){ setRadio('vs_view', v); $('#vsNew').classList.toggle('hidden', v !== 'new'); $('#vsHistory').classList.toggle('hidden', v !== 'list'); window.scrollTo(0, 0); }
+$$('input[name=vs_view]').forEach(r => r.addEventListener('change', () => { vsView(radio('vs_view')); if(radio('vs_view') === 'list') loadVisitorList(); }));
+// 메모로 칸 채우기 (AI 가 모르는 칸 "" 은 지금 값 그대로). 폼은 펼치지 않음 — 빠진 칸은 보낼 때 모달로 물음
+async function vsDraft(memo){
+  histSave(memo, 'vs_hist');
+  $('#vs_status').textContent = '메모로 칸을 채우는 중…';
+  try {
+    const r = await rpc('/api/visitor/draft', { memo });
+    const cur = visitorData(), pick = (a, b) => a === '' || a == null ? b : a;
+    vsDrafted = memo; vsConfirmed.clear();   // 새로 채웠으면 확인도 다시
+    fillVisitor({ ...cur, ...Object.fromEntries(VS_TEXT.map(k => [k, pick(r[k], cur[k])])), count: r.count || cur.count, type: r.type || cur.type, time: pick(r.time, cur.time),
+      areas: r.areas.length ? r.areas : cur.areas, shoot: r.shoot.length ? r.shoot : cur.shoot, urgent_reason: pick(r.urgent_reason, cur.urgent_reason), title: $('#vs_title').dataset.manual ? cur.title : '' });
+    await vsCheckUrgent();
+    $('#vs_status').textContent = '';
+    return true;
+  } catch(e){ $('#vs_status').textContent = `메모로 못 채웠어요 (${e.message}) — 칸을 하나씩 물어볼게요.`; return true; }   // AI 가 없거나 실패해도 모달로 다 물으면 됨
+}
+// 빠졌거나 사람이 볼 칸을 하나씩 모달로: 폼의 그 칸을 잠깐 모달로 옮겼다가 돌려놓음 (체크·시간·조건부 칸이 폼과 똑같이 동작)
+function vsAsk(){
+  return new Promise(res => {
+    const m = $('#vsAskModal'); let cur = null, moved = [];
+    const back = () => { moved.forEach(([el, mark]) => mark.replaceWith(el)); moved = []; };
+    const pending = () => { vsRender(); return vsReady.filter(x => !x.ok || (x.confirm && !vsConfirmed.has(x.label))); };
+    const done = v => { back(); m.classList.remove('on'); document.removeEventListener('keydown', key); vsRender(); res(v); };
+    const show = () => {
+      back(); const list = pending(); cur = list[0];
+      if(!cur) return done(true);
+      $('#vsAskTitle').textContent = cur.label; $('#vsAskLeft').textContent = `${list.length}개 남음`; $('#vsAskErr').textContent = '';
+      $('#vsAskHint').textContent = cur.ok ? '메모로 채운 값이에요. 맞는지 보고 다르면 고쳐 주세요.' : '메모에 없어서 비어 있어요. 채워 주세요.';
+      cur.rows.forEach(sel => { const el = $(sel).closest('.row') || $(sel), mark = document.createComment(''); el.replaceWith(mark); moved.push([el, mark]); $('#vsAskRows').appendChild(el); });
+      $('#vsAskNext').textContent = list.length > 1 ? '다음' : '확인 ✦';
+      m.classList.add('on'); setTimeout(() => { const f = $('#vsAskRows').querySelector('input:not([type=checkbox]):not([type=radio])'); (f && !cur.ok ? f : $('#vsAskNext')).focus(); }, 50);
+    };
+    const next = async () => {
+      await vsCheckUrgent();   // 날짜를 고쳤으면 긴급 사유가 필요해질 수 있음
+      const it = vsReady.find(x => x.label === cur.label);
+      if(it && !it.ok) return $('#vsAskErr').textContent = '이 칸을 채워야 넘어가요.';
+      vsConfirmed.add(cur.label); show();
+    };
+    const key = e => { if(e.key === 'Escape') done(false); else if(e.key === 'Enter' && !e.isComposing && e.target.tagName !== 'TEXTAREA'){ e.preventDefault(); next(); } };
+    $('#vsAskNext').onclick = next; $('#vsAskX').onclick = () => done(false);
+    document.addEventListener('keydown', key);
+    show();
+  });
+}
+$('#vsAskModal').addEventListener('input', vsRender); $('#vsAskModal').addEventListener('change', vsRender);   // 옮겨 온 칸도 폼처럼 제출 준비에 반영
+async function vsSend(){
+  const memo = $('#vs_memo').value.trim();
+  if(!memo && $('#vsNew').classList.contains('pre')){ $('#vs_memo').focus(); return alertErr('누가·언제·어디로·왜 오는지 한 줄 적어 주세요.'); }
+  $('#btnVsSend').disabled = $('#btnVisitor').disabled = true;
+  try {
+    if(memo && memo !== vsDrafted) await vsDraft(memo);
+    if(!(await vsAsk())) return;
+  } finally { $('#btnVsSend').disabled = $('#btnVisitor').disabled = false; }
+  const d = visitorData();
+  const html = `<div class="cf-title">${escH(d.title)}</div>
+    <dl class="cf-grid"><dt>유형</dt><dd>${escH(d.type)}</dd><dt>방문자</dt><dd>${escH([d.org, d.name, d.position].filter(Boolean).join(' '))} · ${escH(d.count)}명</dd><dt>일정</dt><dd>${escH([d.date, d.date_end].filter(Boolean).join(' ~ '))} ${escH(d.time)}</dd><dt>목적</dt><dd>${escH(d.purpose)}</dd>${d.areas.length ? `<dt>구역</dt><dd>${escH(d.areas.map(a => a.area + (a.detail ? ` (${a.detail})` : '')).join(', '))}</dd>` : ''}${d.shoot.length ? `<dt>촬영/녹음</dt><dd>${escH(d.shoot.join(', '))}</dd>` : ''}${d.urgent_reason ? `<dt>긴급 사유</dt><dd>${escH(d.urgent_reason)}</dd>` : ''}</dl>`;
+  const steps = (META.visitor.lines || {})[d.type] || [];
+  const lineBox = `<div class="cf-line"><h4>⚠️ 결재선은 직접 지정해요 — 유형 ${escH(d.type)}</h4><div class="flow">${steps.map(escH).map(x => `<b>${x}</b>`).join('<span>→</span>')}</div>
+    <p>작성 창이 뜨면 이 순서로 결재선을 지정한 뒤 [상신]을 눌러 주세요.${d.type === 'C' ? ' <b>방문 사무실 사업부서장</b>을 꼭 추가해요.' : ''}${d.type !== 'A' ? ` 결재가 끝나면 '신청한 방문'에서 신청서와 보안 준수 서약서(${escH(d.count)}부)를 인쇄해 경영지원부에 내요.` : ''}</p></div>`;
+  if(!(await confirmSubmit({ title: '이대로 그룹웨어에 입력할까요?', html: lineBox + html, note: '본문·수신및참조(경영지원부)까지 채워요. 결재선 지정과 [상신]은 직접.' }))) return;
+  runJob('방문객 신청서 입력', '/api/job/visitor', {data: d}, () => { $('#vs_status').textContent = '그룹웨어 작성 창에 채웠어요. 결재선을 지정하고 [상신]을 눌러 주세요.'; });
+}
+$('#btnVsSend').onclick = $('#btnVisitor').onclick = vsSend;
+
 /* ---------- 작업 패널 ---------- */
 let jobTimer = null, jobSince = 0;
 async function runJob(title, path, body, onDone, opt = {}){
@@ -1279,7 +1464,7 @@ function watchJob(title, onDone, {quiet = false, onEnd = null, id = 0} = {}){   
     const q = s.question;
     $('#jobShow').textContent = '작업 중인 창 열기';
     $('#jobShow').classList.toggle('hidden', !(q || s.state === 'error'));   // 사람이 손봐야 할 때(질문·실패)만 작업 창을 보여 준다
-    const what = {apply: '와니가 작성 중', report: '와니가 작성 중', fare: '와니가 교통비 조회 중', 'trip-delete': '와니가 삭제 중', 'gw-delete': '와니가 삭제 중', 'gw-list': '그룹웨어 로그인·품의 상태를 확인 중이에요', 'gw-profile': '그룹웨어에서 내 정보를 불러오는 중이에요', 'report-load': '그룹웨어에서 보고서를 불러오는 중이에요', 'po-read': '와니가 발주서 읽는 중', 'url-read': '와니가 제품 페이지 읽는 중', purchase: '와니가 작성 중', 'purchase-list': '구매의뢰 목록을 읽는 중이에요', 'refund-check': '정산 환원을 확인하는 중이에요', receipts: '와니가 영수증 읽는 중', login: '그룹웨어 로그인 상태를 확인 중이에요'}[s.kind] || '와니가 처리 중';
+    const what = {apply: '와니가 작성 중', report: '와니가 작성 중', fare: '와니가 교통비 조회 중', 'trip-delete': '와니가 삭제 중', 'gw-delete': '와니가 삭제 중', 'gw-list': '그룹웨어 로그인·품의 상태를 확인 중이에요', 'gw-profile': '그룹웨어에서 내 정보를 불러오는 중이에요', 'report-load': '그룹웨어에서 보고서를 불러오는 중이에요', 'po-read': '와니가 발주서 읽는 중', 'url-read': '와니가 제품 페이지 읽는 중', purchase: '와니가 작성 중', 'purchase-list': '구매의뢰 목록을 읽는 중이에요', visitor: '와니가 작성 중', 'visitor-list': '방문 신청 목록을 읽는 중이에요', 'refund-check': '정산 환원을 확인하는 중이에요', receipts: '와니가 영수증 읽는 중', login: '그룹웨어 로그인 상태를 확인 중이에요'}[s.kind] || '와니가 처리 중';
     $('#dimWhat').textContent = what; $('.wani .pen').textContent = /삭제/.test(what) ? '🧹' : /조회|확인/.test(what) ? '🔍' : '✍️';
     const textQ = q && (q.type === 'text' || q.type === 'choice');
     $('#jobAsk').style.display = q && !textQ ? 'block' : 'none';

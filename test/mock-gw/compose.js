@@ -9,7 +9,9 @@
     $('#app').innerHTML = `<h3>결재작성</h3><input type="text" placeholder="양식 검색"><dl>
       <dt><p class="ellipsis lh22">전산기기 <em>구매의뢰서</em></p></dt><dd>전산기기</dd>
       <dt><p class="ellipsis lh22">출장신청 및 출장경비 사전품의</p></dt>
-      <dt><p class="ellipsis lh22"><em>구매의뢰서</em></p></dt><dd>구매</dd></dl>`;
+      <dt><p class="ellipsis lh22"><em>구매의뢰서</em></p></dt><dd>구매</dd>
+      <dt><p class="ellipsis lh22">방문자 신청</p></dt>
+      <dt><p class="ellipsis lh22">외부 방문객 내부 공간 출입 승인 요청의 건</p></dt></dl>`;
     document.querySelectorAll('dt p').forEach(p => p.onclick = () => window.open('/compose.html?form=' + encodeURIComponent(p.textContent.trim()), 'popup_page_2', 'width=1100,height=1000'));
     return true;
   };

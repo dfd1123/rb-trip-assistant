@@ -157,6 +157,39 @@ app.whenReady().then(async () => {
       console.log('E2E 구매의뢰서 본문 OK');
     }
 
+    // ---- 외부 방문객 내부 공간 출입 신청서 본문 (실제 양식 HTML) ----
+    {
+      const { FILL_JS, VISITOR_READ_JS, visitorPayload } = require('../src/engine/editorFill');
+      const fill = async v => { const w = new BrowserWindow({ show: false }); await w.loadFile(path.join(__dirname, 'fixtures', 'visitor_body.html'));
+        const res = await w.webContents.executeJavaScript(`(${FILL_JS})(${JSON.stringify(visitorPayload(v))})`);
+        const st = await w.webContents.executeJavaScript(`(() => { const n = s => s.replace(/[\\s\\u200b\\u00a0]/g, '');
+          const on = [...document.querySelectorAll('table input[type=checkbox]')].map(i => { const r = i.closest('tr'); return i.hasAttribute('checked') ? n(r.cells[0].textContent) + '|' + n(i.closest('td').textContent) : ''; }).filter(Boolean);
+          return { on, html: document.body.innerHTML }; })()`);
+        const read = await w.webContents.executeJavaScript(`(${VISITOR_READ_JS})(${JSON.stringify(st.html)})`);   // 결재 끝난 문서 본문 → 인원·서약서 대상
+        w.destroy(); return { res, ...st, read }; };
+      const today = new Date('2026-11-02T09:00:00');
+      const c = R.parseVisitor({ type: 'C', name: '김철수', org: '현대자동차', position: '부장', phone: '010-1234-5678', count: 3, car: '12가3456', date: '2026-11-05', date_end: '2026-11-06', time: '14:00~16:00',
+        purpose: 'AMR 협업 미팅', dept: '자율주행팀', host: '김명선', areas: [{ area: '1층' }, { area: '7층', detail: '외부회의실 및 경영지원부' }, { area: '7층 대회의실' }],
+        shoot: ['사진 촬영 필요', '기타'], shoot_etc: '녹음', shoot_purpose: '시연 기록', shoot_scope: '지정 구역 내' }, { today });
+      const r = await fill(c);
+      assert.deepEqual(r.res.missing, [], '못 채운 칸: ' + r.res.missing.join(', '));
+      for (const needle of ['김철수', '현대자동차', '부장', '010-1234-5678', '>3명<', '12가3456', '2026-11-05 (목) ~ 2026-11-06 (금)', '14:00~16:00', 'AMR 협업 미팅', '자율주행팀', '김명선', '(외부회의실 및 경영지원부)', '기타(녹음)', '시연 기록'])
+        assert.ok(r.html.includes(needle), `본문에 '${needle}' 없음`);
+      assert.deepEqual(r.on, ['1층|(로비/쇼룸/회의실등출입게이트내)', '7층|(외부회의실및경영지원부)', '7층|대회의실', '해당없음|사진촬영필요', '해당없음|기타(녹음)', '촬영/녹음목적|지정구역내별도협의'], JSON.stringify(r.on));   // 줄 첫 칸|체크된 칸 (촬영 첫 줄은 라벨 칸이 없어 첫 칸이 '해당없음')
+      assert.ok(!r.html.includes('____'), '촬영 목적 밑줄이 글자로 바뀜');
+      assert.deepEqual(r.read, { count: 3, pledge: true }, '유형 C 문서: 3명·서약서 대상');
+      assert.ok(r.html.includes('(해당 시 기재)'), '긴급 아니면 기타 칸 그대로');
+      assert.equal(c.title, '외부 방문객 내부 공간 출입 승인 요청의 건 (11/5 현대자동차 김철수 외 2명)');
+      // 유형 A: 구역·촬영 칸은 비움, 긴급(당일) 사유는 기타 칸에
+      const a = R.parseVisitor({ type: 'A', name: '이영희', org: 'KAIST', count: 1, date: '2026-11-02', time: '10:00~11:00', purpose: '로비 견학', dept: '자율주행팀', host: '김명선', urgent_reason: '당일 일정 확정', areas: [{ area: '3층' }], shoot: ['해당없음'] }, { today });
+      const ra = await fill(a);
+      assert.deepEqual(ra.res.missing, [], '못 채운 칸: ' + ra.res.missing.join(', '));
+      assert.deepEqual(ra.on, [], '유형 A 는 체크 없음');
+      assert.ok(ra.html.includes('당일 일정 확정') && ra.html.includes('>1명<'));
+      assert.deepEqual(ra.read, { count: 1, pledge: false }, '유형 A 문서: 서약서 없음');
+      console.log('E2E 방문객 신청서 본문 OK');
+    }
+
     // 올린 품의 목록·삭제: 결재 진행 중(순번 44)은 잠김, 나머지만 삭제
     const { rows } = await runner.runListBudget(env);
     assert.equal(rows.find(r => r.seq === '44').locked, true);
