@@ -858,3 +858,14 @@ test('외부 방문객 신청: 1영업일 전 상신·유형별 칸·검증', ()
   assert.throws(() => R.parseVisitor({ ...base, count: 0 }, { today }), /1 이상/);
   assert.equal(R.parseVisitor({ ...base, date_end: '2026-11-05' }, { today }).date_end, '', '같은 날이면 하루');
 });
+
+test('Claude Code CLI 찾는 자리: 앱으로 켜면 PATH 가 짧으니 설치기 자리도 — 윈도우는 claude.exe·npm claude.cmd, 맥·리눅스는 ~/.local/bin 등', () => {
+  const win = AI.claudeCandidates('win32', { PATH: 'C:\\Windows', APPDATA: 'C:\\Users\\a\\AppData\\Roaming' }, 'C:\\Users\\a');
+  assert.ok(win.includes('C:\\Users\\a\\.local\\bin\\claude.exe'), '공식 설치기 (윈도우)');
+  assert.ok(win.includes('C:\\Users\\a\\AppData\\Roaming\\npm\\claude.cmd'), 'npm i -g (윈도우)');
+  assert.ok(win.every(f => /\.(exe|cmd)$/.test(f)));
+  const lin = AI.claudeCandidates('linux', { PATH: '/usr/bin:/bin' }, '/home/a');
+  assert.ok(lin.includes('/home/a/.local/bin/claude') && lin.includes('/usr/local/bin/claude'));
+  assert.equal(new Set(lin).size, lin.length, '같은 자리 두 번 안 봄');
+  assert.equal(AI.PROVIDERS.claude_cli.cli, true);
+});

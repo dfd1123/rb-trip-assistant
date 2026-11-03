@@ -9,7 +9,66 @@ const PROVIDERS = {
   anthropic: { label: 'Claude', model: 'claude-haiku-5-5' },
   openai: { label: 'OpenAI', model: 'gpt-4o-mini' },
   gemini: { label: 'Gemini', model: 'gemini-3.5-flash-lite', fallback: ['gemini-flash-lite-latest'] },   // 3.8-flash 는 무료 티어에서 503 잦음, 3.5-flash 는 생각이 길어 45초 초과
+  claude_cli: { label: 'Claude Code (이 PC에 설치된 CLI · 키 없이)', model: 'sonnet', cli: true },   // 그 PC에 claude 가 설치·로그인돼 있어야 함. 사용량은 그 사람 Claude 플랜에서
 };
+
+// ---------- Claude Code CLI (claude -p) ----------
+// 앱(GUI)으로 켜면 터미널의 PATH 를 못 받는다(맥 Finder·Dock, 윈도우 바로가기) → PATH 외에 설치기가 넣는 자리도 찾는다
+function claudeCandidates(platform = process.platform, env = process.env, home = require('os').homedir()) {
+  const path = require('path')[platform === 'win32' ? 'win32' : 'posix'];
+  const names = platform === 'win32' ? ['claude.exe', 'claude.cmd'] : ['claude'];
+  const dirs = [...String(env.PATH || env.Path || '').split(platform === 'win32' ? ';' : ':').filter(Boolean),
+    path.join(home, '.local', 'bin'),                                     // 공식 설치기 (맥·리눅스·윈도우)
+    path.join(home, '.claude', 'local'),                                  // 예전 로컬 설치
+    ...(platform === 'win32' ? [env.APPDATA && path.join(env.APPDATA, 'npm')]   // npm i -g
+      : ['/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', path.join(home, '.npm-global', 'bin'), path.join(home, '.volta', 'bin')])].filter(Boolean);
+  return [...new Set(dirs)].flatMap(d => names.map(n => path.join(d, n)));
+}
+let claudeBin = null;
+function findClaude() {
+  const fs = require('fs');
+  if (claudeBin && fs.existsSync(claudeBin)) return claudeBin;
+  claudeBin = claudeCandidates().find(f => { try { return fs.statSync(f).isFile(); } catch (e) { return false; } }) || null;
+  if (!claudeBin && process.platform !== 'win32') {   // nvm 같은 곳: 로그인 셸에 물어봄
+    try { claudeBin = require('child_process').execFileSync(process.env.SHELL || '/bin/sh', ['-lc', 'command -v claude'], { timeout: 5000, encoding: 'utf8' }).trim().split('\n').pop() || null; } catch (e) { claudeBin = null; }
+  }
+  return claudeBin;
+}
+/** claude -p 로 한 번 묻기. 프롬프트는 stdin 으로 (윈도우 명령줄 길이·따옴표 문제 없음). files 가 있으면 임시 폴더에 쓰고 Read 도구로만 읽게 한다.
+ *  사용자 설정(~/.claude 의 훅·플러그인·CLAUDE.md)은 안 읽음 — 답 모양이 바뀌면 JSON 을 못 읽는다. 로그인 정보는 그대로 씀 */
+async function claudeCli(prompt, { model, files = [], timeoutMs = 120000 } = {}) {
+  const fs = require('fs'), os = require('os'), path = require('path'), { spawn } = require('child_process');
+  const bin = findClaude();
+  if (!bin) throw new Error('이 PC에서 Claude Code(claude)를 못 찾았어요. claude.com/claude-code 에서 설치하고 터미널에서 claude 를 한 번 실행해 로그인해 주세요.');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ta-claude-'));
+  try {
+    const ext = m => ({ 'application/pdf': 'pdf', 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' }[m] || 'bin');
+    const paths = files.map((f, i) => { const p = path.join(dir, `file${i + 1}.${ext(f.mime)}`); fs.writeFileSync(p, Buffer.from(f.data, 'base64')); return p; });
+    const input = paths.length ? `첨부 파일:\n${paths.join('\n')}\n먼저 Read 도구로 첨부 파일을 모두 읽은 뒤 아래 요청에 답해.\n\n${prompt}` : prompt;
+    const args = ['-p', '--output-format', 'json', '--model', /^[\w.\-\[\]]+$/.test(model || '') ? model : PROVIDERS.claude_cli.model,
+      '--tools', paths.length ? 'Read' : '', ...(paths.length ? ['--allowedTools', 'Read'] : []),
+      '--setting-sources', '', '--strict-mcp-config', '--no-session-persistence',
+      '--system-prompt', 'Answer exactly in the format the request asks for. No greetings, no explanations.'];
+    // 윈도우 npm 설치(claude.cmd)는 셸로만 실행된다 → 인자를 직접 따옴표로 (빈 값 "" 이 사라지지 않게. 인자에 따옴표는 없음)
+    const shell = /\.cmd$/i.test(bin);
+    const out = await new Promise((resolve, reject) => {
+      const cp = spawn(shell ? `"${bin}"` : bin, shell ? args.map(a => `"${a}"`) : args, { cwd: dir, shell, windowsHide: true, env: process.env });
+      let so = '', se = '';
+      const t = setTimeout(() => { cp.kill(); reject(Object.assign(new Error(`Claude Code 응답이 ${Math.round(timeoutMs / 1000)}초 안에 안 왔어요. 잠시 뒤 다시 눌러 주세요.`), { timeout: true })); }, timeoutMs);
+      cp.stdout.on('data', d => { so += d; }); cp.stderr.on('data', d => { se += d; });
+      cp.on('error', e => { clearTimeout(t); reject(new Error(`Claude Code 를 실행하지 못했어요: ${e.message}`)); });
+      cp.on('close', code => { clearTimeout(t); resolve({ code, so, se }); });
+      cp.stdin.end(input);
+    });
+    let j = null; try { j = JSON.parse(out.so.trim().split('\n').pop()); } catch (e) { /* JSON 이 아님 */ }
+    const why = String((j && j.result) || out.se || out.so || '').trim().slice(0, 300);
+    if (!j || j.is_error || j.subtype !== 'success') {
+      if (/log ?in|logged|auth|credential|\/login/i.test(why)) throw new Error('Claude Code 로그인이 필요해요. 터미널에서 claude 를 한 번 실행해 로그인해 주세요.');
+      throw new Error(`Claude Code 호출 실패${out.code ? ` (종료 코드 ${out.code})` : ''}: ${why || '응답 없음'}`);
+    }
+    return String(j.result || '');
+  } finally { try { fs.rmSync(dir, { recursive: true, force: true }); } catch (e) { /* 임시 폴더 */ } }
+}
 
 // AI 답의 숫자: 글자 속 '첫 번째 수'만 ("1 SET (2EA)" → 1, "1,460,000 (VAT 146,000)" → 1460000). 숫자를 전부 이어 붙이면 12·1460000146000 이 됐음
 const firstNum = v => typeof v === 'number' ? v : (m => m ? Number(m[0].replace(/,/g, '')) : NaN)(/-?\d[\d,]*(?:\.\d+)?/.exec(String(v ?? '')));
@@ -37,6 +96,7 @@ async function post(url, headers, body, timeoutMs = 45000) {
 
 /** @returns {Promise<string>} 모델 답변 텍스트 */
 async function complete({ provider, model, key }, prompt) {
+  if (provider === 'claude_cli') return claudeCli(prompt, { model });
   const p = PROVIDERS[provider];
   if (!p || !key) throw new Error('AI 키가 설정되지 않았습니다.');
   model = model || p.model;
@@ -66,6 +126,7 @@ async function complete({ provider, model, key }, prompt) {
 
 /** 파일(이미지·PDF)과 함께 묻기. files: [{ mime, data(base64) }] — Gemini·Claude 는 이미지·PDF, OpenAI 는 이미지만 */
 async function completeWithFiles({ provider, model, key }, prompt, files) {
+  if (provider === 'claude_cli') return claudeCli(prompt, { model, files, timeoutMs: 180000 });
   const p = PROVIDERS[provider];
   if (!p || !key) throw new Error('AI 키가 설정되지 않았습니다.');
   model = model || p.model;
@@ -228,4 +289,4 @@ async function draftReport(ai, draft, memo) {
   return R.extractYaml(await complete(ai, R.reportPrompt(rest) + memo));
 }
 
-module.exports = { firstNum, PROVIDERS, complete, completeWithFiles, readReceipt, readPurchaseOrder, readProductPage, draftPurchase, draftApply, draftReport, draftVisitor };
+module.exports = { firstNum, PROVIDERS, claudeCandidates, findClaude, complete, completeWithFiles, readReceipt, readPurchaseOrder, readProductPage, draftPurchase, draftApply, draftReport, draftVisitor };

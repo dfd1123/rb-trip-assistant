@@ -73,7 +73,10 @@ let quitting = false;
 // 드롭다운·코드도움 선택이 실패한다 → 화면 밖(-32000)에 띄워 둔다 (작업표시줄에도 안 보임). 보여 줄 땐 화면 가운데로.
 const PARK = process.platform !== 'darwin';
 let gwShown = false;   // 사람이 [작업 중인 창 열기]로 보고 있는 중이면 팝업(문서 보기 등)도 바로 보이게
-function park(w) { if (!w || w.isDestroyed()) return; if (!PARK) return w.hide(); w.setSkipTaskbar(true); w.setPosition(-32000, -32000); if (!w.isVisible()) w.showInactive(); }
+// 최소화된 창은 그려지지 않아 클릭·키가 안 먹는다 (윈도우 [바탕화면 보기]·Win+D 는 화면 밖 창까지 최소화함 → 품의구분 드롭다운이 안 열려 실패, 다시 누르면 됨 — 2026-11-03 job-log)
+function park(w) { if (!w || w.isDestroyed()) return; if (!PARK) return w.hide(); if (w.isMinimized()) w.restore(); w.setSkipTaskbar(true); w.setPosition(-32000, -32000); if (!w.isVisible()) w.showInactive(); }
+// 작업 창이 최소화되면 바로 되돌린다: 사람이 안 보고 있으면 다시 화면 밖으로, 보고 있어도 작업 중이면 되살림 (작업이 없을 때 사람이 내린 건 그대로)
+function keepDrawn(w) { if (PARK) w.on('minimize', () => { if (gwShown && !jobBusy()) return; setTimeout(() => { if (w.isDestroyed()) return; if (gwShown) w.restore(); else park(w); }, 0); }); }
 function unpark(w) { if (!w || w.isDestroyed()) return; if (PARK) { w.setSkipTaskbar(false); w.center(); } w.show(); }
 // 작업 중에 끄면: 먼저 취소(신청이면 만들던 품의 정리)하고 멈춘 뒤 끈다 — 그냥 끄면 반쯤 만든 품의가 그룹웨어에 남음 (최대 30초 기다림)
 let quitAfterJob = false;
@@ -87,7 +90,7 @@ app.on('before-quit', e => {
   quitting = true;
 });
 function gwWindow(show = false) {
-  if (gwWin && !gwWin.isDestroyed()) { if (show) showGw(); return gwWin; }
+  if (gwWin && !gwWin.isDestroyed()) { if (show) showGw(); else if (gwWin.isMinimized()) { if (gwShown) gwWin.restore(); else park(gwWin); } return gwWin; }   // 작업 시작 때 최소화돼 있으면 되살림
   gwWin = new BrowserWindow({
     show: false, width: 1500, height: 950, icon: ICON, title: '아마란스 — 와니의 결재 도우미가 입력 중', autoHideMenuBar: true,
     webPreferences: { partition: 'persist:gw', contextIsolation: true, sandbox: true, backgroundThrottling: false },
@@ -98,11 +101,12 @@ function gwWindow(show = false) {
     overrideBrowserWindowOptions: { show: false, width: 1100, height: 1000, icon: ICON, autoHideMenuBar: true, webPreferences: { backgroundThrottling: false } },
   }));
   gwWin.webContents.on('did-create-window', w => {
-    gwPopups.add(w); w.on('closed', () => gwPopups.delete(w));
+    gwPopups.add(w); w.on('closed', () => gwPopups.delete(w)); keepDrawn(w);
     if (gwShown) { unpark(w); w.focus(); } else park(w);   // 직접 보는 중에 연 팝업(문서번호 클릭 등)은 보이게, 작업 중 연 건 숨김
     w.on('close', e => { if (!quitting && jobBusy()) { e.preventDefault(); park(w); } });   // 작업 중 닫으면 숨기기만
   });
   gwWin.on('close', e => { if (!quitting) { e.preventDefault(); gwShown = false; park(gwWin); } });   // 닫기 = 숨기기 (로그인·작업 상태 유지)
+  keepDrawn(gwWin);
   park(gwWin);
   if (show) showGw();
   return gwWin;
@@ -231,6 +235,7 @@ async function startJobNow(kind, fn, title) {
     throw new Error('이전 작업이 아직 진행 중이에요. 작업창의 [취소]를 누른 뒤 다시 시도해 주세요.');
   }
   const j = job = new Job(kind, title);
+  if (!bg && gwShown) { gwShown = false; park(gwWin); }   // 사람이 새 작업을 시키면 보던 작업 창은 숨김. 팝업(전 작업의 결재 작성 창 등)은 사람이 마저 쓰는 중일 수 있어 그대로
   const env = { debugDir: app.isPackaged ? path.join(app.getPath('userData'), 'debug') : path.join(__dirname, '..', 'debug'), cfg: store.config(), store, ui: j, log: m => j.info(m), naverKeys: naverKeys(), fetch: net.fetch, gwWindow: () => gwWindow(false), showGw, makeNaverWindow, creds: gwCreds };
   j.done = (async () => {
     try { j.result = await fn(env); j.state = 'done'; try { j.info('✔ 완료'); } catch (e) { /* 끝난 뒤 들어온 취소 — 이미 다 함 */ } }
@@ -373,6 +378,7 @@ function builtinAi() {
 }
 function aiSettings(cfg) {
   if (cfg.aiProvider === 'none') return null;                       // 설정에서 '사용 안 함'을 고른 경우
+  if (cfg.aiProvider === 'claude_cli') return { provider: 'claude_cli', model: cfg.aiModel };   // 키 없이 이 PC의 claude 로그인으로
   const own = cfg.aiKeyEnc && (!cfg.aiKeyFor || cfg.aiKeyFor === cfg.aiProvider);   // 개인 키는 그 키를 넣은 회사에만 (다른 회사로 보내지 않음)
   if (!own) return !cfg.aiProvider || cfg.aiProvider === 'gemini' ? builtinAi() : null;   // 팀 공용 키는 Gemini 만. Claude·OpenAI 는 개인 키 필요
   if (!cfg.aiProvider) return null;
@@ -703,7 +709,7 @@ async function route(p, body = {}) {
     case '/api/job/report': { const rep = R.parseReport(body.data); assertFilesExist(rep.expenses.flatMap(e => e.proofs || []), '증빙'); } return startJob('report', env => runner.runReport(env, body.data), body.title);
     case '/api/job/cancel': if (job) job.cancel(); return { ok: true };
     case '/api/job': return job ? job.snapshot(Number(body.since || 0)) : { state: 'none' };
-    case '/api/job/answer': if (job && (!body.id || body.id === job.id)) job.answer(body.value); return { ok: true };   // 다른 작업의 질문에 답이 가지 않게
+    case '/api/job/answer': if (job && (!body.id || body.id === job.id)) { job.answer(body.value); if (gwShown) hideGw(); } return { ok: true };   // 다른 작업의 질문에 답이 가지 않게. [계속]이면 사람이 보던 작업 창을 다시 숨김 (띄워 둔 채 두면 자꾸 만져서 꼬임 — 2026-11-03). 다시 필요하면 작업이 직접 띄움
     default: throw new Error(`알 수 없는 요청: ${p}`);
   }
 }
