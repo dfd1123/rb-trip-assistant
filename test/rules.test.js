@@ -869,3 +869,14 @@ test('Claude Code CLI 찾는 자리: 앱으로 켜면 PATH 가 짧으니 설치�
   assert.equal(new Set(lin).size, lin.length, '같은 자리 두 번 안 봄');
   assert.equal(AI.PROVIDERS.claude_cli.cli, true);
 });
+
+test('"내일부터 이번주 토요일 오후 6시까지": 시작은 내일, 끝은 토요일, 6시는 복귀 (전엔 11/7~11/7, 18시 출발 — 2026-11-04)', () => {
+  const today = new Date(2026, 10, 4);   // 수요일
+  const d = m => Q.quickApply(m, { today, places: [], rates: Q.DEFAULT_RATES }).data.dates;
+  assert.deepEqual(d('내일부터 이번주 토요일 오후 6시까지 로보월드 전시에 RBY2 전시 담당하러 출장간다. 일산 킨텍스 전시장임'),
+    { start: '2026-11-05', end: '2026-11-07', start_time: '', end_time: '18:00' });
+  assert.deepEqual([d('오늘부터 11/7까지 킨텍스 전시').start, d('오늘부터 11/7까지 킨텍스 전시').end], ['2026-11-04', '2026-11-07']);
+  assert.deepEqual([d('모레부터 다음주 화요일까지 대전').start, d('모레부터 다음주 화요일까지 대전').end], ['2026-11-06', '2026-11-10']);
+  assert.deepEqual([d('내일부터 2박3일 부산 출장').start, d('내일부터 2박3일 부산 출장').end], ['2026-11-05', '2026-11-07']);   // 뒤에 날짜가 없으면 예전대로
+  assert.deepEqual([d('내일 9시~18시 판교 회의').start_time, d('내일 9시~18시 판교 회의').end_time], ['09:00', '18:00']);
+});

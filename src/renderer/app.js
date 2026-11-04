@@ -1006,10 +1006,11 @@ function syncApplyDefaults(){
   lastOrigin = now;
 }
 const aiKeyRow = () => { const cli = ($('#s_ai').value === 'claude_cli'); $('#s_key').closest('.row').classList.toggle('hidden', cli); $('#btnAiClear').classList.toggle('hidden', cli); };   // Claude Code 는 키 없이 그 PC 로그인으로
+const aiModelOf = k => { const c = META.config; return c.aiModelFor && c.aiModelFor === k ? c.aiModel || '' : ''; };   // 모델 칸은 그 AI 에 저장한 것만 (다른 AI 로 바꾸면 비움)
 function loadAiSettings(){
   const c = META.config, sel = $('#s_ai');
   sel.innerHTML = '<option value="none">사용 안 함 (템플릿)</option>' + Object.entries(META.providers).map(([k,v]) => `<option value="${k}">${v.label}</option>`).join('');
-  sel.value = c.aiProvider || (c.aiBuiltin ? 'gemini' : 'none'); $('#s_model').value = c.aiModel || '';
+  sel.value = c.aiProvider || (c.aiBuiltin ? 'gemini' : 'none'); $('#s_model').value = aiModelOf(sel.value);
   $('#s_model').placeholder = META.providers[sel.value] ? `기본: ${META.providers[sel.value].model}` : '비우면 기본 모델';
   const keyHint = () => { const k = $('#s_ai').value; $('#s_key').placeholder = c.aiKeySet && !c.aiBuiltin && c.aiProvider && k !== c.aiProvider && k !== 'none' ? '이 회사의 API 키를 넣어 주세요 (예전 회사 키는 이 회사에 쓰지 않아요)' : c.aiKeySet && !c.aiBuiltin ? '저장됨 (바꾸려면 새 키 입력)' : k === 'gemini' && c.aiBuiltin ? '팀 공용 Gemini 키 사용 중 (개인 키를 넣으면 그게 우선)' : k === 'none' ? '' : 'API 키 붙여넣기 (필수)'; };
   $('#btnAiClear').hidden = !(c.aiKeySet && !c.aiBuiltin);   // 개인 키가 있을 때만. 팀 공용 키는 앱에 들어 있어 지울 수 없음
@@ -1018,7 +1019,7 @@ function loadAiSettings(){
   const r = c.rates; $('#s_lodging').value = r.lodgingPerNight; $('#s_breakfast').value = r.breakfast; $('#s_lunch').value = r.lunch; $('#s_dinner').value = r.dinner; $('#s_fare_margin').value = r.fareMargin ?? 20000;
   $('#s_rank').value = c.rank || 'staff'; $('#s_car_fuel').value = c.carFuel || 'gasoline'; $('#s_car_type').value = c.carType || '1'; $('#s_has_car').value = c.hasCar === false ? 'no' : 'yes';
 }
-$('#s_ai').onchange = () => { const k = $('#s_ai').value; $('#s_model').placeholder = META.providers[k] ? `기본: ${META.providers[k].model}` : '비우면 기본 모델'; };
+$('#s_ai').onchange = () => { const k = $('#s_ai').value; $('#s_model').value = aiModelOf(k); $('#s_model').placeholder = META.providers[k] ? `기본: ${META.providers[k].model}` : '비우면 기본 모델'; };
 $('#btnAiSave').onclick = async () => {
   const body = {aiProvider: $('#s_ai').value, aiModel: $('#s_model').value.trim()};
   if($('#s_key').value.trim()) body.aiKey = $('#s_key').value.trim();

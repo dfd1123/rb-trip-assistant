@@ -378,14 +378,16 @@ function builtinAi() {
 }
 function aiSettings(cfg) {
   if (cfg.aiProvider === 'none') return null;                       // 설정에서 '사용 안 함'을 고른 경우
-  if (cfg.aiProvider === 'claude_cli') return { provider: 'claude_cli', model: cfg.aiModel };   // 키 없이 이 PC의 claude 로그인으로
+  // 모델 칸은 그걸 넣은 AI 에만 (Claude Code 용 'sonnet' 이 Gemini 로 바꾼 뒤에도 남아 Gemini 에 'sonnet' 을 보낼 뻔 — 2026-11-04). 표시 없는 예전 값은 안 씀
+  const model = cfg.aiModelFor && cfg.aiModelFor === cfg.aiProvider ? cfg.aiModel || '' : '';
+  if (cfg.aiProvider === 'claude_cli') return { provider: 'claude_cli', model };   // 키 없이 이 PC의 claude 로그인으로
   const own = cfg.aiKeyEnc && (!cfg.aiKeyFor || cfg.aiKeyFor === cfg.aiProvider);   // 개인 키는 그 키를 넣은 회사에만 (다른 회사로 보내지 않음)
   if (!own) return !cfg.aiProvider || cfg.aiProvider === 'gemini' ? builtinAi() : null;   // 팀 공용 키는 Gemini 만. Claude·OpenAI 는 개인 키 필요
   if (!cfg.aiProvider) return null;
   try {
     const buf = Buffer.from(cfg.aiKeyEnc, 'base64');
     const key = safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(buf) : buf.toString('utf8');
-    return { provider: cfg.aiProvider, model: cfg.aiModel, key };
+    return { provider: cfg.aiProvider, model, key };
   } catch (e) { return null; }
 }
 function encryptKey(key) {
@@ -508,6 +510,7 @@ async function route(p, body = {}) {
       const patch = Object.fromEntries(Object.entries(body || {}).filter(([k]) => ALLOWED.includes(k)));
       // 키는 넣은 회사와 같이 저장 — 회사를 바꾸면(사용 안 함을 거쳐도) 그 키는 안 씀 (OpenAI 키가 Anthropic 으로 보내질 뻔 — 자가 테스트 2026-10-28)
       if ('aiKey' in patch) { const k = String(patch.aiKey || '').trim(); delete patch.aiKey; if (k) { patch.aiKeyEnc = encryptKey(k); patch.aiKeyFor = patch.aiProvider || cfg.aiProvider; } }
+      if ('aiModel' in patch) patch.aiModelFor = patch.aiProvider || cfg.aiProvider;   // 모델은 그 AI 것으로 저장
       if (patch.clearAiKey) { patch.aiKeyEnc = ''; patch.aiKeyFor = ''; delete patch.clearAiKey; }
       if (cfg.aiKeyEnc && !cfg.aiKeyFor && !patch.aiKeyFor && cfg.aiProvider && cfg.aiProvider !== 'none') patch.aiKeyFor = cfg.aiProvider;   // 예전에 저장한 키(회사 표시 없음)는 지금 회사 것
       return publicConfig(store.saveConfig(patch));

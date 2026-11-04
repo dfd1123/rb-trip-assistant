@@ -33,6 +33,14 @@ function parseDates(text, today = new Date()) {
   const matched = [];
   let start = null, end = null, m;
 
+  // "내일부터 이번주 토요일까지" / "오늘부터 11/7까지": 시작은 오늘·내일…, 끝은 '부터' 뒤의 날짜.
+  // 전엔 아래 주 단위가 먼저 잡혀 '이번주 토요일'이 시작·끝이 됐음 (11/7~11/7 — 2026-11-04)
+  const rel = /(오늘|내일|모레|글피)\s*(?:부터|~|-|에서)/.exec(text);
+  if (rel) {
+    const s0 = iso(addDays(today, { 오늘: 0, 내일: 1, 모레: 2, 글피: 3 }[rel[1]])), rest = parseDates(text.slice(rel.index + rel[0].length), today);
+    if (rest.start && rest.start >= s0) return { start: s0, end: rest.end, matched: [rel[0], ...rest.matched] };
+  }
+
   // 주 단위: (이번|다음|다다음)주 X(요일)? (~|부터) Y(요일)?
   if ((m = /(이번\s*주|금주|다음\s*주|차주|다다음\s*주)\s*([월화수목금토일])(?:요일)?(?:날)?(?:\s*(?:~|-|부터|에서)\s*([월화수목금토일])(?:요일)?(?:날)?)?(?:부터|까지|에서|에|날)?(?![가-힣])/.exec(text))) {   // 요일 뒤 조사(에·까지·부터·날)는 날짜로 소비, 그 밖의 한글이 붙으면 요일 아님 (다음주 일본·수원)
     const w = m[1].replace(/\s/g, '');
@@ -133,8 +141,13 @@ function parseTimes(text, am = false) {
   if (!dep && !ret) {                     // "화 19시~목 15시" 처럼 시각만 두 개
     const all = [...text.matchAll(/(?:오전|오후|저녁|밤|아침)?\s*(?<![A-Za-z\d.])\d{1,2}\s*(?::\s*\d{2}|시(?!간)(?:\s*\d{1,2}\s*분|\s*반)?)/g)];
     const times = all.map((m, i) => clock(m[0], am && i === 0));
-    if (times[0]) startTime = times[0];
-    if (times[1]) endTime = times[1];
+    // "…토요일 오후 6시까지" 의 '까지' 시각은 복귀 (전엔 시각이 하나뿐이라 출발로 읽음 — 2026-11-04)
+    const u = all.findIndex(m => /^\s*까지/.test(text.slice(m.index + m[0].length)));
+    if (u >= 0) { endTime = times[u]; startTime = times.find((t, i) => i < u && t) || ''; }
+    else {
+      if (times[0]) startTime = times[0];
+      if (times[1]) endTime = times[1];
+    }
   }
   return { startTime, endTime };
 }
