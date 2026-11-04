@@ -115,7 +115,18 @@ class Page {
   }
 
   url() { return this.wc.getURL(); }
-  async goto(url) { await this.wc.loadURL(url); }
+  async goto(url) {
+    try { await this.wc.loadURL(url); }
+    catch (e) {
+      // 여는 중에 그 사이트가 다른 주소로 보내면(세션 만료 → #/login?logout=Y) loadURL 이 ERR_FAILED·ERR_ABORTED 로 끝난다.
+      // 페이지는 살아 있으니 넘기고, 부른 쪽이 로그인 화면인지 보고 다시 로그인한다 (전엔 '내 정보 불러오기'가 여기서 그냥 실패 — 2026-11-04).
+      // 주소가 그대로면(네트워크 오류 등) 진짜 실패
+      if (!/ERR_(FAILED|ABORTED)/.test(e.message)) throw e;
+      for (let i = 0; i < 25 && (this.wc.isLoading() || this.wc.getURL() === url); i++) await sleep(200);   // 보낸 주소로 넘어갈 때까지 (최대 5초)
+      const now = this.wc.getURL();
+      if (now === url || new URL(now || 'about:blank').origin !== new URL(url).origin) throw e;
+    }
+  }
 
   /** 끌기 (스크롤바 손잡이 등): 누른 채 여러 번 나눠 움직이고 놓는다 */
   async drag(from, to, steps = 8) {
