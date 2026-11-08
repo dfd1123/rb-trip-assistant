@@ -220,7 +220,12 @@ async function runReport(env, data) {
   }
   // 3~4단계: 결의서입력 → [결재상신] → 결재양식 '출장보고서 및 경비정산 지출결의서' → 출장보고서 본문. [상신]은 사람이
   const title = R.reportTitle(rep.reason);
-  await gw.openResolution(resNo);
+  const opened = await gw.openResolution(resNo);
+  if (opened && opened.submitted) {   // 지난번에 [상신]까지 끝낸 결의: 다시 올릴 게 없다 (전엔 '이미 결재진행 상태' 오류로만 끝나 뭘 해야 할지 몰랐음 — 2026-11-06)
+    log(`이 출장의 보고서 결의(${resNo})는 이미 결재상신돼 '${opened.status}' 이에요${opened.docNo ? ` (문서번호 ${opened.docNo})` : ''}. 그룹웨어 전자결재에서 진행 상황을 확인해 주세요.`);
+    if (rec) { try { const r2 = store.load(rep.trip_id); r2.reportStatus = `보고 ${opened.status}${opened.docNo ? `(${opened.docNo})` : ''}`; store.save(rep.trip_id, r2); } catch (e) { /* */ } }
+    return { resolutionNo: resNo, submitted: true, status: opened.status, docNo: opened.docNo };
+  }
   const popup = await gw.openApproval(R.REPORT_FORM, title, { category: '결의서입력' });
   await gw.fillAndKeep(popup, { title, probe: '출장일시', payload: reportPayload(rep), attachments: [], save: false });   // 영수증은 채주 첨부로 이미 결재 문서에 딸려 온다 → 다시 안 올림
   if (rec) { try { const r2 = store.load(rep.trip_id); r2.reportStatus = '보고서 작성 창 열림(상신 전)'; store.save(rep.trip_id, r2); } catch (e) { /* */ } }

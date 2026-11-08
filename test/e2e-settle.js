@@ -246,6 +246,32 @@ app.whenReady().then(async () => {
       console.log('E2E 정산 0원 품의 (본인 0원 채주) OK');
     }
 
+    if (run(13) || run(14)) {
+      // ---- 13) 전상민 2026-11-06: 같은 날 같은 금액·집행용도의 지난 결의가 '결재진행'이고, 결의서입력을 막 열면 묵은 목록(새 결의 없음)이 보임.
+      //      전엔 그 지난 줄을 새 결의로 집어 "이미 결재진행 상태" 라고 멈췄음 → [조회]로 새로 불러와 상신대기 줄로 결재상신해야 함
+      const old = { 결의연월: today().slice(0, 7), 결의일: String(Number(today().slice(8))), 순번: '20', 결의구분: '지출결의서', 집행용도: '출장신청 및 출장경비 사전품의', 총금액: won(136900), 결재상태: '결재진행', 결재문서번호: '개발 3팀-26-11-0001', 진행상태: '결의대기', 결의번호: `${today().replace(/-/g, '')}-00020` };
+      const st13 = STATE({ resStale: true, resList: [old], nextResNo: 27, nextGisuSq: 27 });   // 순번 = 결의번호 끝자리 (14 에서 '같은 순번' 판단용)
+      mock.setSettle(st13); asked.length = 0; ui.logs.length = 0;
+      await runner.runReport(env, report(exp1));
+      const s13 = mock.getSettle(), e13 = s13.approve[0].resolutions.find(r => r.결의구분 === '지출결의서');
+      assert.ok(e13 && e13.결의번호 && e13.결의번호 !== old.결의번호, '새 결의 전송');
+      assert.deepEqual(s13.approvalFor, [e13.결의번호], '새 결의(상신대기)로 결재상신해야 함 — 지난 결의가 아님');
+      assert.ok(ui.logs.some(m => /\[조회\]를 다시/.test(m)), '묵은 목록이면 [조회]를 눌러야 함');
+      assert.equal((s13.alertTexts || []).length, 0, '오류 창: ' + (s13.alertTexts || []).join(' / '));
+      console.log('E2E 정산 묵은 결의서입력 목록 (지난 결의와 섞임) OK');
+
+      // ---- 14) 그 결의가 [상신]까지 돼 결재진행이 된 뒤 다시 [정산 입력]: 오류가 아니라 '이미 결재상신됨'으로 끝나야 함 (job-log 10)
+      const s14 = mock.getSettle(); const row = s14.resList.find(r => r.결의번호 === e13.결의번호); row.결재상태 = '결재진행'; row.결재문서번호 = '개발 3팀-26-11-0002';
+      mock.setSettle(s14); asked.length = 0; ui.logs.length = 0; ui.redo = false;
+      const r14 = await runner.runReport(env, report(exp1));
+      ui.redo = true;
+      assert.equal(r14.submitted, true, '이미 상신된 결의면 submitted');
+      assert.equal(r14.docNo, '개발 3팀-26-11-0002');
+      assert.ok(ui.logs.some(m => /이미 결재상신돼/.test(m) && /개발 3팀-26-11-0002/.test(m)), '사람에게 문서번호와 함께 알려야 함: ' + JSON.stringify(ui.logs.slice(-3)));
+      assert.deepEqual(mock.getSettle().approvalFor, [e13.결의번호], '결재상신을 또 하면 안 됨');
+      console.log('E2E 정산 이미 상신된 결의 (오류 아님) OK');
+    }
+
   } catch (e) {
     code = 1; console.error('E2E 정산 실패:', e.stack || e);
     try { const w = BrowserWindow.getAllWindows().find(x => /127\.0\.0\.1/.test(x.webContents.getURL()));   // 화면 상태 (칸 위치·맨 위 요소)
@@ -256,4 +282,4 @@ app.whenReady().then(async () => {
     try { const s = mock.getSettle(); console.error(JSON.stringify({ buttons: s.buttons, closed: s.closed, alerts: s.alertTexts, res: s.approve[0].resolutions.map(r => [r.결의구분, r.결의번호, (r.budgets || []).map(b => b.payees.length)]) })); } catch (x) { /* */ }
   } finally { srv.close(); app.exit(code); }
 });
-setTimeout(() => { console.error('E2E 정산 시간 초과'); process.exit(3); }, 2400000);   // 11가지 시나리오 (한 번에 다 돌리면 20분을 넘김)
+setTimeout(() => { console.error('E2E 정산 시간 초과'); process.exit(3); }, 2700000);   // 14가지 시나리오 (한 번에 다 돌리면 20분을 넘김)

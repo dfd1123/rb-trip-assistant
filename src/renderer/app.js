@@ -881,6 +881,7 @@ $('#btnNewReport').onclick = async () => {   // 신청 내용만 남기고 영�
   await showReport(currentTrip.trip_id, await rpc('/api/draft', {id: currentTrip.trip_id, fresh: true}));
 };
 $('#btnBack').onclick = () => { $('#reportView').classList.add('hidden'); $('#tripList').classList.remove('hidden'); };
+$('#btnBackTop').onclick = () => $('#btnBack').click();
 $('#btnRPrompt').onclick = async () => {
   const memo = $('#rq_memo').value.trim();
   if(!memo){ $('#rcopied').textContent = '위 "한 줄 메모" 칸에 한 일을 먼저 써 주세요.'; $('#rq_memo').focus(); return; }

@@ -458,12 +458,13 @@ function parseTripPeriod(text, base = '') {
   const t = String(text || '').replace(/\u00a0/g, ' ');
   const by = Number(String(base).slice(0, 4)) || new Date().getFullYear(), bd = base ? new Date(`${base}T00:00:00`) : null;
   const pad = n => String(n).padStart(2, '0');
-  const re = /(?:(\d{4})\s*[.\-/년]\s*)?(\d{1,2})\s*[.\-/월]\s*(\d{1,2})\s*일?(?:\s*\([^)]*\))?(?:\s*(\d{1,2})(?::(\d{2})|\s*시(?:\s*(\d{1,2})\s*분)?))?/g;
+  // 해는 네 자리, 또는 "26.11.04" 처럼 두 자리(20년대·30년대만 — "11.04" 의 11 을 해로 보지 않게 세 토막일 때만) (전상민 2026-11-06: 품의 본문 "26.11.04 ~26.11.05" 를 못 읽음)
+  const re = /(?:(?<![\d.\-/])(\d{4}|[23]\d)\s*[.\-/년]\s*)?(\d{1,2})\s*[.\-/월]\s*(\d{1,2})\s*일?(?:\s*\([^)]*\))?(?:\s*(\d{1,2})(?::(\d{2})|\s*시(?:\s*(\d{1,2})\s*분)?))?/g;
   const hits = []; let m;
   while ((m = re.exec(t))) {
     const mo = Number(m[2]), d = Number(m[3]); if (mo < 1 || mo > 12 || d < 1 || d > 31) continue;
     const prev = hits[hits.length - 1];
-    let y = m[1] ? Number(m[1]) : (prev ? prev.y + (mo * 100 + d < prev.mo * 100 + prev.d ? 1 : 0) : by);   // "12/30 ~ 1/2": 끝 날짜는 다음 해
+    let y = m[1] ? (m[1].length === 2 ? 2000 + Number(m[1]) : Number(m[1])) : (prev ? prev.y + (mo * 100 + d < prev.mo * 100 + prev.d ? 1 : 0) : by);   // "12/30 ~ 1/2": 끝 날짜는 다음 해
     if (!m[1] && !hits.length && bd && new Date(`${y}-${pad(mo)}-${pad(d)}T00:00:00`) < new Date(bd.getTime() - 60 * 864e5)) y++;
     const time = m[4] ? `${pad(m[4])}:${m[5] || m[6] || '00'}`.replace(/:(\d)$/, ':0$1') : '';
     hits.push({ y, mo, d, time, end: re.lastIndex });

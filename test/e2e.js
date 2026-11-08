@@ -92,6 +92,23 @@ app.whenReady().then(async () => {
     assert.equal(store.load(id).status, '보관됨');
     console.log('E2E 신청서 OK');
 
+    // ---- 품의부서에 예산이 없는 사람 (김용완 이사 2026-11-04): 첫 줄을 저장하자 "예산이 초과되었습니다" 알림 → 닫고 바로 멈춰 이유를 알리고, 만들던 품의는 지움.
+    //      전엔 알림창 뒤에서 코드도움을 못 열어 '코드도움 창이 열리지 않았습니다'로 멈췄음
+    {
+      await gw.webContents.executeJavaScript("localStorage.budgetZero='1'; localStorage.alerts='0'; location.reload()"); await new Promise(r => setTimeout(r, 1500));
+      ui.logs.length = 0;
+      const before = JSON.parse(await gw.webContents.executeJavaScript("JSON.stringify(S.top.filter(r => r.순번).map(r => r.순번))"));
+      await assert.rejects(() => runner.runApply(env, { ...data, reason: '예산 없는 부서 출장' }), e => e instanceof R.InputError && /예산이 초과되었습니다/.test(e.message) && /매니퓰레이터 사업부/.test(e.message));
+      const z = JSON.parse(await gw.webContents.executeJavaScript("JSON.stringify({alerts: +localStorage.alerts, open: document.querySelectorAll('.OBTAlert_root').length, top: S.top.filter(r => r.순번).map(r => r.순번)})"));
+      assert.equal(z.alerts, 1, '첫 줄에서 바로 멈춰야 함');
+      assert.equal(z.open, 0, '알림창은 닫혀 있어야 함');
+      assert.deepEqual(z.top, before, '만들던 품의는 지워져야 함');
+      assert.ok(ui.logs.some(m => /품의.*삭제했어요/.test(m)), '품의 삭제 기록: ' + JSON.stringify(ui.logs.slice(-3)));
+      assert.ok(!ui.logs.some(m => /코드도움 창이 열리지 않았습니다/.test(m)), '알림창 때문에 코드도움이 막히면 안 됨');
+      await gw.webContents.executeJavaScript("localStorage.removeItem('budgetZero'); localStorage.removeItem('alerts')");
+      console.log('E2E 예산 없는 부서 (예산 초과 → 멈추고 알림) OK');
+    }
+
     // ---- 보고서: 신청 기록으로 초안 → 보고 내용 채워서 입력 ----
     process.env.MOCK_FORM = 'report_form_body.html';
     const draft = runner.reportDraft(store, store.config(), id);

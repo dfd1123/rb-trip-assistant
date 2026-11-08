@@ -133,7 +133,11 @@ document.addEventListener('keydown',e=>{
   if(e.key!=='Enter'||!S||!S.focus) return;
   const f=S.focus;
   if(f.g==='top'&&f.c==='품의구분'&&S.top[f.r].품의구분){ if(++S.enter===3){ S.top[f.r].순번=String(Math.max(...S.top.map(r=>+r.순번||0))+1); S.top[f.r].적요='출장'; S.top[f.r].결재상태='작성'; S.top.push({품의연월:'2026-10',품의일:'14'}); S.bot.push({}); S.focus={g:'bot',r:0,c:'부서'}; render(); } }
-  else if(f.g==='bot'&&f.c==='첨부파일'){ S.bot[f.r].done=true; S.bot.push({}); S.focus={g:'bot',r:f.r+1,c:'부서'}; render(); }
+  else if(f.g==='bot'&&f.c==='첨부파일'){ S.bot[f.r].done=true; S.bot.push({}); S.focus={g:'bot',r:f.r+1,c:'부서'}; render();
+    // 실제 (2026-11-04): 품의부서에 예산이 없으면 줄을 저장할 때마다 알림창. 줄은 들어가지만 창이 떠 있는 동안 다른 클릭은 막힘
+    if(localStorage.budgetZero==='1'){ const d=document.createElement('div'); d.className='OBTAlert_root'; d.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.3);z-index:30;display:flex;align-items:center;justify-content:center';
+      d.innerHTML='<div style="background:#fff;padding:16px;min-width:300px"><p>예산이 초과되었습니다.</p><button class="o">확인</button></div>'; document.body.insertBefore(d,document.body.firstChild);
+      d.querySelector('.o').onclick=()=>d.remove(); localStorage.alerts=String((+localStorage.alerts||0)+1); } }   // 횟수는 새로고침(품의 삭제)해도 남게
 });
 function approvalDialog(){
   let form='품의서입력(복수)지출';

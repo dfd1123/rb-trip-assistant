@@ -203,7 +203,7 @@
   // 실제처럼: resLazy 면 화면을 막 열었을 땐 목록이 안 불려 옴([조회]를 눌러야 나옴), resPreChecked 면 첫 줄이 체크돼 '보이지만' 선택으론 안 잡힘 (풀었다 다시 체크해야 됨 — 2026-10-28)
   let RL = { check: new Set(), vis: new Set(), loaded: true };
   function resolutionPage() {
-    $('#app').innerHTML = css + `<div class="s-root"><h3>결의서입력</h3><div style="display:none"><button id="tutorial-conditionPanel-search" class="OBTConditionPanel_searchButton">조회</button></div><button id="tutorial-conditionPanel-search" class="OBTConditionPanel_searchButton">조회</button>${grid('rl', RLC, [...(RL.loaded ? T.resList : []), { 결의연월: today().slice(0, 7), 결의일: String(Number(today().slice(8))) }], { check: RL.vis })}</div>
+    $('#app').innerHTML = css + `<div class="s-root"><h3>결의서입력</h3><div style="display:none"><button id="tutorial-conditionPanel-search" class="OBTConditionPanel_searchButton">조회</button></div><button id="tutorial-conditionPanel-search" class="OBTConditionPanel_searchButton">조회</button>${grid('rl', RLC, [...(RL.loaded ? T.resList : T.resStale ? T.resList.slice(0, -1) : []), { 결의연월: today().slice(0, 7), 결의일: String(Number(today().slice(8))) }], { check: RL.vis })}</div>
       <div class="sbar"><button id="sAppr">결재상신</button></div>`;
     document.querySelectorAll('#tutorial-conditionPanel-search')[1].onclick = () => { RL.loaded = true; resolutionPage(); };   // 실제처럼 앞의 것은 숨은 이전 화면의 [조회]
     $('#sAppr').onclick = () => {
@@ -294,7 +294,7 @@
   window.settleRoute = hash => {
     { const d = $('#sDlg'); if (d) d.remove(); D = null; document.querySelectorAll('.OBTConfirm_root,.OBTAlert_root,.up').forEach(x => x.remove()); }   // 화면을 옮기면 떠 있던 창은 사라짐 (실제처럼)
     if (hash.startsWith('#/HP/NPC1025/NCA0019')) { load().then(() => { A = { check: new Set() }; if (T.apprPreChecked) T.approve.forEach((_, i) => A.check.add(i)); approvePage(); }); return true; }   // apprPreChecked: 화면을 열면 이미 전부 체크돼 있음 (2026-10-28 최병관)
-    if (hash.startsWith('#/HP/NPC1030/NCA0020')) { load().then(() => { RL = { check: new Set(), vis: new Set(T.resPreChecked ? [0] : []), loaded: !T.resLazy }; resolutionPage(); }); return true; }
+    if (hash.startsWith('#/HP/NPC1030/NCA0020')) { load().then(() => { RL = { check: new Set(), vis: new Set(T.resPreChecked ? [0] : []), loaded: !T.resLazy && !T.resStale }; resolutionPage(); }); return true; }
     return false;
   };
   window.__settle = () => T;

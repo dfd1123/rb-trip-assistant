@@ -11,7 +11,7 @@ const BUDGET_PATH = '/#/HP/NPC1023/NCA0018';
 const APPROVE_PATH = '/#/HP/NPC1025/NCA0019';
 const COMPOSE_PATH = '/#/UB/UB/UBA0000?specialLnb=Y&moduleCode=UB&menuCode=UBA&pageCode=UBA6000';   // 전자결재 › 결재작성 (전체 양식)
 const RESOLUTION_PATH = '/#/HP/NPC1030/NCA0020';   // 결의서입력: 전송된 결의 → [결재상신]   // 품의서승인(복수): 승인된 품의 → [결의서전송/취소]
-const { capToBudget, planPayees, PAY_MODES } = require('./rules');
+const { capToBudget, planPayees, PAY_MODES, InputError } = require('./rules');
 // 확인창(OBTConfirm·'…?' 창) 안의 [확인]/[예] 위치. 없으면 null. 화면 전체에서 '마지막 확인'을 고르면 결의서전송 창 맨 아래 [확인]이 눌려 창이 닫힌다
 // (실제 덤프로 확인: 확인창 버튼이 DOM 에서 창 버튼보다 앞에 있음 — 2026-10-22)
 const CONFIRM_OK = `() => { const m = x => vis(x) && /하시겠습니까|습니까\\s*\\?|\\?\\s*(취소|확인|예|아니오)/.test(x.innerText || '') && !/OBTDialog_bottomButton/.test(x.className);
@@ -251,6 +251,9 @@ class Amaranth {
     if (btn) { await p.click(btn); if (await opened()) return; }
     await p.dblclick(await this.cellPoint(gridHdr, row, col));
     if (await opened()) return;
+    // 그룹웨어 알림창(예산 초과 등)이 떠 있으면 클릭이 전부 막힌다 → 닫고 한 번 더 (전엔 '코드도움 창이 열리지 않았습니다'로만 멈춤 — 2026-11-04)
+    const err = await this.closeErrorDialog();
+    if (err) { await p.click(await this.cellPoint(gridHdr, row, col)); if (btn) await p.click(btn); if (await opened()) return; throw new Error(`코드도움 창이 열리지 않았습니다 (그룹웨어 알림: ${err})`); }
     throw new Error('코드도움 창이 열리지 않았습니다.');
   }
 
@@ -447,6 +450,15 @@ class Amaranth {
         await p.key('Enter');                       // 첨부파일에서 Enter 해야 행이 확정되고 금액이 반영됨 (다음 빈 행 생김)
         await p.waitFor((n, a) => { const g = grid('예산과목'); return rows(g).length > n + 1 && Number(String((rowVals(g, n) || {})['품의금액'] || '').replace(/[^\d]/g, '')) === a; }, [i, ex.amount], { timeout: 2500, interval: 150 });
       } catch (e) { await ui.assist(`금액/적요 입력 실패(${e.message}). ${i + 1}번째 줄에 ${ex.amount.toLocaleString('ko-KR')}원 / '${ex.memo}' 를 입력해 주세요.`); }
+      // 줄이 저장되면 그룹웨어가 예산을 보고 "예산이 초과되었습니다" 알림을 띄울 수 있다 (김용완 이사 2026-11-04: 품의부서 '이사' 예산총액 0원).
+      // 더 넣어 봐야 결재에서 막히니 바로 멈추고 이유만 알린다 (입력 오류 → 만들던 품의는 지움). 전엔 알림창 뒤에서 코드도움을 못 열어 엉뚱한 메시지로 멈췄음
+      { const err = await this.closeErrorDialog();
+        if (err && /예산.*초과/.test(err)) {
+          const budgetTotal = await p.eval(() => { const h = all('*').find(e => ownText(e) && vis(e) && norm(e.textContent) === '예산총액'); if (!h) return '';
+            for (let box = h.parentElement, k = 0; box && k < 3; box = box.parentElement, k++) { const m = /(-?[\d,]+)\s*$/.exec(norm(box.textContent).replace('예산총액', '')); if (m) return m[1]; } return ''; }).catch(() => '');
+          throw new InputError(`그룹웨어가 "${err}" 라고 해요. 품의부서 '${dept}'에 잡힌 예산이 없거나 모자라요 (예산총액 ${budgetTotal || '?'}원, ${ex.label} ${ex.amount.toLocaleString('ko-KR')}원 넣다 멈춤). 예산 담당자에게 '${dept}' 부서 예산을 확인한 뒤 다시 올려 주세요.`);
+        }
+        if (err) this.log(`  (${i + 1}번째 줄 저장 뒤 알림: ${err})`); }
       const got = amountOf(((await this.rowVals('예산과목', i)) || {})['품의금액']);
       if (got !== ex.amount) await ui.assist(`${i + 1}번째 줄 금액이 ${got.toLocaleString('ko-KR')}원으로 보입니다. ${ex.amount.toLocaleString('ko-KR')}원으로 고쳐 주세요.`);
     }
@@ -1442,7 +1454,7 @@ class Amaranth {
   async closeErrorDialog() {
     const p = this.page;
     const d = await p.eval(() => { const d = all('[class*=Dialog], .dialog_data, [role=dialog], [class*=Confirm_root], [class*=Alert_root]').filter(x => vis(x) && !x.querySelector('.rg-root') && (/Alert_root/.test(x.className) || /오류|실패|에러|없습니다|할 수 없|초과/.test(x.innerText || ''))).pop();   // 그리드가 든 창(결의서전송 창 자체: '데이터가 존재하지 않습니다' 글이 있음)은 알림이 아님   // OBTAlert 는 글과 상관없이 알림 ("선택해 주세요" 등도 막힌 것)
-      const b = d && all('button, [role=button]', d).filter(b => vis(b) && /^(확인|닫기)$/.test(norm(b.textContent))).pop(); return b ? { pt: center(b), text: norm(d.innerText).slice(0, 80) } : null; }).catch(() => null);
+      const b = d && all('button, [role=button]', d).filter(b => vis(b) && /^(확인|닫기)$/.test(norm(b.textContent))).pop(); return b ? { pt: center(b), text: String(d.innerText || '').replace(/\s+/g, ' ').replace(/\s*(확인|닫기)\s*$/, '').trim().slice(0, 80) } : null; }).catch(() => null);   // 글자 사이 띄어쓰기는 두고 버튼 글자만 뺌 (사람에게 그대로 보여 줌)
     if (!d) return '';
     await p.click(d.pt); await sleep(800);
     this.log(`  (그룹웨어 오류 창 닫음: ${d.text})`);
@@ -1566,27 +1578,31 @@ class Amaranth {
     if (await this.isLoginPage()) { await this.ensureLogin(); await p.goto(this.baseUrl + RESOLUTION_PATH); }
     await p.waitFor(() => !!grid('결의구분'), [], { timeout: 30000, message: '결의서입력 화면이 열리지 않았어요.' });
     await sleep(1500);
-    // 결의서입력 목록의 순번은 결의번호 끝자리와 다를 수 있다 (순번 23 ↔ 20261022-00024 — 2026-10-22). 날짜·지출결의서·집행용도·금액·상신대기로 찾고, 여럿이면 순번이 맞는 것, 없으면 마지막 것
+    // 결의서입력 목록의 순번은 결의번호 끝자리와 다를 수 있다 (순번 23 ↔ 20261022-00024 — 2026-10-22). 날짜·지출결의서·집행용도·금액이 같은 줄 중 '상신대기'만 고른다 (여럿이면 순번이 맞는 것, 없으면 마지막 것).
+    // 상신대기가 없으면 '못 찾음'으로 보고 [조회]를 다시 누른다: 막 연 화면은 전에 불러온 목록을 보여 줄 때가 있어, 같은 날 같은 금액의 지난 결의(결재진행)를 새 결의로 잘못 집었음 (전상민 2026-11-06)
     const sent = this.lastSent && this.lastSent.no === resNo ? this.lastSent : null;
     const find = () => p.eval((y, d, q, amt, purpose) => { const g = grid('결의구분'); const num = s => Number(String(s || '').replace(/[^\d]/g, '')) || 0;
       const vs = rows(g).map((_, i) => ({ i, v: rowVals(g, i) || {} }));
       const cand = vs.filter(({ v }) => v['결의연월'] === y && String(Number(v['결의일'])) === d && /지출결의서/.test(v['결의구분'] || '')
         && (!purpose || norm(v['집행용도'] || '').startsWith(norm(purpose).slice(0, 10))) && (!amt || num(v['총금액']) === amt));
-      const wait = cand.filter(({ v }) => /상신대기/.test(v['결재상태'] || ''));   // 상신대기 우선. 없으면 아래에서 '이미 결재 중' 이라고 알려 줌
-      const pool = wait.length ? wait : cand;
-      const hit = pool.find(({ v }) => v['순번'] === q) || pool[pool.length - 1];
-      return hit ? hit.i : -1; }, ym, day, seq, sent ? sent.amount : 0, sent ? sent.purpose : '');
-    let ri = await find();
+      const wait = cand.filter(({ v }) => /상신대기/.test(v['결재상태'] || ''));
+      const hit = wait.find(({ v }) => v['순번'] === q) || wait[wait.length - 1];
+      return { i: hit ? hit.i : -1, cands: cand.map(({ i, v }) => ({ i, seq: String(v['순번'] || ''), status: String(v['결재상태'] || ''), doc: String(v['결재문서번호'] || '') })) }; }, ym, day, seq, sent ? sent.amount : 0, sent ? sent.purpose : '');
+    let r = await find(), ri = r.i;
     // 화면을 막 열면 목록이 안 불려 와 빈 줄만 있을 때가 있다 (2026-10-28 최병관) → 돋보기(조회)를 눌러 다시 불러와 찾는다
     for (let i = 0; ri < 0 && i < 3; i++) {
-      this.log('목록에 결의가 안 보여 [조회]를 다시 눌러요.');
+      this.log('목록에 상신대기 결의가 안 보여 [조회]를 다시 눌러요.');
       try { await p.clickWhere(() => all('#tutorial-conditionPanel-search, [class*=OBTConditionPanel_searchButton]').filter(vis).pop()); } catch (e) { await p.key('Enter'); }
-      ri = (await p_wait(p, async () => (await find()) >= 0, 6000)) ? await find() : -1;
+      await p_wait(p, async () => (await find()).i >= 0, 6000); r = await find(); ri = r.i;   // 못 찾았어도 다시 읽는다 ([조회] 뒤 목록으로 '이미 결재 중'인지 판단)
     }
     if (ri < 0) {
+      // 같은 순번의 줄이 이미 결재 중이면 이 결의는 결재상신까지 된 것 → 오류가 아니라 그 상태를 돌려준다 (다른 순번의 결재 중인 줄은 지난 결의일 수 있어 그걸로 단정하지 않음)
+      const same = r.cands.find(c => c.seq === seq && !/상신대기/.test(c.status));
+      if (same) { this.log(`결의 ${resNo}(순번 ${same.seq})는 이미 '${same.status}'${same.doc ? ` · 결재문서 ${same.doc}` : ''} 이에요.`); return { submitted: true, status: same.status, docNo: same.doc }; }
       await this.debugDump('resolution-find', '결의서입력');
-      await this.ui.assist(`결의서입력 목록에서 결의(${resNo}${sent ? `, ${sent.amount.toLocaleString('ko-KR')}원` : ''})를 못 찾았어요. [작업 중인 창 열기]에서 그 행만 체크하고 [계속]을 눌러 주세요.`);
-      ri = await find();   // 사람이 [조회]해서 목록이 나왔으면 아래에서 앱이 직접 체크 (사람이 누른 체크만으론 [결재상신]이 안 먹었음 — 2026-10-28)
+      const others = r.cands.map(c => `순번 ${c.seq} ${c.status}`).join(', ');
+      await this.ui.assist(`결의서입력 목록에서 상신대기인 결의(${resNo}${sent ? `, ${sent.amount.toLocaleString('ko-KR')}원` : ''})를 못 찾았어요${others ? ` (같은 날 같은 결의: ${others})` : ''}. [작업 중인 창 열기]에서 [조회]를 누르고 그 행만 체크한 뒤 [계속]을 눌러 주세요.`);
+      ri = (await find()).i;   // 사람이 [조회]해서 목록이 나왔으면 아래에서 앱이 직접 체크 (사람이 누른 체크만으론 [결재상신]이 안 먹었음 — 2026-10-28)
     }
     if (ri < 0) {
       const checked = await p.eval(() => { const g = grid('결의구분'); return rows(g).some(tr => all('td.rg-checkbar-cell input', tr).some(x => x.checked) || /rg-checked|checked/.test(tr.className)); }).catch(() => false);
