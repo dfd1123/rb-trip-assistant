@@ -288,7 +288,7 @@ async function reportJob(j, kind, detail) {
 }
 
 // ---------- 영수증 자동 분류 ----------
-const PROOF_MIME = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', heic: 'image/heic', heif: 'image/heif', pdf: 'application/pdf' };
+const PROOF_MIME = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', pdf: 'application/pdf' };
 /** 고른 뒤 옮기거나 지운 파일: 작업을 시작하기 전에 이름을 알려 준다 ("ENOENT: no such file…" 대신) */
 function assertFilesExist(paths, what) {
   const fs = require('fs');
@@ -459,7 +459,7 @@ async function quickReport(id, memo) {
     try {
       const d = await withDeadline(AI.draftReport(ai, draft, memo), AI_QUICK_MS);
       // AI 가 비워서 돌려준 칸(출장지·기간 등)이 신청서 값을 지우지 않게: 값이 있는 것만 덮어씀 (실제로 출장지가 지워져 "출장지을 넣어 주세요" 로 막혔음)
-      const filled = Object.fromEntries(Object.entries(d || {}).filter(([, v]) => v !== '' && v != null && !(Array.isArray(v) && !v.length)));
+      const filled = Object.fromEntries(Object.entries(d || {}).filter(([k, v]) => k !== 'category' && v !== '' && v != null && !(Array.isArray(v) && !v.length)));
       return { data: { ...draft, ...filled, expenses: draft.expenses, attachments: draft.attachments, trip_id: id }, source: AI.PROVIDERS[ai.provider].label };
     } catch (e) { return { data: Q.quickReport(draft, memo), source: 'template', note: `AI 작성 실패로 템플릿을 썼어요: ${e.message}` }; }
   }
@@ -544,6 +544,7 @@ async function route(p, body = {}) {
       const d = saved ? { ...base, ...saved, trip_id: body.id, transport: base.transport } : base;
       return { draft: d, prompt: R.reportPrompt(d), resumed: !!saved };
     }
+    case '/api/report/keep': { const rec = store.load(body.id); if (body.data) rec.report = body.data; else delete rec.report; store.save(body.id, rec); return { ok: true }; }   // 쓰던 보고서 저장 (화면을 떠날 때). data 없으면 지움 (새로 작성)
     case '/api/trip/link-report': { const rec = store.load(body.id); const r = body.row; rec.gwReport = { key: r.key, ym: r.ym, day: String(r.day), seq: String(r.seq) }; store.save(body.id, rec); return { ok: true }; }
     case '/api/update': return { ...updater.state, current: app.getVersion(), platform: process.platform };
     case '/api/update/check': return { ...(await updater.check(!!body.force)), current: app.getVersion() };
@@ -560,7 +561,7 @@ async function route(p, body = {}) {
     }
     case '/api/pick-proofs': {   // 정산 증빙: 이미지·PDF 1개
       const r = await dialog.showOpenDialog(mainWin, { title: body.many ? '영수증·증빙 선택 (여러 개)' : '증빙 자료 선택 (이미지·PDF 1개)', properties: body.many ? ['openFile', 'multiSelections'] : ['openFile'],
-        filters: [{ name: '이미지·PDF', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'heic', 'heif', 'bmp', 'tif', 'tiff', 'pdf'] }] });
+        filters: [{ name: '이미지·PDF', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'tif', 'tiff', 'pdf'] }] });
       return { paths: r.canceled ? [] : r.filePaths };
     }
     case '/api/gw/status': return gwStatus();

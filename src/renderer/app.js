@@ -42,6 +42,7 @@ if(window.api.onDevStale) window.api.onDevStale(() => { if($('#devStale')) retur
 
 /* ---------- 탭 ---------- */
 $$('nav button').forEach(b => b.onclick = () => {
+  keepReport();
   $$('nav button').forEach(x => x.classList.toggle('on', x===b || (b.dataset.tab==='trips' && x.dataset.tab==='apply')));   // '출장' 메뉴 = 출장 신청 + 출장 보고
   ['apply','trips','purchase','visitor','settings'].forEach(t => $('#tab-'+t).classList.toggle('hidden', t!==b.dataset.tab));
   if(b.dataset.tab==='purchase') initPurchase();
@@ -125,7 +126,7 @@ const mealPer = kind => { const r = (META.config && META.config.rates) || {}; re
 const mealPaid = tr => Number(tr.dataset.paid) || num(tr.querySelector('.amt').value);
 function overMealRows(){
   return [...$$('#r_exp tbody tr')].filter(tr => {
-    if(tr.querySelector('.item').value !== 'meal') return false;
+    if(tr.querySelector('.item').value !== 'meal' || !claimableTr(tr)) return false;
     const kind = mealKindOf(tr), per = mealPer(kind), ppl = Number((tr.querySelector('.ppl') || {}).value) || 1, paid = mealPaid(tr);
     return per && paid > per * ppl && tr.dataset.mealOk !== `${kind}:${ppl}:${paid}`;
   });
@@ -707,6 +708,10 @@ const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')
 function gwRange(){
   const today = new Date(), def = new Date(today); def.setMonth(def.getMonth() - 3);
   let from = $('#gwFrom').value || ymd(def), to = $('#gwTo').value || ymd(today);
+  // 끝이 '그날 오늘'이던 기간은 날짜가 바뀌면 오늘까지 같은 길이로 밈. 앱을 켜 둔 채 날이 바뀌면 끝이 멈춰 있어서
+  // 오늘 올린 출장보고서가 조회에서 빠지고 [보고서 작성]이 다시 보였음 (사용자 제보 2026-11-10 — 끝 11/08, 보고서 11/10)
+  let on = ''; try { on = localStorage.gw_saved_on || ''; } catch(e){ /* */ }
+  if(on && to === on && on < ymd(today)){ const nf = new Date(`${from}T00:00:00`); nf.setDate(nf.getDate() + Math.round((new Date(`${ymd(today)}T00:00:00`) - new Date(`${to}T00:00:00`)) / 864e5)); from = ymd(nf); to = ymd(today); }
   if(from > to) [from, to] = [to, from];
   const lim = new Date(`${to}T00:00:00`); lim.setFullYear(lim.getFullYear() - 1);
   if(from < ymd(lim)) from = ymd(lim);   // 최대 1년
@@ -752,10 +757,17 @@ function schedRow(r={}){
   tr.querySelector('button').onclick = () => tr.remove();
   $('#r_sched tbody').appendChild(tr);
 }
-const refreshReport = () => { $('#r_total').textContent = won(readExp($('#r_exp tbody')).reduce((s,e)=>s+e.amount,0)); };
+// 정산에 들어가는 줄 = 영수증이 붙은 줄 (자차의 '출장 유류비' 줄만 예외). 엔진 rules.claimable 과 같은 규칙 — 영수증 없는 줄은 흐리게, 합계에서 뺌
+const claimableTr = tr => JSON.parse(tr.dataset.proofs || '[]').length > 0 || ((reportTransport && reportTransport.mode) === 'car' && tr.querySelector('.item').value === 'domestic_transport' && /^출장 유류비/.test(tr.querySelector('.memo').value.trim()));
+const refreshReport = () => {
+  const trs = [...$('#r_exp tbody').querySelectorAll('tr')];
+  trs.forEach(tr => { const ok = claimableTr(tr); tr.style.opacity = ok ? '' : '.5'; tr.title = ok ? '' : '영수증이 없어 정산에서 빠져요'; });
+  const out = trs.filter(tr => !claimableTr(tr)).length;
+  $('#r_total').textContent = won(trs.filter(claimableTr).reduce((s, tr) => s + num(tr.querySelector('.amt').value), 0)) + (out ? ` (영수증 없는 ${out}줄 제외)` : '');
+};
 let reportPrompt = '';
 function fillReport(d){
-  setRadio('r_category', d.category||'로봇');
+  $$('input[name=r_category]').forEach(x => x.checked = x.value === d.category);   // 출장구분은 기본값 없이 사람이 고름 (필수, 사용자 요청 2026-11-10)
   $$('input[name=r_fund]').forEach(x => x.checked = x.value === d.fund);   // 자금과목: 출장마다 사람이 고름
   for(const k of ['project','period','destination','visit_org','purpose','report']) $('#r_'+k).value = d[k]||'';
   $('#r_companions').value = (d.companions||[]).join(', ');
@@ -825,7 +837,14 @@ function reportData(keepEmpty = false){
 }
 /* 보고서 자동 작성: 영수증 파일들 + 한 줄 메모를 다 넣은 뒤 [자동 작성] → 메모로 보고사항·일정, 영수증은 AI 로 경비 줄 */
 let rqFiles = [];
-const RQ_EXT = /\.(png|jpe?g|gif|webp|heic|heif|bmp|tiff?|pdf)$/i;   // rules.js PROOF_EXT 와 같게
+/** 쓰던 보고서를 저장: 화면을 떠날 때(메뉴·목록·앱 닫기). 안 하면 다시 열 때 신청 내용으로 새로 채워져 자동 작성으로 읽은 영수증(경비 줄 증빙)과 보고사항이 사라졌음 (사용자 제보 2026-11-10).
+ *  자동 작성 전(영수증·한 줄 칸만 보이는 상태)은 저장 안 함 — 저장하면 다시 열 때 빈 보고서가 '작성하던 것'으로 펼쳐짐 */
+function keepReport(force = false){   // force: 화면을 떠난 뒤 끝난 영수증 읽기 결과도 저장
+  if(!currentTrip || (!force && $('#reportView').classList.contains('hidden')) || $('#reportView').classList.contains('pre')) return;
+  rpc('/api/report/keep', {id: currentTrip.trip_id, data: reportData(true)}).catch(() => {});
+}
+window.addEventListener('beforeunload', keepReport);
+const RQ_EXT = /\.(png|jpe?g|gif|webp|bmp|tiff?|pdf)$/i;   // rules.js PROOF_EXT 와 같게
 function renderRqFiles(){
   const box = $('#rq_files'); box.innerHTML = '';
   rqFiles.forEach((f, i) => {
@@ -841,7 +860,7 @@ function addRqFiles(paths){
   const bad = paths.filter(p => p && !RQ_EXT.test(p));
   rqFiles = [...new Set([...rqFiles, ...paths.filter(p => p && RQ_EXT.test(p))])];
   renderRqFiles();
-  if(bad.length) $('#rq_status').textContent = `이미지·PDF만 넣을 수 있어요 (뺀 파일: ${bad.map(b => b.split(/[\\/]/).pop()).join(', ')})`;
+  if(bad.length) $('#rq_status').textContent = `${bad.some(b => /\.hei[cf]$/i.test(b)) ? 'HEIC 사진은 받지 않아요. JPG·PNG로 바꿔서 넣어 주세요' : '이미지·PDF만 넣을 수 있어요'} (뺀 파일: ${bad.map(b => b.split(/[\\/]/).pop()).join(', ')})`;
 }
 /** 이미 읽어서 경비 줄에 붙은 증빙 (읽고 나면 rqFiles 는 비우니까 이걸로 봐야 함) */
 const hasProofs = () => [...$('#r_exp tbody').querySelectorAll('tr')].some(tr => JSON.parse(tr.dataset.proofs || '[]').length);
@@ -865,9 +884,12 @@ $('#btnRQuick').onclick = async () => {
     $('#rq_status').textContent = how + ' · 영수증 읽는 중…';
     const paths = rqFiles;
     if(!paths.length){ $('#rq_status').textContent = how + ' · 영수증 없이 작성 · 확인 후 [그룹웨어에 정산 입력하기]'; maybeFuel(); return; }   // 자차면 이어서 유류대 조회
+    const tid = currentTrip.trip_id;
     runJob(`영수증 ${paths.length}개 읽기`, '/api/job/receipts', {paths, period: receiptPeriod()}, res => {
+      if(!currentTrip || currentTrip.trip_id !== tid) return;   // 읽는 동안 다른 출장을 열었으면 그 출장 화면에 넣지 않음
       applyReceipts(res.rows || []);
       rqFiles = []; renderRqFiles(); syncRQuick(true);
+      keepReport(true);   // 읽는 동안 다른 메뉴로 갔어도 읽은 영수증이 남게
       $('#rq_status').textContent = how + ` · 영수증 ${paths.length}개 반영 · 확인 후 [그룹웨어에 입력하기]`;
       maybeFuel();   // 영수증 다 읽은 뒤 (작업은 하나씩) 자차면 유류대 조회
     });
@@ -880,9 +902,10 @@ $('#btnNewReport').onclick = async () => {   // 신청 내용만 남기고 영�
   if(!currentTrip) return;
   if(!confirm('작성 중인 보고서 내용(영수증·메모·경비·보고사항)을 모두 비우고 새로 시작할까요?')) return;
   rqFiles = []; $('#rq_memo').value = ''; $('#r_err').textContent = '';
+  await rpc('/api/report/keep', {id: currentTrip.trip_id, data: null});   // 저장해 둔 것도 지움 (안 그러면 다시 열 때 예전 내용이 돌아옴)
   await showReport(currentTrip.trip_id, await rpc('/api/draft', {id: currentTrip.trip_id, fresh: true}));
 };
-$('#btnBack').onclick = () => { $('#reportView').classList.add('hidden'); $('#tripList').classList.remove('hidden'); };
+$('#btnBack').onclick = () => { keepReport(); $('#reportView').classList.add('hidden'); $('#tripList').classList.remove('hidden'); };
 $('#btnBackTop').onclick = () => $('#btnBack').click();
 $('#btnRPrompt').onclick = async () => {
   const memo = $('#rq_memo').value.trim();
@@ -928,6 +951,7 @@ function applyReceipts(got){
 }
 $('#reportView').addEventListener('input', e => { if(e.target.classList) e.target.classList.remove('need'); });   // 입력 시작하면 빈 칸 표시 해제
 $$('input[name=r_fund]').forEach(x => x.addEventListener('change', () => $('#r_fund').classList.remove('need')));
+$$('input[name=r_category]').forEach(x => x.addEventListener('change', () => $('#r_category').classList.remove('need')));
 $('#btnReport').onclick = async () => {
   $('#r_err').textContent = '';
   const d = reportData();
@@ -935,17 +959,18 @@ $('#btnReport').onclick = async () => {
   if(!d.report){ $('#r_err').textContent = '담당업무 및 보고사항을 입력해 주세요.'; $('#r_report').classList.add('need'); return; }
   $$('#r_sched textarea').forEach(x => x.classList.toggle('need', !x.value.trim()));
   if(!d.schedule.length || d.schedule.some(r => !r.detail)){ $('#r_err').textContent = '출장일정의 세부 활동 내용을 날짜마다 적어 주세요.'; return; }
+  if(!d.category){ $('#r_err').textContent = '출장구분을 골라 주세요.'; $('#r_category').classList.add('need'); $('#r_category').scrollIntoView({block: 'center'}); return; }
   if(!d.fund){ $('#r_err').textContent = '자금과목(일반경비·제조경비)을 골라 주세요.'; $('#r_fund').classList.add('need'); return; }
   // 금액 빈 칸은 0원이 아니다 (영수증을 못 읽은 줄 등) — 0원은 그대로 보낼 수 있음
   const noAmt = [...$$('#r_exp tbody tr')].filter(tr => !tr.querySelector('.amt').value.trim());
   if(noAmt.length){ noAmt.forEach(tr => tr.querySelector('.amt').classList.add('need')); $('#r_err').textContent = `금액이 빈 경비 ${noAmt.length}줄이 있어요. 금액을 넣거나 그 줄을 지워 주세요 (0원이면 0).`; return; }
-  const noProof = d.expenses.filter(e => !(e.proofs || []).length).length;
-  if(noProof && !confirmNoProof(`정산 경비 ${noProof}줄의 증빙`)) return;
-  if(!d.expenses.length && !confirm('정산할 경비가 없어요. 신청한 금액을 전부 환원하고 보고서만 올릴까요?')) return;
+  const noProof = [...$$('#r_exp tbody tr')].filter(tr => !claimableTr(tr)).length;
+  if(noProof && !confirm(`영수증이 없는 경비 ${noProof}줄은 정산에서 빠져요 (흐린 줄). 이대로 진행할까요?`)) return;
+  if(![...$$('#r_exp tbody tr')].some(claimableTr) && !confirm('정산할 경비가 없어요. 신청한 금액을 전부 환원하고 보고서만 올릴까요?')) return;
   // 식대 인원이 빈 줄: 금액으로 짐작해 넣고 적요의 "N인"도 맞춘 뒤 확인받는다
-  const noPpl = [...$$('#r_exp tbody tr')].filter(tr => tr.querySelector('.item').value === 'meal' && tr.querySelector('.ppl') && !tr.querySelector('.ppl').value && tr.querySelector('.memo').value.trim());
+  const noPpl = [...$$('#r_exp tbody tr')].filter(claimableTr).filter(tr => tr.querySelector('.item').value === 'meal' && tr.querySelector('.ppl') && !tr.querySelector('.ppl').value && tr.querySelector('.memo').value.trim());
   noPpl.forEach(tr => { const n = guessPeople(num(tr.querySelector('.amt').value), tr.querySelector('.memo').value); tr.querySelector('.ppl').value = n; tr.querySelector('.memo').value = withPeople(tr.querySelector('.memo').value, n); tr.querySelector('.ppl').classList.add('need'); });
-  const empty = [...$$('#r_exp tbody tr')].filter(tr => !tr.querySelector('.memo').value.trim());
+  const empty = [...$$('#r_exp tbody tr')].filter(claimableTr).filter(tr => !tr.querySelector('.memo').value.trim());   // 빠지는 줄은 적요를 안 채워도 됨
   if(noPpl.length && !empty.length){ $('#r_err').textContent = `식대 ${noPpl.length}줄의 인원을 금액으로 짐작해 넣었어요(주황색). 맞는지 보고 다시 눌러 주세요.`; return; }
   if(empty.length){   // 적요(= 거래처비고) 빈 줄은 AI 가 영수증으로 채우고 확인받는다
     $('#btnReport').disabled = true; $('#r_err').textContent = `적요가 빈 ${empty.length}줄을 영수증으로 채우는 중…`;

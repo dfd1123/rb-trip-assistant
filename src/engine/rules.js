@@ -119,7 +119,7 @@ function date(v, key) {
 const asList = v => (v == null || v === '') ? [] : (typeof v === 'string' ? v.split(',') : v).map(s => String(s).trim()).filter(Boolean);
 const shortLabel = item => BUDGET_ITEMS[item][1].split('_').pop();
 
-const PROOF_EXT = /\.(png|jpe?g|gif|webp|heic|heif|bmp|tiff?|pdf)$/i;
+const PROOF_EXT = /\.(png|jpe?g|gif|webp|bmp|tiff?|pdf)$/i;   // HEIC·HEIF(아이폰 사진)는 받지 않음 (사용자 요청 2026-11-10)
 function parseExpenses(rows, where = 'expenses', reason = '') {
   return (rows || []).map((r, i) => {
     const w = `${where}[${i + 1}]`;
@@ -231,9 +231,16 @@ function overseasExpenses({ start, end, name, people = 1, grade, rate, rank = 's
   return { expenses: out, days, nights };
 }
 
+/** 정산에 넣는 경비 = 영수증(증빙)이 붙은 줄. 자차 유류대만 예외 — 네이버 지도 기준 금액이라 영수증이 없다 (사용자 요청 2026-11-10: 자차가 아니면 영수증 없는 줄은 집계 안 함). 화면 합계(app.js claimable)도 같은 규칙 */
+// 유류비 줄 = 앱이 만든 '출장 유류비 …' 줄 (신청 때 넣은 유류비·[유류대 조회]). 통행료·택시 등은 자차여도 영수증이 있어야 함 (사용자 확인 2026-11-10)
+// ponytail: 적요 앞머리로 알아봄 — 사람이 적요를 고치면 영수증 없는 줄로 빠짐(흐린 줄로 보임). 줄에 표시를 따로 달게 되면 그걸로
+const FUEL_MEMO = /^출장 유류비/;
+const claimable = (e, mode) => (e.proofs || []).length > 0 || (mode === 'car' && e.item === 'domestic_transport' && FUEL_MEMO.test(String(e.memo || '').trim()));
+
 function parseReport(data) {
   const where = '보고서';
-  const category = String(data.category || '기타');
+  const category = String(data.category || '');
+  if (!category) throw new InputError('출장구분을 골라 주세요.');   // 기본값 없음, 필수
   if (!REPORT_CATEGORIES.includes(category)) throw new InputError(`출장구분은 ${REPORT_CATEGORIES.join(', ')} 중 하나입니다.`);
   if (category === '정부과제' && !data.project) throw new InputError('정부과제는 과제명이 필수입니다.');
   const reason = String(req(data, 'reason', where)).trim();
@@ -249,11 +256,11 @@ function parseReport(data) {
     transport_mode: String((data.transport && data.transport.mode) || ''),
   };
   if (!out.schedule.length || out.schedule.some(r => !r.detail)) throw new InputError('출장일정의 세부 활동 내용은 날짜마다 필수예요.');
-  // 정산할 경비가 없을 수도 있다(전액 환원). 증빙도 없을 수 있다 — 화면에서 두 번 확인받고 넘어온다. 줄마다 증빙 여러 개 가능(채주 한 줄에 다 붙임), 이미지·PDF만
+  // 정산할 경비가 없을 수도 있다(전액 환원). 증빙 없는 줄도 받되 정산(settleLines)에서는 claimable 로 뺀다. 줄마다 증빙 여러 개 가능(채주 한 줄에 다 붙임), 이미지·PDF만
   (data.expenses || []).forEach((e, i) => {
     const proofs = (e.proofs || []).map(String).filter(Boolean);
     const bad = proofs.find(p => !PROOF_EXT.test(p));
-    if (bad) throw new InputError(`증빙은 이미지나 PDF만 돼요: ${bad.split(/[\\/]/).pop()}`);
+    if (bad) throw new InputError(/\.hei[cf]$/i.test(bad) ? `HEIC 사진은 증빙으로 받지 않아요. JPG·PNG로 바꿔서 넣어 주세요: ${bad.split(/[\\/]/).pop()}` : `증빙은 이미지나 PDF만 돼요: ${bad.split(/[\\/]/).pop()}`);
     out.expenses[i].proofs = proofs;
     out.expenses[i].pay = e.pay === 'card' ? 'card' : 'personal';
     out.expenses[i].noVat = noVatOf({ ...out.expenses[i], noVat: e.noVat });   // 법인카드 면세·불공제 (화면에서 고친 값 우선)
@@ -440,7 +447,6 @@ function reportPrompt(draft) {
 아래 [초안 YAML]의 빈 칸을 [메모]로 채워서 YAML 하나만 출력해. 설명은 쓰지 마.
 - report: '출장시 담당업무 및 보고사항'. 수행 내용, 결과, 이슈, 후속 조치를 업무 문체로 정리.
 - schedule: 날짜별 detail 에 그날 한 일(면담자, 협의사항)을 한두 문장으로.
-- category: ${REPORT_CATEGORIES.join(' | ')}
 - expenses 는 실제 쓴 금액으로 고쳐. 모르면 그대로 둬.
 - 메모에 없는 사실은 지어내지 마.
 
@@ -600,6 +606,7 @@ function parseVisitor(data, { today = new Date() } = {}) {
 }
 
 module.exports = {
+  claimable,
   VISITOR_FORM, VISITOR_RECIPIENTS, VISITOR_AREAS, VISITOR_SHOOTS, VISITOR_LINES, visitorTitle, visitorUrgent, parseVisitor,
   NO_VAT, RECEIPT_KINDS, NO_VAT_KINDS, placeTokens, AMBIGUOUS_PLACES,
   APPLY_FORM, REPORT_FORM, PURCHASE_FORM, parseTripPeriod, PURCHASE_PURPOSES, PURCHASE_PROJECTS, PURCHASE_RECIPIENTS, PROJECT_DETAIL_REQUIRED, purchaseTitle, parsePurchase, BUDGET_ITEMS, TRANSPORT_MODES, CORPORATE_CARS, APPLY_CATEGORIES, REPORT_CATEGORIES,

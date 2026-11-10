@@ -115,7 +115,7 @@ app.whenReady().then(async () => {
     assert.equal(draft.schedule.length, 3);
     assert.equal(draft.expenses[0].item, 'domestic_transport');
     draft.report = 'SDK 래핑 완료\n실기 검증 3건 통과';
-    draft.fund = '일반경비';
+    draft.fund = '일반경비'; draft.category = '로봇';   // 출장구분은 기본값 없음
     draft.schedule[0].detail = '로봇 셋업'; draft.schedule[1].detail = '실기 검증'; draft.schedule[2].detail = '결과 공유';
     draft.expenses[1].amount = 150000;            // 실제 숙박비
     draft.attachments = [];

@@ -53,13 +53,15 @@ test('AI 답변에서 YAML 꺼내기 (날짜는 문자열로)', () => {
 });
 
 test('보고서: 정부과제는 과제명 필수', () => {
-  const base = { reason: 'r', name: 'n', fund: '일반경비', period: 'p', destination: 'd', purpose: 'p', report: 'r', schedule: [{ date: '10/20', place: 'x', detail: '점검' }], expenses: [{ item: 'meal', amount: 1000, proofs: ['/tmp/영수증.jpg'] }] };
+  const base = { reason: 'r', name: 'n', fund: '일반경비', category: '로봇', period: 'p', destination: 'd', purpose: 'p', report: 'r', schedule: [{ date: '10/20', place: 'x', detail: '점검' }], expenses: [{ item: 'meal', amount: 1000, proofs: ['/tmp/영수증.jpg'] }] };
   assert.throws(() => R.parseReport({ ...base, category: '정부과제' }), /과제명/);
   assert.equal(R.parseReport({ ...base, category: '로봇' }).category, '로봇');
   assert.throws(() => R.parseReport({ ...base, schedule: [{ date: '10/20', place: 'x', detail: '' }] }), /세부 활동/);   // 세부 활동 내용 필수
+  assert.throws(() => R.parseReport({ ...base, category: '' }), /출장구분/);   // 기본값 없음, 필수 (사용자 요청 2026-11-10)
   assert.equal(R.parseReport({ ...base, expenses: [] }).expenses.length, 0);                                            // 정산할 경비가 없어도 됨 (전액 환원)
   assert.equal(R.parseReport({ ...base, expenses: [{ item: 'meal', amount: 1000 }] }).expenses[0].proofs.length, 0);   // 증빙 없이도 됨 (화면에서 두 번 확인)
   assert.throws(() => R.parseReport({ ...base, expenses: [{ item: 'meal', amount: 1000, proofs: ['/tmp/a.docx'] }] }), /이미지나 PDF/);
+  assert.throws(() => R.parseReport({ ...base, expenses: [{ item: 'meal', amount: 1000, proofs: ['/tmp/IMG_5971.HEIC'] }] }), /HEIC/);   // HEIC 는 받지 않음 (사용자 요청 2026-11-10)
   assert.deepEqual(R.parseReport({ ...base, category: '로봇' }).attachments, ['/tmp/영수증.jpg']);                    // 증빙은 보고서 첨부로
 });
 
@@ -647,7 +649,7 @@ test('출장지 검색 순서: 지역 붙인 이름("부산 벡스코")에 식�
 });
 
 test('보고서 경비의 식대 인원은 엔진까지 넘어가야 함 — 빠지면 보낼 때 3인 식대를 1인 한도로 깎음 (자가 테스트 2026-10-22)', () => {
-  const base = { trip_id: 't', reason: 'r', name: 'n', destination: 'd', fund: '일반경비', period: '2026.10.19 - 2026.10.20', purpose: 'p', report: 'x', schedule: [{ date: '10/19', place: 'a', detail: 'b' }] };
+  const base = { trip_id: 't', reason: 'r', name: 'n', destination: 'd', fund: '일반경비', category: '로봇', period: '2026.10.19 - 2026.10.20', purpose: 'p', report: 'x', schedule: [{ date: '10/19', place: 'a', detail: 'b' }] };
   const rep = R.parseReport({ ...base, expenses: [{ item: 'meal', amount: 42000, memo: '10/19 3인 석식', meal: '석식', people: 3, pay: 'personal' }] });
   assert.equal(rep.expenses[0].people, 3);
   assert.equal(R.capMealRows(rep.expenses, { breakfast: 8000, lunch: 15000, dinner: 15000 })[0].amount, 42000);
@@ -656,7 +658,7 @@ test('보고서 경비의 식대 인원은 엔진까지 넘어가야 함 — 빠
 
 test('정산 줄 날짜: 직접 쓴 줄의 "1/1" 은 해를 넘긴 출장(12/30~1/2)이면 다음 해 (자가 테스트 2026-10-22)', () => {
   const runner = require('../src/engine/runner');
-  const rep = { period: '2026.12.30 09:00 - 2027.01.02 18:00', expenses: [{ item: 'meal', label: '여비교통비(판)_식대', amount: 15000, memo: '12/31 1인 석식', pay: 'personal' }, { item: 'meal', label: '여비교통비(판)_식대', amount: 8000, memo: '1/1 1인 조식', pay: 'personal' }] };
+  const rep = { period: '2026.12.30 09:00 - 2027.01.02 18:00', expenses: [{ item: 'meal', label: '여비교통비(판)_식대', amount: 15000, memo: '12/31 1인 석식', pay: 'personal', proofs: ['/tmp/r.jpg'] }, { item: 'meal', label: '여비교통비(판)_식대', amount: 8000, memo: '1/1 1인 조식', pay: 'personal', proofs: ['/tmp/r.jpg'] }] };
   assert.deepEqual(runner.settleLines(rep, { rates: { breakfast: 8000, lunch: 15000, dinner: 15000 } }).map(l => l.date), ['2026-12-31', '2027-01-01']);
 });
 
@@ -681,15 +683,15 @@ test('AI 결과 병합: AI 가 비워 둔 칸은 규칙으로 읽은 값을 지�
 
 test('법인차량 출장의 주유·통행료는 차량유지비(판) 예산 줄로, 택시는 국내교통비 그대로 — 영수증 종류(AI)로 판단 (최병관 2026-10-28)', () => {
   const { settleLines } = require('../src/engine/runner');
-  const rep = R.parseReport({ reason: 'x', name: '홍길동', period: '2026.10.22 - 2026.10.22', destination: 'd', purpose: 'p', report: 'r', fund: '일반경비',
+  const rep = R.parseReport({ reason: 'x', name: '홍길동', period: '2026.10.22 - 2026.10.22', destination: 'd', purpose: 'p', report: 'r', fund: '일반경비', category: '로봇',
     schedule: [{ date: '10/22', place: 'd', detail: 'a' }], transport: { mode: 'corporate' },
-    expenses: [{ item: 'domestic_transport', kind: '주유', amount: 50000, memo: '10/22 셀프주유소' }, { item: 'domestic_transport', kind: '택시', amount: 12000, memo: '10/22 서울역→판교' }] });
+    expenses: [{ item: 'domestic_transport', kind: '주유', amount: 50000, memo: '10/22 셀프주유소', proofs: ['/tmp/r.jpg'] }, { item: 'domestic_transport', kind: '택시', amount: 12000, memo: '10/22 서울역→판교', proofs: ['/tmp/r.jpg'] }] });
   const lines = settleLines(rep, {});
   assert.equal(lines.find(l => l.amount === 50000).label, '차량유지비(판)');
   assert.equal(lines.find(l => l.amount === 12000).label, '여비교통비(판)_국내교통비');
   const { plan, left } = R.planPayees([{ 예산과목: '여비교통비(판)_식대', 품의금액: '30,000' }, { 예산과목: '차량유지비(판)', 품의금액: '150,000' }], lines);
   assert.equal(plan[1].lines[0].amount, 50000); assert.deepEqual(left.map(l => l.amount), [12000]);
-  const car = R.parseReport({ ...rep, name: '홍길동', fund: '일반경비', transport: { mode: 'car' }, expenses: [{ item: 'domestic_transport', kind: '주유', amount: 50000, memo: '10/22 주유' }] });
+  const car = R.parseReport({ ...rep, name: '홍길동', fund: '일반경비', transport: { mode: 'car' }, expenses: [{ item: 'domestic_transport', kind: '주유', amount: 50000, memo: '10/22 주유', proofs: ['/tmp/r.jpg'] }] });
   assert.equal(settleLines(car, {})[0].label, '여비교통비(판)_국내교통비');   // 자차는 그대로
 });
 
@@ -746,8 +748,8 @@ test('정산 자가 테스트 2026-10-28: 미지출액 0·면세 오판·식대 
   assert.equal(R.vehicleItem({ item: 'domestic_transport', memo: '10/22 주유' }, 'corporate').item, 'domestic_transport');
   // 법인카드 자금계획일 = 그 영수증을 쓴 달의 다음 달 23일 (월을 넘긴 출장)
   const { settleLines, reportDraft } = require('../src/engine/runner');
-  const rep = R.parseReport({ reason: 'x', name: '홍길동', period: '2026.10.30 - 2026.11.02', destination: 'd', purpose: 'p', report: 'r', fund: '일반경비', schedule: [{ date: '10/30', place: 'd', detail: 'a' }],
-    expenses: [{ item: 'meal', amount: 15000, memo: '11/01 1인 중식', date: '2026-11-01', pay: 'card' }, { item: 'meal', amount: 15000, memo: '10/30 1인 중식', date: '2026-10-30', pay: 'card' }] });
+  const rep = R.parseReport({ reason: 'x', name: '홍길동', period: '2026.10.30 - 2026.11.02', destination: 'd', purpose: 'p', report: 'r', fund: '일반경비', category: '로봇', schedule: [{ date: '10/30', place: 'd', detail: 'a' }],
+    expenses: [{ item: 'meal', amount: 15000, memo: '11/01 1인 중식', date: '2026-11-01', pay: 'card', proofs: ['/tmp/r.jpg'] }, { item: 'meal', amount: 15000, memo: '10/30 1인 중식', date: '2026-10-30', pay: 'card', proofs: ['/tmp/r.jpg'] }] });
   assert.deepEqual(settleLines(rep, {}).map(l => l.planDate), ['2026-11-23', '2026-12-23']);
 });
 
@@ -817,8 +819,8 @@ test('정산 자가 테스트 2026-10-28 (2): 같은 날짜 예산 줄 둘이면
     [{ label: T, amount: 38000, memo: '10/19 1인 조식·중식·석식', date: '2026-10-19', supply: 38000, pay: 'personal' }]);
   assert.deepEqual(p.plan.map(x => x.lines.map(l => l.amount)), [[8000], [30000]]);
   const { settleLines } = require('../src/engine/runner');
-  const rep = R.parseReport({ reason: 'x', name: 'a', period: '2026.10.30 - 2026.11.02', destination: 'd', purpose: 'p', report: 'r', fund: '일반경비', schedule: [{ date: '10/30', place: 'd', detail: 'a' }],
-    expenses: [{ item: 'domestic_transport', amount: 50000, memo: '9/28 KTX 예매', pay: 'card' }, { item: 'meal', amount: 8000, memo: '10/32 1인 조식', pay: 'card' }] });
+  const rep = R.parseReport({ reason: 'x', name: 'a', period: '2026.10.30 - 2026.11.02', destination: 'd', purpose: 'p', report: 'r', fund: '일반경비', category: '로봇', schedule: [{ date: '10/30', place: 'd', detail: 'a' }],
+    expenses: [{ item: 'domestic_transport', amount: 50000, memo: '9/28 KTX 예매', pay: 'card', proofs: ['/tmp/r.jpg'] }, { item: 'meal', amount: 8000, memo: '10/32 1인 조식', pay: 'card', proofs: ['/tmp/r.jpg'] }] });
   const ls = settleLines(rep, {});
   assert.equal(ls.find(l => l.amount === 50000).date, '2026-09-28'); assert.equal(ls.find(l => l.amount === 50000).planDate, '2026-10-23');
   assert.equal(ls.find(l => l.amount === 8000).date, '');   // 오타 날짜는 날짜 없음 → 자금계획일은 출장 시작 기준
@@ -969,4 +971,14 @@ test('파서 리뷰 (2026-11-10): parseTripPeriod 붙은 하이픈·해 뒤로, 
   assert.deepEqual(p2.map(r => [r.lines.length, r.dropped]), [[2, 0]]);
   const p3 = R.planPayees([{ 예산과목: M, 예산과목비고: '10/19 식대', 품의금액: '15,000', 미지출액: '15,000' }, { 예산과목: M, 예산과목비고: '10/21 식대', 품의금액: '15,000', 미지출액: '15,000' }], lines.slice(2)).plan;
   assert.deepEqual(p3.map(r => r.lines.map(l => l.memo)), [['10/19 1인 중식'], ['10/21 1인 중식']]);   // 날짜 한 개짜리 비고는 예전 그대로
+});
+
+test('영수증 없는 경비는 정산에서 빠짐 — 자차 유류대만 예외 (사용자 요청 2026-11-10)', () => {
+  const { settleLines } = require('../src/engine/runner');
+  const base = { reason: 'x', name: 'a', period: '2026.10.20 - 2026.10.20', destination: 'd', purpose: 'p', report: 'r', fund: '일반경비', category: '로봇', schedule: [{ date: '10/20', place: 'd', detail: 'a' }] };
+  const exp = [{ item: 'domestic_transport', amount: 30000, memo: '출장 유류비 (왕복, 연비 8km/L 네이버 지도 기준)' }, { item: 'domestic_transport', amount: 7000, memo: '10/20 통행료' }, { item: 'meal', amount: 9000, memo: '10/20 1인 중식', proofs: ['/tmp/a.jpg'] }, { item: 'domestic_lodging', amount: 0, memo: '10/20 숙박', proofs: ['/tmp/b.jpg'] }];
+  assert.deepEqual(settleLines(R.parseReport({ ...base, transport: { mode: 'transit' }, expenses: exp }), {}).map(l => l.amount), [9000, 0]);   // 대중교통: 영수증 없는 교통비 빠짐, 0원 영수증 줄은 남음
+  assert.deepEqual(settleLines(R.parseReport({ ...base, transport: { mode: 'car' }, expenses: exp }), {}).map(l => l.amount).sort(), [0, 30000, 9000].sort());   // 자차 유류비 줄은 영수증 없어도 들어감, 영수증 없는 통행료는 빠짐
+  assert.deepEqual(settleLines(R.parseReport({ ...base, transport: { mode: 'car' }, expenses: [{ item: 'meal', amount: 9000, memo: '10/20 1인 중식' }] }), {}), []);   // 자차라도 식대는 영수증 필요
+  assert.deepEqual(settleLines(R.parseReport({ ...base, expenses: exp }), {}).map(l => l.amount), [9000, 0]);   // 교통편 모름도 자차 아님
 });

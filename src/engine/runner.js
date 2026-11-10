@@ -157,7 +157,7 @@ function reportDraft(store, cfg, id) {
   for (let d = new Date(a.start + 'T00:00:00'); d <= new Date(a.end + 'T00:00:00'); d.setDate(d.getDate() + 1))
     days.push(`${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`);
   return {
-    trip_id: id, reason: a.reason, name: cfg.name, companions: a.companions, category: '로봇',
+    trip_id: id, reason: a.reason, name: cfg.name, companions: a.companions,   // 출장구분(category)은 넣지 않음 — 사람이 고름 (기본값 로봇을 모르고 올렸음, 사용자 요청 2026-11-10)
     project: a.project || '', destination: a.destination, visit_org: a.destination.replace(/\s*\([^)]*\)\s*$/, ''),   // 방문기관 = 출장지에서 (주소) 뺀 이름
     period: `${a.start.replace(/-/g, '.')}${a.start_time ? ' ' + a.start_time : ''} - ${a.end.replace(/-/g, '.')}${a.end_time ? ' ' + a.end_time : ''}`,
     purpose: a.purpose, report: '',
@@ -182,7 +182,9 @@ function settleLines(rep, cfg, log = () => {}) {
   const startM = Number(usedOn.slice(5, 7)) || 0;
   const endY = Number(([...String(rep.period).matchAll(/(\d{4})[.-]\d{2}[.-]\d{2}/g)].pop() || [])[1]) || +year;   // 기간 끝 날짜의 해
   const endM = Number(([...String(rep.period).matchAll(/\d{4}[.-](\d{2})[.-]\d{2}/g)].pop() || [])[1]) || 12;   // 기간 끝 달 (해를 넘긴 출장에서 1월 영수증만 다음 해 — 12/30~1/2 출장의 '11/20 예매' 는 그해)
-  const dated = rep.expenses.map(e => R.vehicleItem(e, rep.transport_mode)).map(e => { if (e.date) return e; const m = /^(\d{1,2})\/(\d{1,2})\b/.exec(e.memo || ''); const y = m && startM && +m[1] < startM && endY > +year && +m[1] <= endM ? +year + 1 : year;   // 12/30~1/2 출장의 '1/1' 은 다음 해 (해를 넘긴 출장일 때만 — 10월 출장의 '9/28' 예매 영수증은 그해)
+  const noProof = rep.expenses.filter(e => !R.claimable(e, rep.transport_mode));
+  noProof.forEach(e => log(`${e.memo || e.item} ${Number(e.amount).toLocaleString('ko-KR')}원: 영수증이 없어 정산에서 뺌`));
+  const dated = rep.expenses.filter(e => R.claimable(e, rep.transport_mode)).map(e => R.vehicleItem(e, rep.transport_mode)).map(e => { if (e.date) return e; const m = /^(\d{1,2})\/(\d{1,2})\b/.exec(e.memo || ''); const y = m && startM && +m[1] < startM && endY > +year && +m[1] <= endM ? +year + 1 : year;   // 12/30~1/2 출장의 '1/1' 은 다음 해 (해를 넘긴 출장일 때만 — 10월 출장의 '9/28' 예매 영수증은 그해)
     const d = m ? `${y}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}` : '';
     return { ...e, date: d && !isNaN(Date.parse(`${d}T00:00:00`)) && new Date(`${d}T00:00:00`).getDate() === +m[2] ? d : '' }; });   // '10/32' 같은 오타는 날짜 없음으로   // 날짜는 AI 가 읽은 필드 우선, 없으면(직접 쓴 줄) 적요 앞 M/D
   const capped = R.capMealRows(dated, cfg.rates);
