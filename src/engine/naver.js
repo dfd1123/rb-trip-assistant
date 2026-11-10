@@ -49,7 +49,7 @@ async function trySearch(p, origin, dest, out = {}, { ui, debugDir, only = [0, 1
       // 출발지는 첫 항목. 도착지는 이름이 딱 맞는 것 → 하나뿐이면 그것 → 여럿이면 사람이 고름 (예: 삼성전자 구미 1사업장 / 2사업장)
       let pick = k === 0 ? hits[0] : hits.find(h => norm(h.place.name) === norm(value)) || (hits.length === 1 ? hits[0] : null);
       if (!pick) {
-        const idx = ui && ui.askChoice ? await ui.askChoice(`'${value}' 검색 결과가 여러 곳이에요. 어디로 가나요?`, hits.map(h => `${h.place.name}${h.place.address ? ` — ${h.place.address}` : ''}`)) : 0;
+        const idx = ui && ui.askChoice ? await ui.askChoice(whichPlace(value), hits.map(h => `${h.place.name}${h.place.address ? ` — ${h.place.address}` : ''}`)) : 0;
         if (idx === '' || idx == null || !hits[Number(idx)]) return false;   // 다른 이름으로 다시 찾기
         const chosen = hits[Number(idx)].place;
         // 고르는 동안 자동완성이 닫히거나 바뀌었을 수 있으니, 고른 이름을 다시 쳐서 같은 항목을 찾는다
@@ -147,6 +147,8 @@ async function transitDetailFare(p, { debugDir }) {
  */
 /** 도착지 좌표 정하기: 넘어온 좌표 → 네이버 지역 검색 (이름이 딱 맞는 곳 → 하나뿐이면 그것 → 여럿이면 사람이 고름).
  *  null = 검색 결과 없음(번지 주소·미등록 회사 → 지도 창에서 글자로), undefined = 사람이 '다른 이름으로' 를 고름 */
+// 질문 창이 갑자기 뜨면 뭘 묻는지 알 수 없었음 → 무슨 일 때문에, 왜 묻는지 같이 적는다 (사용자 요청 2026-11-10)
+const whichPlace = name => `교통비를 계산하려고 네이버 지도에서 출장지까지 가는 길을 찾고 있어요.\n'${name}' 이름으로 여러 곳이 나와서, 어느 곳인지 골라 주세요. 고른 곳까지의 길로 계산해요.`;
 async function resolveDest(dest, destPlace, { places, ui, log }) {
   if (destPlace && Number(destPlace.lng) && Number(destPlace.lat)) return destPlace;
   if (!places) return null;
@@ -156,12 +158,12 @@ async function resolveDest(dest, destPlace, { places, ui, log }) {
   const exact = list.find(x => norm(x.name) === norm(dest));
   if (exact) return exact;
   if (list.length === 1 || !ui.askChoice) return list[0];
-  const idx = await ui.askChoice(`'${dest}' 검색 결과가 여러 곳이에요. 어디로 가나요?`, list.map(x => `${x.name}${x.address ? ` — ${x.address}` : ''}`));
+  const idx = await ui.askChoice(whichPlace(dest), list.map(x => `${x.name}${x.address ? ` — ${x.address}` : ''}`));
   if (idx === '' || idx == null || !list[Number(idx)]) return undefined;
   return list[Number(idx)];
 }
 
-async function lookupFare({ makeWindow, mode, origin, dest, shotPath, ui, log, debugDir, car, destPlace = null, places = null }) {   // dest 는 사람이 고쳐 주면 바뀜 → 결과 query 로 돌려줌
+async function lookupFare({ makeWindow, mode, origin, dest, shotPath, ui, log, debugDir, car, destPlace = null, places = null, fuelOnly = false }) {   // dest 는 사람이 고쳐 주면 바뀜 → 결과 query 로 돌려줌
   const win = makeWindow();
   const p = new Page(win);
   const goto = async url => { try { await p.goto(url); await sleep(2500); return true; } catch (e) { log(`네이버 지도를 열 수 없어요 (${e.message.split(' loading')[0]}).`); return false; } };
@@ -215,9 +217,12 @@ async function lookupFare({ makeWindow, mode, origin, dest, shotPath, ui, log, d
 
     if (mode === 'car') {
       let v = found ? parseCarText(text) : null;
-      if (v && !(await ui.confirm(`읽은 값: 연료비 ${v.fuel.toLocaleString('ko-KR')}원, 통행료 ${v.toll.toLocaleString('ko-KR')}원 (편도, ${basis} 기준). 맞나요?`))) v = null;
+      // 보고서 유류대(fuelOnly): 읽은 값이 맞는지 묻지 않고 그대로 넣는다 — 유류비 한 줄만 넣는 조회이고 지도 캡처가 증빙으로 같이 붙음 (사용자 요청 2026-11-10).
+      // 못 읽었을 때만 연료비 하나를 묻는다 (통행료는 보고서에 안 들어가니 안 물음)
+      if (v && fuelOnly) log(`읽은 값: 연료비 ${v.fuel.toLocaleString('ko-KR')}원 (편도, ${basis} 기준)`);
+      else if (v && !(await ui.confirm(`읽은 값: 연료비 ${v.fuel.toLocaleString('ko-KR')}원, 통행료 ${v.toll.toLocaleString('ko-KR')}원 (편도, ${basis} 기준). 맞나요?`))) v = null;
       const source = v ? 'naver' : 'manual';
-      if (!v) v = { fuel: await ui.askInt(manualHint + '연료비(편도, 원)를 입력해 주세요'), toll: await ui.askInt('통행료(편도, 원, 없으면 0)') };
+      if (!v) v = { fuel: await ui.askInt(manualHint + '연료비(편도, 원)를 입력해 주세요'), toll: fuelOnly ? 0 : await ui.askInt('통행료(편도, 원, 없으면 0)') };
       const oneWay = v.fuel + v.toll;
       return { mode, oneWay, ...v, total: roundTrip(oneWay), source, screenshot: shot, place: where.geo || where.place || null, query: dest, basis,
         describe: `(연료비 ${v.fuel.toLocaleString('ko-KR')} + 통행료 ${v.toll.toLocaleString('ko-KR')}) × 2 = ${roundTrip(oneWay).toLocaleString('ko-KR')}원${basis ? ` (${basis})` : ''}` };

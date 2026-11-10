@@ -21,7 +21,7 @@ function planApply(data, cfg) {
 
 /** 최근 조회값(30일): 자차는 지금 설정한 내 차 기준(차종·연료)으로 조회한 것만 — [자동 작성]도 같은 기준 */
 const cachedFare = (store, cfg, mode, from, to) => { const c = store.getFare(mode, from, to); return c && (mode !== 'car' || c.basis === carBasis({ type: cfg.carType, fuel: cfg.carFuel })) ? c : null; };
-async function runFare(env, { mode, to, from, place = null }) {
+async function runFare(env, { mode, to, from, place = null, fuelOnly = false }) {
   const { cfg, store, ui, log } = env;
   if (mode !== 'car' && mode !== 'transit') return { total: 0, describe: '법인차량은 교통비를 자동 계산하지 않습니다.' };
   if (!to) throw new R.InputError('도착지를 입력해 주세요.');
@@ -31,7 +31,7 @@ async function runFare(env, { mode, to, from, place = null }) {
   if (cached && !env.force) { log(`교통비(최근 조회값): ${cached.describe}`); return { ...cached, source: 'cache' }; }   // 자차는 연비 8km/L 로 조회한 값만
   const shot = path.join(store.tripsDir, '_fare', `교통비_${mode}_${Date.now()}.png`);
   const r = await lookupFare({ makeWindow: env.makeNaverWindow, mode, origin, dest: to, shotPath: shot, ui, log, debugDir: env.debugDir, creds: env.creds, car: { type: cfg.carType, fuel: cfg.carFuel },
-    destPlace: place, places: env.naverKeys ? q => searchPlaces(q, { keys: env.naverKeys, fetch: env.fetch }) : null });
+    destPlace: place, fuelOnly: Boolean(fuelOnly) && mode === 'car', places: env.naverKeys ? q => searchPlaces(q, { keys: env.naverKeys, fetch: env.fetch }) : null });
   if (r.source !== 'manual') store.putFare(mode, origin, to, r);   // 사람이 직접 넣은 값은 다음 출장에 '최근 조회값'(증빙)으로 쓰지 않는다
   log(`교통비: ${r.describe}`);
   return r;

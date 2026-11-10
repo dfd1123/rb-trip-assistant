@@ -793,7 +793,7 @@ function lookupFuel(){
   const t = reportTransport || {}, dest = $('#r_destination').value.trim(), addr = (/\(([^)]*)\)\s*$/.exec(dest) || [])[1];
   const to = t.to || (addr && /\d/.test(addr) ? addr : dest);
   if(!to) return alertErr('출장지를 먼저 적어 주세요. 그 이름으로 네이버 지도에서 찾아요.');
-  runJob('유류대 조회 (네이버 지도)', '/api/job/fare', {mode: 'car', to, from: t.from, place: t.place || null, force: true}, r => {
+  runJob('유류대 조회 (네이버 지도)', '/api/job/fare', {mode: 'car', to, from: t.from, place: t.place || null, force: true, fuelOnly: true}, r => {   // fuelOnly: 읽은 값을 묻지 않고 유류비만 바로 넣음
     if(!r || !r.total) return;
     const tb = $('#r_exp tbody');
     const proofName = tr => (JSON.parse(tr.dataset.proofs || '[]')[0] || '').split(/[\\/]/).pop();
@@ -1499,7 +1499,7 @@ function watchJob(title, onDone, {quiet = false, onEnd = null, id = 0} = {}){   
     $('#dimWhat').textContent = what; $('.wani .pen').textContent = /삭제/.test(what) ? '🧹' : /조회|확인/.test(what) ? '🔍' : '✍️';
     const textQ = q && (q.type === 'text' || q.type === 'choice');
     $('#jobAsk').style.display = q && !textQ ? 'block' : 'none';
-    if(textQ && !$('#askModal').classList.contains('on')) openAsk(q);
+    if(textQ && !$('#askModal').classList.contains('on')) openAsk(q, s);
     if(!textQ) $('#askModal').classList.remove('on');
     $('#jobSpin').classList.toggle('on', !q && s.state === 'running');   // 사람 입력 기다릴 땐 멈춤
     if(!quiet || dimQuiet) $('#dim').classList.toggle('on', !q && s.state === 'running');   // 사람 입력 기다릴 땐 딤 해제 (화면 손봐야 하니)
@@ -1526,9 +1526,10 @@ $('#jobYes').onclick = () => {
   answer(true);
 };
 $('#jobNo').onclick = () => answer(false);
-function openAsk(q){
-  const choice = q.type === 'choice';
-  $('#askTitle').textContent = choice ? '📍 어디로 가나요?' : '📍 출장지를 다시 알려 주세요';
+function openAsk(q, job){
+  const choice = q.type === 'choice', fare = !job || job.kind === 'fare';
+  // 제목에 어떤 작업이 묻는지 같이 (갑자기 떠서 왜 묻는지 몰랐음). 거래처 고르기처럼 지도가 아닌 질문엔 '어디로 가나요?' 를 쓰지 않음
+  $('#askTitle').textContent = (fare ? '📍 ' : '') + (job && job.title ? `${job.title} — ` : '') + (!fare ? '골라 주세요' : choice ? '어디로 가나요?' : '출장지를 다시 알려 주세요');
   $('#askQ').textContent = q.text; $('#askInput').classList.toggle('hidden', choice); $('#askChoices').classList.toggle('hidden', !choice); $('#askGo').classList.toggle('hidden', choice);
   $('#askSkip').textContent = choice ? '다른 이름으로 다시 찾기' : '금액 직접 입력';
   if(choice){ $('#askChoices').innerHTML = ''; (q.def || []).forEach((label, i) => { const b = document.createElement('button'); b.type = 'button'; const [name, addr] = String(label).split(' — '); b.textContent = name; if(addr){ const sm = document.createElement('small'); sm.textContent = addr; b.appendChild(sm); } b.onclick = () => askDone(i); $('#askChoices').appendChild(b); }); }
