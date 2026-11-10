@@ -1386,7 +1386,7 @@ function loadVisitorList(){
       const doc = document.createElement('button'); doc.className = 'btn small'; doc.textContent = '🖨 신청서'; doc.title = '그룹웨어 문서 창을 열어 [인쇄 › 결재문서]를 눌러요 — 결재란까지 그룹웨어 인쇄 그대로';
       doc.onclick = async () => { doc.disabled = true; try { const r = await rpc('/api/visitor/print-doc', { docId: x.docId, formId: x.formId }); if(!r.clicked) alertErr('그룹웨어 문서 창을 열었어요. 창 위의 [인쇄 › 결재문서]를 눌러 주세요.'); } catch(e){ alertErr(e.message); } finally { doc.disabled = false; } };
       el.querySelector('.inline').appendChild(doc);
-      if(DONE.test(x.status) && x.pledge){   // 유형 B·C 결재 완료: 방문증 받을 때 낼 서약서
+      if(DONE.test(x.status) && x.pledge){   // 유형 B·C 결재 완료: 방문객 각자 서명받아 출입증 반납할 때 낼 서약서
         const n = x.count || 1, b = document.createElement('button'); b.className = 'btn small'; b.textContent = '🖨 보안서약서'; b.title = '인쇄 창을 띄워요 — 파일로 받으려면 인쇄 창에서 PDF로 저장';
         b.onclick = async () => { try { await rpc('/api/visitor/pledge', { copies: n }); } catch(e){ alertErr(e.message); } };
         el.querySelector('.inline').appendChild(b);
@@ -1459,7 +1459,7 @@ async function vsSend(){
     <dl class="cf-grid"><dt>유형</dt><dd>${escH(d.type)}</dd><dt>방문자</dt><dd>${escH([d.org, d.name, d.position].filter(Boolean).join(' '))} · ${escH(d.count)}명</dd><dt>일정</dt><dd>${escH([d.date, d.date_end].filter(Boolean).join(' ~ '))} ${escH(d.time)}</dd><dt>목적</dt><dd>${escH(d.purpose)}</dd>${d.areas.length ? `<dt>구역</dt><dd>${escH(d.areas.map(a => a.area + (a.detail ? ` (${a.detail})` : '')).join(', '))}</dd>` : ''}${d.shoot.length ? `<dt>촬영/녹음</dt><dd>${escH(d.shoot.join(', '))}</dd>` : ''}${d.urgent_reason ? `<dt>긴급 사유</dt><dd>${escH(d.urgent_reason)}</dd>` : ''}</dl>`;
   const steps = (META.visitor.lines || {})[d.type] || [];
   const lineBox = `<div class="cf-line"><h4>⚠️ 결재선은 직접 지정해요 — 유형 ${escH(d.type)}</h4><div class="flow">${steps.map(escH).map(x => `<b>${x}</b>`).join('<span>→</span>')}</div>
-    <p>작성 창이 뜨면 이 순서로 결재선을 지정한 뒤 [상신]을 눌러 주세요.${d.type === 'C' ? ' <b>방문 사무실 사업부서장</b>을 꼭 추가해요.' : ''}${d.type !== 'A' ? ` 결재가 끝나면 '신청한 방문'에서 신청서와 보안 준수 서약서(${escH(d.count)}부)를 인쇄해 경영지원부에 내요.` : ''}</p></div>`;
+    <p>작성 창이 뜨면 이 순서로 결재선을 지정한 뒤 [상신]을 눌러 주세요.${d.type === 'C' ? ' <b>방문 사무실 사업부서장</b>을 꼭 추가해요.' : ''}${d.type !== 'A' ? ` 결재가 끝나면 '신청한 방문'에서 신청서와 보안 준수 서약서(${escH(d.count)}부)를 인쇄해요. 신청서는 경영지원부에 내고, 서약서는 방문객 각자에게 서명을 받아 출입증을 반납할 때 내요.` : ''}</p></div>`;
   if(!(await confirmSubmit({ title: '이대로 그룹웨어에 입력할까요?', html: lineBox + html, note: '본문·수신및참조(경영지원부)까지 채워요. 결재선 지정과 [상신]은 직접.' }))) return;
   runJob('방문객 신청서 입력', '/api/job/visitor', {data: d}, () => { $('#btnNewVisitor').click(); try { localStorage.removeItem('vs_draft'); } catch(e){ /* */ } $('#vs_status').textContent = '그룹웨어 작성 창에 채웠어요. 결재선을 지정하고 [상신]을 눌러 주세요.'; });   // 보낸 내용은 비움 (남아 있으면 다음에 같은 방문이 또 신청됨)
 }

@@ -64,7 +64,7 @@ async function runVisitor(env, data) {
   await gw.fillAndKeep(popup, { title: v.title, probe: '방문자 성명', payload: visitorPayload(v), save: false,
     beforeShow: () => gw.addRecipients(popup, R.VISITOR_RECIPIENTS) });
   const steps = R.VISITOR_LINES[v.type];
-  const after = v.type === 'A' ? [] : [`결재 완료되면 앱의 '신청한 방문'에서 신청서와 보안 준수 서약서(${v.count}부)를 인쇄해 경영지원부에 내고 방문증을 받아요.`];
+  const after = v.type === 'A' ? [] : [`결재 완료되면 앱의 '신청한 방문'에서 신청서와 보안 준수 서약서(${v.count}부)를 인쇄해요. 신청서는 경영지원부에 내고 방문증을 받고, 서약서는 방문객 각자에게 서명을 받아 출입증을 반납할 때 내요.`];
   await gw.showNote(popup, { title: `유형 ${v.type} 결재선 — 직접 지정하고 [상신]`, steps,
     lines: [v.type === 'C' ? '방문 사무실 사업부서장을 꼭 추가해요.' : '', '앱은 결재선을 넣지 않아요.', ...after].filter(Boolean) }).catch(e => log(`(결재선 안내 못 띄움: ${e.message})`));
   log(`결재선: ${steps.join(' → ')} (최종). 작성 창에서 직접 지정하고 [상신]을 눌러 주세요.`);
