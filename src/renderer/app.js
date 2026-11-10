@@ -628,11 +628,11 @@ async function loadTrips(){
     if(applyRejected || reportRejected || rdocRejected) el.classList.add('rejected');
     el.innerHTML = `<div><b></b>${gwPill('신청', links[0])}${rdoc ? pill('보고', rdoc.status || '', `${rdoc.status || ''} · ${rdoc.docNo}`) : isSettled ? '<span class="pill ok">정산 전송됨</span>' : t && t.gwReport ? gwPill('보고', t.gwReport) : ''}
       <div class="sub" style="margin:2px 0 0"></div>${applyRejected ? '<div class="err" style="margin-top:4px">신청이 반려됐어요. 반려 사유를 그룹웨어에서 확인하고 [다시 신청]으로 고쳐 올리세요. 반려된 품의는 [삭제]로 지울 수 있어요.</div>' : (reportRejected || rdocRejected) ? '<div class="err" style="margin-top:4px">보고서가 반려됐어요. 반려 사유를 확인하고 고쳐서 다시 올리세요.</div>' : ''}</div>
-      <div class="inline"><button class="btn small danger del">삭제</button>${t ? `<button class="btn again ${applyRejected ? 'primary' : ''}">다시 신청</button>` : ''}${approved && !reportDone && (!rdoc || rdocRejected) ? `<button class="btn primary rep">${repLabel}</button>` : ''}</div>`;
+      <div class="inline"><button class="btn small danger del">삭제</button>${t && applyRejected ? '<button class="btn again primary">다시 신청</button>' : ''}${approved && !reportDone && (!rdoc || rdocRejected) ? `<button class="btn primary rep">${repLabel}</button>` : ''}</div>`;
     el.querySelector('b').textContent = (r.docTitle || r.memo || '').replace(/^\[[^\]]*\]\s*/, '');
     const md = d => d ? `${Number(d.slice(5, 7))}월 ${Number(d.slice(8, 10))}일` : '';
     el.querySelector('.sub').textContent = t ? `${md(t.start)}${t.end && t.end !== t.start ? ' ~ ' + md(t.end) : ' 당일'} 출장 · ${r.total}원` : `${Number(r.ym.slice(5, 7))}월 ${r.day}일 신청 · ${r.total}원`;
-    if(t) el.querySelector('.again').onclick = () => repeatTrip(t.id, applyRejected);
+    if(el.querySelector('.again')) el.querySelector('.again').onclick = () => repeatTrip(t.id, true);   // 반려된 신청만: 그대로 불러와 고쳐 올림 (승인된 출장엔 버튼 없음 — 다시 올리는 걸로 보였음, 사용자 요청 2026-11-10)
     if(el.querySelector('.rep')) el.querySelector('.rep').onclick = async () => {   // 이 PC 기록이 없거나 그룹웨어에서 들여온 기록이면 결재 문서 본문을 (다시) 읽어 채운다
       if(t && t.status !== '그룹웨어') return openReport(t.id);
       const {id, filled, note} = await rpc('/api/trip/adopt', {row: r});
