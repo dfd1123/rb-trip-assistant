@@ -30,7 +30,7 @@ function findClaude() {
   if (claudeBin && fs.existsSync(claudeBin)) return claudeBin;
   claudeBin = claudeCandidates().find(f => { try { return fs.statSync(f).isFile(); } catch (e) { return false; } }) || null;
   if (!claudeBin && process.platform !== 'win32') {   // nvm 같은 곳: 로그인 셸에 물어봄
-    try { claudeBin = require('child_process').execFileSync(process.env.SHELL || '/bin/sh', ['-lc', 'command -v claude'], { timeout: 5000, encoding: 'utf8' }).trim().split('\n').pop() || null; } catch (e) { claudeBin = null; }
+    try { claudeBin = require('child_process').execFileSync(process.env.SHELL || '/bin/sh', ['-lc', 'command -v claude'], { timeout: 5000, encoding: 'utf8' }).split('\n').map(s => s.trim()).filter(s => s.startsWith('/')).pop() || null; } catch (e) { claudeBin = null; }   // alias 줄은 거름
   }
   return claudeBin;
 }
@@ -52,9 +52,12 @@ async function claudeCli(prompt, { model, files = [], timeoutMs = 120000 } = {})
     // 윈도우 npm 설치(claude.cmd)는 셸로만 실행된다 → 인자를 직접 따옴표로 (빈 값 "" 이 사라지지 않게. 인자에 따옴표는 없음)
     const shell = /\.cmd$/i.test(bin);
     const out = await new Promise((resolve, reject) => {
-      const cp = spawn(shell ? `"${bin}"` : bin, shell ? args.map(a => `"${a}"`) : args, { cwd: dir, shell, windowsHide: true, env: process.env });
+      // npm 으로 깐 claude 는 '#!/usr/bin/env node' 스크립트: 로그인 셸에서 찾았어도 앱(독·파인더)의 PATH 엔 node 가 없어 127 로 죽었음 → 실제 파일이 있는 폴더(node 도 거기 있음)를 PATH 앞에
+      const env = { ...process.env }; try { env.PATH = `${path.dirname(fs.realpathSync(bin))}${path.delimiter}${env.PATH || ''}`; } catch (e) { /* 그대로 */ }
+      const cp = spawn(shell ? `"${bin}"` : bin, shell ? args.map(a => `"${a}"`) : args, { cwd: dir, shell, windowsHide: true, env });
       let so = '', se = '';
-      const t = setTimeout(() => { cp.kill(); reject(Object.assign(new Error(`Claude Code 응답이 ${Math.round(timeoutMs / 1000)}초 안에 안 왔어요. 잠시 뒤 다시 눌러 주세요.`), { timeout: true })); }, timeoutMs);
+      const kill = () => { if (shell && process.platform === 'win32') { try { require('child_process').spawn('taskkill', ['/pid', String(cp.pid), '/T', '/F'], { windowsHide: true }); return; } catch (e) { /* 아래 */ } } cp.kill(); };   // 셸로 띄운 claude.cmd 는 cmd.exe 만 죽고 node 가 남아 임시 폴더를 못 지웠음
+      const t = setTimeout(() => { kill(); reject(Object.assign(new Error(`Claude Code 응답이 ${Math.round(timeoutMs / 1000)}초 안에 안 왔어요. 잠시 뒤 다시 눌러 주세요.`), { timeout: true })); }, timeoutMs);
       cp.stdout.on('data', d => { so += d; }); cp.stderr.on('data', d => { se += d; });
       cp.on('error', e => { clearTimeout(t); reject(new Error(`Claude Code 를 실행하지 못했어요: ${e.message}`)); });
       cp.on('close', code => { clearTimeout(t); resolve({ code, so, se }); });

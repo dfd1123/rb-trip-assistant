@@ -300,7 +300,7 @@ function gdEnd(){ if(gd) markGuide(gd.key); gd = null; $('#guide').classList.add
 $('#gdNext').onclick = () => { if(!gd) return; gd.dir = 1; gd.i++; gdShow(); };
 $('#gdPrev').onclick = () => { if(!gd) return; gd.dir = -1; gd.i--; gdShow(); };
 $('#gdSkip').onclick = gdEnd;
-addEventListener('keydown', e => { if(!gd) return; if(e.key === 'Escape') gdEnd(); else if(e.key === 'ArrowRight' || e.key === 'Enter') $('#gdNext').click(); else if(e.key === 'ArrowLeft') $('#gdPrev').click(); });
+addEventListener('keydown', e => { if(!gd) return; if(e.key === 'Escape') gdEnd(); else if(e.key === 'ArrowRight' || e.key === 'Enter') { e.preventDefault(); $('#gdNext').click(); } else if(e.key === 'ArrowLeft') { e.preventDefault(); $('#gdPrev').click(); } });   // 기본 동작 막기: [다음]에 포커스가 있으면 Enter 가 두 번 눌려 한 단계를 건너뛰었음
 addEventListener('resize', () => { if(gd) gdShow(); });
 GUIDES.reportAll = [...GUIDES.report.filter(x => x[0] !== '#rManual'), ...GUIDES.reportResult];
 GUIDES.purchaseAll = [...GUIDES.purchase.filter(x => x[0] !== '#puManual'), ...GUIDES.purchaseResult];

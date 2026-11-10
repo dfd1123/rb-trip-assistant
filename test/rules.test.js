@@ -892,3 +892,81 @@ test('출장일·메모의 두 자리 해: "26.11.04 ~26.11.05" (전상민 2026-
   assert.deepEqual([d('11.30-12.1 서울').start, d('11.30-12.1 서울').end], ['2026-11-30', '2026-12-01']);
   assert.deepEqual([R.parseTripPeriod('10/30-11/2', '2026-10-28').start, R.parseTripPeriod('10/30-11/2', '2026-10-28').end], ['2026-10-30', '2026-11-02']);
 });
+
+test('상대 날짜 두 개·다음날: "오늘 18시 출발 내일 09시 복귀" 는 이틀 (전엔 같은 날로 읽어 복귀가 출발보다 빨랐음)', () => {
+  const d = m => Q.quickApply(m, { today: new Date(2026, 10, 10), places: [], rates: Q.DEFAULT_RATES }).data.dates;
+  assert.deepEqual([d('오늘 18시 출발 내일 09시 복귀 야간 작업 천안').start, d('오늘 18시 출발 내일 09시 복귀 야간 작업 천안').end], ['2026-11-10', '2026-11-11']);
+  assert.deepEqual([d('모레 오후 2시 반 출발 글피 12시 복귀 대구').start, d('모레 오후 2시 반 출발 글피 12시 복귀 대구').end, d('모레 오후 2시 반 출발 글피 12시 복귀 대구').start_time, d('모레 오후 2시 반 출발 글피 12시 복귀 대구').end_time], ['2026-11-12', '2026-11-13', '14:30', '12:00']);
+  assert.deepEqual([d('내일 13시 출발 다음날 18시 복귀 광주').start, d('내일 13시 출발 다음날 18시 복귀 광주').end], ['2026-11-11', '2026-11-12']);
+  assert.deepEqual([d('10/20 13시 출발 다음날 18시 복귀 광주').start, d('10/20 13시 출발 다음날 18시 복귀 광주').end], ['2026-10-20', '2026-10-21']);
+  assert.deepEqual([d('내일 당일 판교').start, d('내일 당일 판교').end], ['2026-11-11', '2026-11-11']);   // 상대 날짜 하나는 예전대로
+  assert.deepEqual([d('내일 출장 (오늘 품의)').start, d('내일 출장 (오늘 품의)').end], ['2026-11-11', '2026-11-11']);   // 뒤의 날이 앞서면 무시
+});
+
+test('단위 붙은 소수·"9~18시"·막차 (2026-11-10 퍼징): "3.5시간" 은 3/5 가 아니고, "9~18시" 는 09:00~18:00', () => {
+  const d = m => Q.quickApply(m, { today: new Date(2026, 10, 10), places: [], rates: Q.DEFAULT_RATES }).data.dates;
+  assert.deepEqual([d('내일 RBY1 시연 3.5시간 9시 출발 15시 복귀').start, d('내일 RBY1 시연 3.5시간 9시 출발 15시 복귀').end], ['2026-11-11', '2026-11-11']);
+  assert.equal(d('2.5명 참석 내일 판교').start, '2026-11-11');
+  assert.deepEqual([d('11/20 대전 본사 회의').start, d('11/20 분당 미팅').start, d('11/20 명동 고객').start, d('11/20 대구 엑스코 3.5시간동안 발표').start], ['2026-11-20', '2026-11-20', '2026-11-20', '2026-11-20']);   // 단위 글자로 시작하는 지명은 날짜를 막지 않음
+  assert.deepEqual([d('3/5 판교 당일').start, d('3/5 판교 당일').end], ['2027-03-05', '2027-03-05']);   // 진짜 날짜는 그대로
+  assert.deepEqual([d('내일 9~18시 판교').start_time, d('내일 9~18시 판교').end_time], ['09:00', '18:00']);
+  assert.deepEqual([d('내일 13~15시 판교').start_time, d('내일 13~15시 판교').end_time], ['13:00', '15:00']);
+  assert.deepEqual([d('10/20-22 판교 9-18시').start, d('10/20-22 판교 9-18시').end, d('10/20-22 판교 9-18시').start_time, d('10/20-22 판교 9-18시').end_time], ['2026-10-20', '2026-10-22', '09:00', '18:00']);   // 날짜의 '-' 와 안 섞임
+  assert.deepEqual([d('내일 첫차로 출발 막차 복귀 대구').start_time, d('내일 첫차로 출발 막차 복귀 대구').end_time], ['06:30', '23:00']);
+});
+
+test('없는 날짜 "2026-02-30" 은 거절 (Date.parse 는 3/2 로 받아 줌), Date 객체는 현지 날짜로', () => {
+  const base = { reason: '테스트', destination: '판교', purpose: '목적', dates: { start: '2026-11-11', end: '2026-11-11', start_time: '09:00', end_time: '18:00' }, category: '일반', transport: { mode: 'car', to: '판교', total: 0 }, expenses: [], companions: [] };
+  assert.throws(() => R.parseApply({ ...base, dates: { ...base.dates, start: '2026-02-30', end: '2026-02-30' } }), /날짜 형식/);
+  assert.throws(() => R.parseApply({ ...base, dates: { ...base.dates, start: '2026-04-31', end: '2026-04-31' } }), /날짜 형식/);
+  assert.equal(R.parseApply({ ...base, dates: { ...base.dates, start: '2028-02-29', end: '2028-02-29' } }).start, '2028-02-29');   // 윤년은 됨
+  assert.equal(R.parseApply({ ...base, dates: { ...base.dates, start: new Date(2026, 10, 11), end: new Date(2026, 10, 11) } }).start, '2026-11-11');
+});
+
+test('파서 리뷰 (2026-11-10): 부터 뒤 숫자·양쪽 연도·떨어진 끝 날짜·긴 대시·없는 날', () => {
+  const d = m => Q.quickApply(m, { today: new Date(2026, 10, 10), places: [], rates: Q.DEFAULT_RATES }).data.dates;
+  const se = m => [d(m).start, d(m).end];
+  assert.deepEqual(se('11/20부터 9시 출발 18시 복귀 판교 RBY1 점검'), ['2026-11-20', '2026-11-20']);   // '9' 는 끝 날이 아님 (전엔 11/9~11/20 열이틀)
+  assert.deepEqual(se('11/20부터 3일간 판교'), ['2026-11-20', '2026-11-22']);
+  assert.deepEqual(se('11월 20일부터 9시 출발 판교'), ['2026-11-20', '2026-11-20']);
+  assert.deepEqual(se('2026.11.20부터 9시 출발 판교'), ['2026-11-20', '2026-11-20']);
+  assert.deepEqual(se('11/20부터 22일까지 판교'), ['2026-11-20', '2026-11-22']);
+  assert.deepEqual(se('2026년 12월 30일~2027년 1월 2일 부산 공장'), ['2026-12-30', '2027-01-02']);   // 전엔 2027 의 '20' 이 끝 날
+  assert.deepEqual(se('2026년 11월 20일 ~ 2026년 11월 21일 판교'), ['2026-11-20', '2026-11-21']);
+  assert.deepEqual(se('2026-11-20 09:00 ~ 2026-11-21 18:00 판교'), ['2026-11-20', '2026-11-21']);   // 그룹웨어 출장일 꼴
+  assert.deepEqual(se('2026.11.20(금) 9시 ~ 2026.11.21(토) 18시 판교'), ['2026-11-20', '2026-11-21']);
+  assert.deepEqual(se('11/20–22 판교'), ['2026-11-20', '2026-11-22']);   // 긴 대시
+  assert.deepEqual(se('11/20～22 판교'), ['2026-11-20', '2026-11-22']);   // 전각 물결
+  assert.deepEqual(se('다음주 화–목 판교'), ['2026-11-17', '2026-11-19']);
+  assert.deepEqual([se('11/31 판교')[0], se('4/31~5/2 판교')[0], se('2/29 판교')[0]], ['', '', '']);   // 없는 날은 날짜 아님 (전엔 12/1·5/1·3/1 로 밀렸음)
+  assert.deepEqual(se('2028년 2월 29일~3월 1일 판교'), ['2028-02-29', '2028-03-01']);   // 윤년의 2/29 는 됨
+});
+
+test('파서 리뷰 (2026-11-10): 시각 — "출발 오전 9시 복귀 저녁"·"9시 출발 7시 복귀"·"9시 출발 오후 6시까지"', () => {
+  const t = m => { const x = Q.quickApply(m, { today: new Date(2026, 10, 10), places: [], rates: Q.DEFAULT_RATES }).data.dates; return [x.start_time, x.end_time]; };
+  assert.deepEqual(t('11/20 판교 회의 출발 오전 9시 복귀 저녁'), ['09:00', '19:00']);   // 전엔 복귀도 09:00
+  assert.deepEqual(t('출발 아침 복귀 저녁 11/20 판교'), ['08:00', '19:00']);
+  assert.deepEqual(t('11/20 판교 회의 9시 출발 7시 복귀'), ['09:00', '19:00']);   // 당일: 복귀 7시는 저녁
+  assert.deepEqual(t('11/20~21 판교 화 19시 출발 목 9시 복귀'), ['19:00', '09:00']);   // 이틀이면 그대로
+  assert.deepEqual(t('11/20 판교 회의 9시 출발 오후 6시까지'), ['09:00', '18:00']);
+  assert.deepEqual(t('9시 출발 18시 복귀 11/20 판교'), ['09:00', '18:00']);
+  assert.deepEqual(t('출발 9시 복귀 18시 11/20 판교'), ['09:00', '18:00']);
+  assert.deepEqual(t('11/20 판교 6시 출발 13시 복귀'), ['06:00', '13:00']);
+});
+
+test('파서 리뷰 (2026-11-10): parseTripPeriod 붙은 하이픈·해 뒤로, capMealRows 두 끼, planPayees 비고 날짜 구간', () => {
+  assert.deepEqual(R.parseTripPeriod('2026.10.19 09:00-2026.10.20 18:00', '2026-10-14'), { start: '2026-10-19', end: '2026-10-20', start_time: '09:00', end_time: '18:00' });
+  assert.deepEqual([R.parseTripPeriod('12/29~12/31', '2027-01-03').start, R.parseTripPeriod('12/30~1/2', '2027-01-05').end], ['2026-12-29', '2027-01-02']);   // 해 바뀐 뒤 올린 품의
+  assert.equal(R.parseTripPeriod('2026.02.30 ~ 03.02', '2026-02-20').start, '2026-03-02');   // 없는 날은 건너뜀
+  const rates = { lodgingPerNight: 70000, breakfast: 8000, lunch: 15000, dinner: 15000 };
+  assert.deepEqual(R.capMealRows([{ item: 'meal', amount: 30000, people: 1, memo: '10/20 1인 조식·중식 2건' }, { item: 'meal', amount: 30000, people: 1, memo: '10/20 1인 중식' }], rates).map(r => r.amount), [23000, 15000]);
+  const L = '여비교통비(판)_국내숙박비', M = '여비교통비(판)_식대';
+  const lines = [{ label: L, amount: 70000, date: '2026-10-19', memo: '10/19 숙박', pay: 'personal', proofs: [] }, { label: L, amount: 70000, date: '2026-10-20', memo: '10/20 숙박', pay: 'personal', proofs: [] },
+    { label: M, amount: 15000, date: '2026-10-19', memo: '10/19 1인 중식', pay: 'personal', proofs: [] }, { label: M, amount: 15000, date: '2026-10-21', memo: '10/21 1인 중식', pay: 'personal', proofs: [] }];
+  const p1 = R.planPayees([{ 예산과목: L, 예산과목비고: '10/19 ~ 20 숙박 예정', 품의금액: '140,000', 미지출액: '140,000' }, { 예산과목: M, 예산과목비고: '10/19~21 식대', 품의금액: '91,000', 미지출액: '91,000' }], lines).plan;
+  assert.deepEqual(p1.map(r => [r.lines.length, r.dropped]), [[2, 0], [2, 0]]);   // 전엔 비고의 첫 날짜만 봐서 10/20 숙박·10/21 식대가 버려졌음
+  const p2 = R.planPayees([{ 예산과목: L, 예산과목비고: '10/19 숙박 (2박)', 품의금액: '140,000', 미지출액: '140,000' }], lines.slice(0, 2)).plan;
+  assert.deepEqual(p2.map(r => [r.lines.length, r.dropped]), [[2, 0]]);
+  const p3 = R.planPayees([{ 예산과목: M, 예산과목비고: '10/19 식대', 품의금액: '15,000', 미지출액: '15,000' }, { 예산과목: M, 예산과목비고: '10/21 식대', 품의금액: '15,000', 미지출액: '15,000' }], lines.slice(2)).plan;
+  assert.deepEqual(p3.map(r => r.lines.map(l => l.memo)), [['10/19 1인 중식'], ['10/21 1인 중식']]);   // 날짜 한 개짜리 비고는 예전 그대로
+});

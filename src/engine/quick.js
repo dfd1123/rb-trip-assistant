@@ -18,10 +18,13 @@ const mondayOf = d => addDays(d, -((d.getDay() + 6) % 7));
 
 const WEEKDAY_PAREN = /\s*\(\s*[월화수목금토일](?:요일)?\s*\)/g;
 /** 월/일만 있을 때: 오늘보다 많이 지난 날짜면 내년으로 */
-function md(today, m, d) {   // 60일 전 ~ 그 뒤 1년 안의 날짜로 (1월에 쓴 "12/30"은 작년 12월)
+function md(today, m, d) {   // 60일 전 ~ 그 뒤 1년 안의 날짜로 (1월에 쓴 "12/30"은 작년 12월). "11/31" 같은 없는 날은 날짜 아님 (전엔 12/1 로 밀렸음)
   const y = today.getFullYear(), lo = addDays(today, -60);
-  return [y - 1, y, y + 1].map(yy => new Date(yy, m - 1, d)).find(c => c >= lo);
+  const c = [y - 1, y, y + 1].map(yy => new Date(yy, m - 1, d)).find(c => c >= lo);
+  return c && c.getDate() === d ? c : undefined;
 }
+/** 해가 정해진 날짜. 없는 날(2026-02-30)이면 undefined */
+const dayOf = (y, m, d) => { const x = new Date(y, m - 1, d); return x.getDate() === d && x.getMonth() === m - 1 ? x : undefined; };
 
 /**
  * 예) 다음주 화~목 / 이번주 수 / 10/20~22 / 10.20-10.22 / 10월 20일~22일 / 10월 20일부터 2박3일 / 내일 / 모레 당일
@@ -29,7 +32,7 @@ function md(today, m, d) {   // 60일 전 ~ 그 뒤 1년 안의 날짜로 (1월�
  */
 function parseDates(text, today = new Date()) {
   today = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  text = String(text || '').replace(WEEKDAY_PAREN, '');   // "10/27(화)~10/29(목)" 의 요일 괄호는 날짜 사이를 끊는다
+  text = String(text || '').replace(WEEKDAY_PAREN, '').replace(/[–—]/g, '-').replace(/[～〜]/g, '~');   // "10/27(화)~10/29(목)" 의 요일 괄호는 날짜 사이를 끊는다. 긴 대시·전각 물결도 구간 기호
   const matched = [];
   let start = null, end = null, m;
 
@@ -56,33 +59,41 @@ function parseDates(text, today = new Date()) {
     }
   }
   // 2026-10-20 ~ 2026-10-22 / 2026.10.20~22 / 26.11.04 ~ 26.11.05 (두 자리 해는 20·30년대, 세 토막일 때만. "10/30-11/2" 의 30 은 해가 아님 — 앞에 구분자가 있으면 날짜 토막)
-  else if ((m = /(?<![\d.\-/])(\d{4}|[23]\d)\s*[-./]\s*(\d{1,2})\s*[-./]\s*(\d{1,2})(?:\s*(?:~|-|부터)\s*(?:(?:\d{4}|[23]\d)\s*[-./]\s*)?(?:(\d{1,2})\s*[-./]\s*)?(\d{1,2})(?!\s*박))?/.exec(text))) {
+  else if ((m = /(?<![\d.\-/])(\d{4}|[23]\d)\s*[-./]\s*(\d{1,2})\s*[-./]\s*(\d{1,2})(?:\s*(?:~|-|부터)\s*(?:(?:\d{4}|[23]\d)\s*[-./]\s*)?(?:(\d{1,2})\s*[-./]\s*)?(\d{1,2})(?!\s*(?:박|시|분|명|주|개|일\s*(?:간|동안))|\s*:))?/.exec(text))) {
     const y = m[1].length === 2 ? 2000 + +m[1] : +m[1];
-    start = new Date(y, +m[2] - 1, +m[3]);
-    end = m[5] ? new Date(y, (m[4] ? +m[4] : +m[2]) - 1, +m[5]) : start; matched.push(m[0]);
+    start = dayOf(y, +m[2], +m[3]);
+    end = m[5] ? dayOf(y, m[4] ? +m[4] : +m[2], +m[5]) : start; matched.push(m[0]);
+    if (!m[5] && start) {   // "2026.11.20 09:00 - 2026.11.21 18:00" (그룹웨어 출장일 꼴): 끝 날짜가 떨어져 있음
+      const e2 = /(?<![\d.\-/])(\d{4}|[23]\d)\s*[-./]\s*(\d{1,2})\s*[-./]\s*(\d{1,2})/.exec(text.slice(m.index + m[0].length));
+      const e = e2 && dayOf(e2[1].length === 2 ? 2000 + +e2[1] : +e2[1], +e2[2], +e2[3]); const gap = e ? (e - start) / 86400000 : -1;
+      if (gap > 0 && gap <= 40) { end = e; matched.push(e2[0]); }
+    }
   }
-  // 10/20~22, 10/20~10/22, 10.20-22
-  else if ((m = [...text.matchAll(/(?<![A-Za-z\d.])(\d{1,2})\s*[\/.]\s*(\d{1,2})(?!\d|\.\d|\s*(?:km|㎞|키로|kg|%))(?:\s*(?:~|-|부터)\s*(?:(\d{1,2})\s*[\/.]\s*)?(\d{1,2})(?!\s*박))?/g)]
+  // 10/20~22, 10/20~10/22, 10.20-22 (단위가 붙은 소수 '3.5시간'·'2.5명' 은 날짜 아님 — 전엔 '3.5시간' 이 3/5 가 됐음 2026-11-10)
+  else if ((m = [...text.matchAll(/(?<![A-Za-z\d.])(\d{1,2})\s*[\/.]\s*(\d{1,2})(?!\d|\.\d|\s*(?:km|㎞|키로|kg|%)|(?:시간|리터|인치|mm|cm|(?:분|명|개|대|배|톤)(?![가-힣])))(?:\s*(?:~|-|부터)\s*(?:(\d{1,2})\s*[\/.]\s*)?(\d{1,2})(?!\s*(?:박|시|분|명|주|개|일\s*(?:간|동안))|\s*:))?/g)]
       .find(x => +x[1] >= 1 && +x[1] <= 12 && +x[2] >= 1 && +x[2] <= 31))) {   // 'v2.3'·'5.5km'·'13/5' 는 날짜 아님
     start = md(today, +m[1], +m[2]);
     end = m[4] ? md(today, m[3] ? +m[3] : +m[1], +m[4]) : start; matched.push(m[0]);
     if (!m[4]) {   // 끝 날짜가 떨어져 있는 경우 ("10/27 13시 출발 10/28 21시 복귀"). 31일 안쪽만 (거리 "10.5km" 같은 숫자 오인 방지)
-      const e2 = /(?<![\d.])(\d{1,2})\s*[\/.]\s*(\d{1,2})(?![\d.]|\s*(?:km|㎞|키로|kg|%))/.exec(text.slice(m.index + m[0].length));
+      const e2 = /(?<![\d.])(\d{1,2})\s*[\/.]\s*(\d{1,2})(?![\d.]|\s*(?:km|㎞|키로|kg|%)|(?:시간|리터|인치|mm|cm|(?:분|명|개|대|배|톤)(?![가-힣])))/.exec(text.slice(m.index + m[0].length));
       if (e2 && +e2[1] >= 1 && +e2[1] <= 12 && +e2[2] >= 1 && +e2[2] <= 31) {
-        const e = md(today, +e2[1], +e2[2]); const gap = (e - start) / 86400000;
+        const e = md(today, +e2[1], +e2[2]); const gap = e && start ? (e - start) / 86400000 : -1;
         if (gap > 0 && gap <= 31) { end = e; matched.push(e2[0]); }
       }
     }
   }
   // 10월 20일~22일 / 10월 20일부터 11월 2일까지
-  else if ((m = /(?:(\d{4})\s*년\s*)?(\d{1,2})\s*월\s*(\d{1,2})\s*일?(?:\s*(?:~|-|부터)\s*(?:(\d{1,2})\s*월\s*)?(\d{1,2})(?!\s*박)\s*일?(?:까지)?)?/.exec(text))) {
-    const y = m[1] ? +m[1] : null;
-    start = y ? new Date(y, +m[2] - 1, +m[3]) : md(today, +m[2], +m[3]);
-    end = m[5] ? (y ? new Date(y, (m[4] ? +m[4] : +m[2]) - 1, +m[5]) : md(today, m[4] ? +m[4] : +m[2], +m[5])) : start; matched.push(m[0]);
+  else if ((m = /(?:(\d{4})\s*년\s*)?(\d{1,2})\s*월\s*(\d{1,2})\s*일?(?:\s*(?:~|-|부터)\s*(?:(\d{4})\s*년\s*)?(?:(\d{1,2})\s*월\s*)?(\d{1,2})(?!\s*(?:박|시|분|명|주|개|일\s*(?:간|동안))|\s*:)\s*일?(?:까지)?)?/.exec(text))) {   // "2026년 12월 30일~2027년 1월 2일": 끝쪽 해도 받음 (전엔 2027 의 '20' 을 끝 날로 읽었음)
+    const y = m[1] ? +m[1] : null, y2 = m[4] ? +m[4] : y;
+    start = y ? dayOf(y, +m[2], +m[3]) : md(today, +m[2], +m[3]);
+    end = m[6] ? (y2 ? dayOf(y2, m[5] ? +m[5] : +m[2], +m[6]) : md(today, m[5] ? +m[5] : +m[2], +m[6])) : start; matched.push(m[0]);
   }
   // 오늘/내일/모레
   else if ((m = /(오늘|내일|모레|글피)/.exec(text))) {
-    start = addDays(today, { 오늘: 0, 내일: 1, 모레: 2, 글피: 3 }[m[1]]); end = start; matched.push(m[0]);
+    const REL = { 오늘: 0, 내일: 1, 모레: 2, 글피: 3 };
+    start = addDays(today, REL[m[1]]); end = start; matched.push(m[0]);
+    const e2 = /(오늘|내일|모레|글피)/.exec(text.slice(m.index + m[0].length));   // "오늘 18시 출발 내일 09시 복귀": 뒤의 상대 날짜가 끝 (전엔 같은 날로 읽어 복귀가 출발보다 빨랐음 — 2026-11-10)
+    if (e2 && addDays(today, REL[e2[1]]) > start) { end = addDays(today, REL[e2[1]]); matched.push(e2[0]); }
   }
   // 월 없이 16일(날) / 16~18일 / 16일부터 18일까지 → 이번 달(지났으면 다음 달)
   else if ((m = /(?<![A-Za-z\d.\/월박]\s*)(\d{1,2})\s*(?:일(?:날)?\s*(?:(?:~|-|부터)\s*(\d{1,2})\s*일(?:날)?(?:까지)?)?|(?:~|-|부터)\s*(\d{1,2})\s*일(?:날)?(?:까지)?)(?!\s*(?:간|동안))/.exec(text)) && +m[1] >= 1 && +m[1] <= 31) {
@@ -92,11 +103,14 @@ function parseDates(text, today = new Date()) {
     start = md(today, mon, +m[1]);
     end = e ? md(today, +e < +m[1] ? (mon === 12 ? 1 : mon + 1) : mon, +e) : start; matched.push(m[0]);
   }
+  if (start && !end) end = start;   // 끝 날짜가 없는 날("4/31")이면 당일로
   if (end && start && end < start) {
     const next = new Date(end.getFullYear() + 1, end.getMonth(), end.getDate());
     if ((next - start) / 86400000 <= 31) end = next; else [start, end] = [end, start];
   }
 
+  // "13시 출발 다음날 18시 복귀": 끝 날짜가 따로 없으면 다음날이 끝
+  if (start && end && +end === +start && (m = /(다음\s*날|이튿날|익일)/.exec(text))) { end = addDays(start, 1); matched.push(m[0]); }
   // N박M일 / N일간 (시작일 기준)
   if ((m = /(\d+)\s*박\s*(\d+)\s*일/.exec(text))) { if (start) end = addDays(start, +m[2] - 1); matched.push(m[0]); }
   else if ((m = /(\d+)\s*일\s*(?:간|동안)/.exec(text))) { if (start) end = addDays(start, +m[1] - 1); matched.push(m[0]); }
@@ -107,7 +121,7 @@ function parseDates(text, today = new Date()) {
 
 // ---------- 시각 ----------
 const WORD_TIME = [[/새벽/, '06:00'], [/아침\s*일찍|이른\s*아침|첫\s*차/, '06:30'], [/아침|오전\s*일찍/, '08:00'], [/점심\s*먹고|점심\s*후|점심\s*이후/, '13:00'],
-  [/점심/, '11:30'], [/오전/, '10:00'], [/오후\s*늦게/, '16:00'], [/오후/, '14:00'], [/저녁\s*(?:먹고|식사\s*(?:하고|후)|이후)/, '20:30'], [/퇴근\s*(후|하고)|저녁/, '19:00'], [/밤/, '21:00']];
+  [/점심/, '11:30'], [/오전/, '10:00'], [/오후\s*늦게/, '16:00'], [/오후/, '14:00'], [/저녁\s*(?:먹고|식사\s*(?:하고|후)|이후)/, '20:30'], [/퇴근\s*(후|하고)|저녁/, '19:00'], [/막차/, '23:00'], [/밤/, '21:00']];
 function clock(seg, morning = false) {   // morning: 오전/오후 없는 1~6시를 오전으로 (당일 출장에서 출발이 복귀보다 늦게 읽힐 때 다시 읽음)
   // 구간에 시각이 여러 개면 출발/복귀 바로 앞의 마지막 것을 쓴다 ("오전 9시 출발 18시 복귀" → 복귀 18:00)
   const all = [...seg.matchAll(/(오전|오후|저녁|밤|아침|새벽)?\s*(?<![A-Za-z\d.])(\d{1,2})\s*(?::\s*(\d{2})|시(?!간)(?:\s*(\d{1,2})\s*분|\s*(반))?)/g)];   // "3.5시간"·"2시간"·"RBY1 시연"·"K5 시험" 은 시각 아님
@@ -128,6 +142,7 @@ function clock(seg, morning = false) {   // morning: 오전/오후 없는 1~6시
 }
 /** "화 19시 출발 ~ 목 15시 복귀", "저녁에 출발", "오후 3시 도착" → {startTime, endTime} */
 function parseTimes(text, am = false) {
+  text = String(text).replace(/[–—]/g, '-').replace(/[～〜]/g, '~').replace(/(?<![\d.:\/])(\d{1,2})\s*([~\-])\s*(\d{1,2})\s*시(?!간)/g, '$1시$2$3시');   // "9~18시" → "9시~18시" (전엔 18시만 읽혀 출발 시각이 됐음 — 2026-11-10)
   let startTime = '', endTime = '';
   const DEP = '출발|가서|떠나', RET = '복귀|귀가|귀사|도착해서\\s*퇴근|돌아옴|돌아와';
   const dep = new RegExp(`([^,~\\-]{0,14}?)\\s*(?:에|부터)?\\s*(?:${DEP})`).exec(text);
@@ -137,8 +152,11 @@ function parseTimes(text, am = false) {
     return m && !new RegExp(stop).test(text.slice(m.index, m.index + m[0].length).replace(new RegExp(`^(?:${re})`), '')) ? clock(m[1], re === DEP && am) : ''; };
   const depAfter = after(DEP, RET), retAfter = after(RET, DEP);
   if (depAfter && retAfter) return { startTime: depAfter, endTime: retAfter };   // 낱말이 앞에 오는 꼴
-  if (dep) startTime = clock(dep[1], am) || depAfter;
-  if (ret) endTime = clock(ret[1].replace(new RegExp(`^.*(?:${DEP})`), '')) || retAfter;   // 복귀 앞 구간에서 출발 뒤 시각은 출발 것이라 뺌
+  const wordAfter = r => clock(text.slice(r.index + r[0].length, r.index + r[0].length + 5));   // 낱말 바로 뒤의 시간대 낱말 ("복귀 저녁")
+  const depOwn = dep ? clock(dep[1], am) : '', depLater = dep && !depOwn ? depAfter || wordAfter(dep) : '';   // depLater: 출발 시각이 낱말 뒤에 있음 ("출발 오전 9시")
+  if (dep) startTime = depOwn || depLater;
+  if (ret) { const t = clock(ret[1].replace(new RegExp(`^.*(?:${DEP})`), ''));   // 복귀 앞 구간에서 출발 뒤 시각은 출발 것이라 뺌
+    endTime = (depLater && t === depLater ? '' : t) || retAfter || wordAfter(ret); }   // "출발 오전 9시 복귀 저녁": 9시는 출발 것 (전엔 복귀도 9시가 됐음 — 2026-11-10)
   if (!dep && !ret) {                     // "화 19시~목 15시" 처럼 시각만 두 개
     const all = [...text.matchAll(/(?:오전|오후|저녁|밤|아침)?\s*(?<![A-Za-z\d.])\d{1,2}\s*(?::\s*\d{2}|시(?!간)(?:\s*\d{1,2}\s*분|\s*반)?)/g)];
     const times = all.map((m, i) => clock(m[0], am && i === 0));
@@ -149,6 +167,10 @@ function parseTimes(text, am = false) {
       if (times[0]) startTime = times[0];
       if (times[1]) endTime = times[1];
     }
+  }
+  if (startTime && !endTime) {   // "9시 출발 오후 6시까지": '까지' 시각은 복귀
+    const k = /((?:오전|오후|저녁|밤|아침|새벽)?\s*(?<![A-Za-z\d.:])\d{1,2}\s*(?::\s*\d{2}|시(?!간)(?:\s*\d{1,2}\s*분|\s*반)?))\s*까지/.exec(text);
+    if (k && clock(k[1]) !== startTime) endTime = clock(k[1]);
   }
   return { startTime, endTime };
 }
@@ -300,6 +322,10 @@ function quickApply(memo, ctx = {}) {
   // 당일 출장인데 출발이 복귀보다 늦으면 모순 → 오전/오후 없는 출발 시각을 오전으로 다시 읽음 ("6시 출발 13시 복귀")
   if (dates.start && dates.start === dates.end && times.startTime && times.endTime && times.startTime > times.endTime) {
     const t2 = parseTimes(text, true); if (t2.startTime && t2.startTime <= times.endTime) times = { ...times, startTime: t2.startTime };
+    else {   // 그래도 모순이면 복귀 쪽 ("9시 출발 7시 복귀" 의 7시는 저녁 7시) — 복귀에 오전·아침·새벽이 붙어 있으면 그대로 둬 검증에서 걸리게
+      const eh = +times.endTime.slice(0, 2);
+      if (eh >= 1 && eh <= 11 && !/(?:오전|아침|새벽)\s*\d{1,2}\s*(?::\d{2}|시)[^가-힣]{0,3}(?:복귀|귀가|귀사|돌아)/.test(text)) times = { ...times, endTime: pad(eh + 12) + times.endTime.slice(2) };
+    }
   }
   const mode = parseMode(text);
   const companions = parseCompanions(text);

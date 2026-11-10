@@ -109,9 +109,11 @@ function amount(v, where) {
   return Number(s);
 }
 function date(v, key) {
-  if (v instanceof Date) return v.toISOString().slice(0, 10);
+  const pad = n => String(n).padStart(2, '0');
+  if (v instanceof Date) return `${v.getFullYear()}-${pad(v.getMonth() + 1)}-${pad(v.getDate())}`;   // 현지 날짜 (toISOString 은 UTC 라 한국 자정이 전날로 밀림)
   const s = String(v);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(s) || isNaN(Date.parse(s))) throw new InputError(`'${key}' 날짜 형식은 YYYY-MM-DD 입니다: ${v}`);
+  const d = /^\d{4}-\d{2}-\d{2}$/.test(s) ? new Date(`${s}T00:00:00`) : NaN;   // '2026-02-30' 은 Date.parse 가 3/2 로 받아 줘서 날짜 토막을 되읽어 본다
+  if (isNaN(d) || d.getDate() !== Number(s.slice(8, 10))) throw new InputError(`'${key}' 날짜 형식은 YYYY-MM-DD 입니다: ${v}`);
   return s;
 }
 const asList = v => (v == null || v === '') ? [] : (typeof v === 'string' ? v.split(',') : v).map(s => String(s).trim()).filter(Boolean);
@@ -152,7 +154,7 @@ function parseApply(data) {
   const dates = req(data, 'dates', where);
   const start = date(req(dates, 'start', 'dates'), '시작일'), end = date(req(dates, 'end', 'dates'), '종료일');
   if (end < start) throw new InputError('종료일이 시작일보다 빠릅니다.');
-  const hm = (v, k) => { const t = String(v || '').trim(); if (t && !/^\d{1,2}:\d{2}$/.test(t)) throw new InputError(`${k}은 HH:MM 형식입니다: ${t}`); return t ? t.padStart(5, '0') : ''; };
+  const hm = (v, k) => { const t = String(v || '').trim(); const h = /^(\d{1,2}):(\d{2})$/.exec(t); if (t && !(h && +h[1] < 24 && +h[2] < 60)) throw new InputError(`${k}은 HH:MM 형식입니다: ${t}`); return t ? t.padStart(5, '0') : ''; };   // 24:00·99:99 는 안 받음
   const startTime = hm(dates.start_time, '출발 시각'), endTime = hm(dates.end_time, '복귀 시각');
   if (!startTime || !endTime) throw new InputError('출발 시각과 복귀 시각은 필수예요. 식대 계산에 쓰여요.');
   if (start === end && startTime && endTime && endTime < startTime) throw new InputError('복귀 시각이 출발 시각보다 빠릅니다.');
@@ -255,7 +257,7 @@ function parseReport(data) {
     out.expenses[i].proofs = proofs;
     out.expenses[i].pay = e.pay === 'card' ? 'card' : 'personal';
     out.expenses[i].noVat = noVatOf({ ...out.expenses[i], noVat: e.noVat });   // 법인카드 면세·불공제 (화면에서 고친 값 우선)
-    out.expenses[i].date = /^\d{4}-\d{2}-\d{2}$/.test(String(e.date || '')) ? String(e.date) : '';   // AI 가 영수증에서 읽은 날짜·끼니 (채주 묶기·예산 줄 맞추기)
+    { const ds = String(e.date || ''); out.expenses[i].date = /^\d{4}-\d{2}-\d{2}$/.test(ds) && new Date(`${ds}T00:00:00`).getDate() === Number(ds.slice(8)) ? ds : ''; }   // 없는 날(10-32)은 날짜 없음으로 (자금계획일이 NaN 이 됐음)   // AI 가 영수증에서 읽은 날짜·끼니 (채주 묶기·예산 줄 맞추기)
     out.expenses[i].meal = /^(조식|중식|석식)$/.test(String(e.meal || '')) ? String(e.meal) : '';
     out.expenses[i].people = Math.max(0, Math.round(Number(e.people) || 0));   // 식대 인원 — 빠지면 보낼 때 식대 한도를 1인으로 다시 깎음 (3인 42,000 → 15,000 이 될 뻔)
     out.expenses[i].kind = RECEIPT_KINDS.includes(e.kind) ? e.kind : '';   // AI 가 읽은 영수증 종류 (법인차량 차 비용·면세 판단)
@@ -312,8 +314,13 @@ function planPayees(budgets, lines) {
   const n = s => String(s || '').replace(/\s/g, '');
   const num = v => Number(String(v || '').replace(/[^\d]/g, '')) || 0;
   const md = s => { const m = /^(\d{1,2})\/(\d{1,2})/.exec(String(s || '').trim()); return m ? `${+m[1]}/${+m[2]}` : ''; };
+  // 비고의 날짜들: "10/19 숙박" → [10/19], "10/19 ~ 20 숙박 예정"·"10/19~10/21 식대" → 구간의 날마다, "10/19 숙박 (2박)" → 밤 수만큼 (전엔 첫 날짜만 봐서 다음 날 영수증이 버려졌음 — 2026-11-10)
+  const mdList = s => { const t = String(s || '').trim(), m = /^(\d{1,2})\/(\d{1,2})(?:\s*[~\-–]\s*(?:(\d{1,2})\/)?(\d{1,2}))?/.exec(t); if (!m) return [];
+    const n = /(\d+)\s*박(?:\s*(\d+)\s*일)?/.exec(t), a = new Date(2024, +m[1] - 1, +m[2]);   // 2024: 윤년이라 2/29 도 셈
+    const b = m[4] ? new Date(2024, (m[3] ? +m[3] : +m[1]) - 1, +m[4]) : n ? new Date(2024, +m[1] - 1, +m[2] + (n[2] ? +n[2] : +n[1]) - 1) : a;
+    const out = []; for (let x = new Date(a); x <= b && out.length < 62; x.setDate(x.getDate() + 1)) out.push(`${x.getMonth() + 1}/${x.getDate()}`); return out.length ? out : [`${+m[1]}/${+m[2]}`]; };
   const lineMd = l => /^\d{4}-\d{2}-\d{2}$/.test(l.date || '') ? `${+l.date.slice(5, 7)}/${+l.date.slice(8, 10)}` : md(l.memo);
-  const rows = budgets.map((b, index) => { const limit = String(b['미지출액'] ?? '').trim() !== '' ? num(b['미지출액']) : num(b['품의금액']);   /* 미지출액 0 = 이미 다 쓴 줄 (0도 값 — 빈 칸만 품의금액) */ return { index, label: b['예산과목'], lab: n(b['예산과목']), md: md(b['예산과목비고']), limit, room: limit, lines: [], dropped: 0 }; });
+  const rows = budgets.map((b, index) => { const limit = String(b['미지출액'] ?? '').trim() !== '' ? num(b['미지출액']) : num(b['품의금액']);   /* 미지출액 0 = 이미 다 쓴 줄 (0도 값 — 빈 칸만 품의금액) */ return { index, label: b['예산과목'], lab: n(b['예산과목']), mds: mdList(b['예산과목비고']), limit, room: limit, lines: [], dropped: 0 }; });
   // 주유·통행료는 품의에 잡힌 줄로: 차량유지비 줄이 없으면 국내교통비 줄, 국내교통비 줄이 없으면 차량유지비 줄 (예전 법인차량 품의는 국내교통비로 잡혀 있음). 택시·대중교통은 차량유지비로 안 감
   const has = lab => rows.some(r => r.lab === n(lab));
   const [TR, VH] = [BUDGET_ITEMS.domestic_transport[1], BUDGET_ITEMS.vehicle[1]];
@@ -322,8 +329,8 @@ function planPayees(budgets, lines) {
   const items = lines.map(l => ({ src: l, left: l.amount, last: null, row: null, lab: labOf(l), md: lineMd(l) })).filter(m => rows.some(r => r.lab === m.lab));
   const put = (r, m) => { const amount = Math.min(m.left, r.room); if (amount <= 0) return; m.left -= amount; r.room -= amount;
     r.lines.push(m.last = { ...m.src, amount, supply: supplyAmount(amount, m.src.pay, m.src.noVat), vat: vatAmount(amount, m.src.pay, m.src.noVat), cut: 0, ...(m.last ? { proofs: [], split: true } : {}) }); };
-  for (const m of items) for (const r of m.md ? rows.filter(r => r.lab === m.lab && r.md === m.md) : []) { if (m.left <= 0) break; m.row = r; put(r, m); }   // 같은 날짜 줄이 둘이면(조식 줄·중석식 줄) 차례로
-  for (const m of items.filter(m => !m.row)) for (const r of rows.filter(r => r.lab === m.lab && (!m.md || !r.md))) { if (m.left <= 0) break; put(r, m); }
+  for (const m of items) for (const r of m.md ? rows.filter(r => r.lab === m.lab && r.mds.includes(m.md)) : []) { if (m.left <= 0) break; m.row = r; put(r, m); }   // 같은 날짜 줄이 둘이면(조식 줄·중석식 줄) 차례로
+  for (const m of items.filter(m => !m.row)) for (const r of rows.filter(r => r.lab === m.lab && (!m.md || !r.mds.length))) { if (m.left <= 0) break; put(r, m); }
   // 못 넣은 금액은 그 영수증의 마지막 조각에 cut 으로, 아예 못 넣은 영수증은 (날짜 줄이면 그 줄, 아니면 그 과목 마지막 줄의) dropped 로
   for (const m of items) { if (m.left <= 0) continue; if (m.last) m.last.cut = m.left; else if (m.src.amount > 0) (m.row || [...rows].reverse().find(r => r.lab === m.lab)).dropped++; }
   // 같은 예산 줄에 적요·공급가액이 똑같은 채주가 둘이면(같은 날 택시 2번 등) 그룹웨어에서 '이미 넣은 줄'로 보고 하나를 건너뛴다 → 적요 뒤에 (2) 를 붙여 구분
@@ -343,8 +350,8 @@ const MEAL_RATE_KEY = { 조식: 'breakfast', 중식: 'lunch', 석식: 'dinner' }
 function capMealRows(rows, rates = {}) {
   return rows.map(r => {
     if (r.item !== 'meal' || r.failed) return r;
-    const kind = r.meal || (MEAL_KINDS.find(([, re]) => re.test(r.memo || '')) || [])[0];
-    const per = kind && Number(rates[MEAL_RATE_KEY[kind]]);
+    const kinds = r.meal ? [r.meal] : MEAL_KINDS.filter(([, re]) => re.test(r.memo || '')).map(([k]) => k);   // 직접 쓴 "조식·중식 2건" 은 두 끼 한도의 합 (전엔 첫 끼 한도로 깎았음)
+    const per = kinds.reduce((s, k) => s + (Number(rates[MEAL_RATE_KEY[k]]) || 0), 0);
     if (!per) return r;
     const cap = per * Math.max(1, Number(r.people) || Number((/(\d+)\s*인/.exec(r.memo || '') || [])[1]) || 1);   // 인원 필드가 없으면 적요의 "3인"
     return Number(r.amount) > cap ? { ...r, amount: cap, paid: Number(r.amount), capped: true } : r;
@@ -459,13 +466,15 @@ function parseTripPeriod(text, base = '') {
   const by = Number(String(base).slice(0, 4)) || new Date().getFullYear(), bd = base ? new Date(`${base}T00:00:00`) : null;
   const pad = n => String(n).padStart(2, '0');
   // 해는 네 자리, 또는 "26.11.04" 처럼 두 자리(20년대·30년대만 — "11.04" 의 11 을 해로 보지 않게 세 토막일 때만) (전상민 2026-11-06: 품의 본문 "26.11.04 ~26.11.05" 를 못 읽음)
-  const re = /(?:(?<![\d.\-/])(\d{4}|[23]\d)\s*[.\-/년]\s*)?(\d{1,2})\s*[.\-/월]\s*(\d{1,2})\s*일?(?:\s*\([^)]*\))?(?:\s*(\d{1,2})(?::(\d{2})|\s*시(?:\s*(\d{1,2})\s*분)?))?/g;
+  const re = /(?:(?<!\d)(\d{4}|[23]\d)\s*[.\-/년]\s*)?(\d{1,2})\s*[.\-/월]\s*(\d{1,2})\s*일?(?:\s*\([^)]*\))?(?:\s*(\d{1,2})(?::(\d{2})|\s*시(?:\s*(\d{1,2})\s*분)?))?/g;
   const hits = []; let m;
   while ((m = re.exec(t))) {
     const mo = Number(m[2]), d = Number(m[3]); if (mo < 1 || mo > 12 || d < 1 || d > 31) continue;
     const prev = hits[hits.length - 1];
     let y = m[1] ? (m[1].length === 2 ? 2000 + Number(m[1]) : Number(m[1])) : (prev ? prev.y + (mo * 100 + d < prev.mo * 100 + prev.d ? 1 : 0) : by);   // "12/30 ~ 1/2": 끝 날짜는 다음 해
     if (!m[1] && !hits.length && bd && new Date(`${y}-${pad(mo)}-${pad(d)}T00:00:00`) < new Date(bd.getTime() - 60 * 864e5)) y++;
+    if (!m[1] && !hits.length && bd && new Date(`${y}-${pad(mo)}-${pad(d)}T00:00:00`) > new Date(bd.getTime() + 300 * 864e5)) y--;   // 해 바뀐 뒤 올린 품의의 "12/29~12/31" 은 지난해
+    if (new Date(y, mo - 1, d).getDate() !== d) continue;   // 2/30 같은 없는 날
     const time = m[4] ? `${pad(m[4])}:${m[5] || m[6] || '00'}`.replace(/:(\d)$/, ':0$1') : '';
     hits.push({ y, mo, d, time, end: re.lastIndex });
   }

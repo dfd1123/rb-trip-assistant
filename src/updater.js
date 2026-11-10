@@ -50,13 +50,14 @@ async function download(url, file) {
   if (!res.ok || !res.body) throw new Error(`다운로드 실패 (${res.status})`);
   const total = Number(res.headers.get('content-length')) || 0;
   const out = fs.createWriteStream(file);
+  const failed = new Promise((_, j) => out.once('error', j)); failed.catch(() => {});   // 쓰기 오류(디스크 부족 등)는 처음부터 받는다 — 안 받으면 앱 전체 오류창이 뜨고 drain 을 영영 기다렸음
   let got = 0;
   for await (const chunk of res.body) {
     got += chunk.length; if (total) state.percent = Math.round(got / total * 100);
-    if (!out.write(chunk)) await new Promise(r => out.once('drain', r));
+    if (!out.write(chunk)) await Promise.race([new Promise(r => out.once('drain', r)), failed]);
   }
   // end 콜백은 'finish'(다 썼음)에 불리고 파일 핸들은 그 뒤 'close' 에 닫힌다. Windows 는 쓰기 핸들이 열린 exe 를 실행하면 EBUSY → close 까지 기다림
-  await new Promise((r, j) => { out.once('error', j); out.once('close', r); out.end(); });
+  await Promise.race([new Promise(r => { out.once('close', r); out.end(); }), failed]);
   if (total && got !== total) throw new Error(`다운로드가 중간에 끊겼어요 (${got}/${total} bytes). 다시 시도해 주세요.`);
 }
 
@@ -132,7 +133,7 @@ async function installDownload() {
   state.status = 'installing';
   const launch = async (cmd, args = []) => { await launchDetached(cmd, args); setTimeout(() => app.quit(), 300); };
   if (kind === 'exe') await launch(file, ['/S', '--force-run']);   // 조용히 설치하고 실행
-  else if (kind === 'appimage') { fs.chmodSync(file, 0o755); fs.copyFileSync(file, process.env.APPIMAGE); await launch(process.env.APPIMAGE); }
+  else if (kind === 'appimage') { fs.chmodSync(file, 0o755); try { fs.unlinkSync(process.env.APPIMAGE); } catch (e) { /* 없으면 그냥 복사 */ } fs.copyFileSync(file, process.env.APPIMAGE); await launch(process.env.APPIMAGE); }   // 실행 중인 AppImage 에 덮어쓰면 ETXTBSY → 먼저 지우고(inode 는 남아 실행엔 지장 없음) 새로 만든다
   else await installPackage(kind, file);
 }
 

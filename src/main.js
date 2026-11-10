@@ -225,7 +225,7 @@ async function startJobNow(kind, fn, title) {
   if (bg && busy && !BACKGROUND_JOBS.has(job.kind)) return { ok: false, skipped: true };
   // 사람 확인을 기다리는 사람 작업도 다른 작업이 끊지 않는다 (취소되면 만들던 품의를 지움). 되돌릴 게 없는 작업만 끊음
   if (busy && job.state === 'waiting' && !job.cancelled && !BACKGROUND_JOBS.has(job.kind) && !PREEMPTIBLE_JOBS.has(job.kind)) throw new Error('작업창에서 확인을 기다리는 작업이 있어요. 그 작업을 [계속]하거나 [취소]한 뒤 다시 해 주세요.');
-  const yieldTo = busy && (job.cancelled || job.state === 'waiting' || job.kind === 'fare' || (BACKGROUND_JOBS.has(job.kind) && !bg));
+  const yieldTo = busy && (job.cancelled || job.state === 'waiting' || job.kind === 'fare' || (BACKGROUND_JOBS.has(job.kind) && kind !== job.kind));   // 뒤 작업끼리도 다른 종류면 새 것이 이김 (목록 읽는 사이 [보고서 작성]을 누르면 '진행 중' 오류가 났음 — 2026-11-10)
   if (yieldTo) {   // 교통비 조회(새 조회가 덮어씀)·뒤에서 돌던 작업·취소한 작업은 멈출 때까지 기다림 (같은 창을 동시에 만지지 않게)
     const old = job; old.cancel();
     const stopped = await Promise.race([old.done.then(() => true), new Promise(r => setTimeout(() => r(false), 20000))]);
@@ -236,7 +236,7 @@ async function startJobNow(kind, fn, title) {
   }
   const j = job = new Job(kind, title);
   if (!bg && gwShown) { gwShown = false; park(gwWin); }   // 사람이 새 작업을 시키면 보던 작업 창은 숨김. 팝업(전 작업의 결재 작성 창 등)은 사람이 마저 쓰는 중일 수 있어 그대로
-  const env = { debugDir: app.isPackaged ? path.join(app.getPath('userData'), 'debug') : path.join(__dirname, '..', 'debug'), cfg: store.config(), store, ui: j, log: m => j.info(m), naverKeys: naverKeys(), fetch: net.fetch, gwWindow: () => gwWindow(false), showGw, makeNaverWindow, creds: gwCreds };
+  const env = { dev: !app.isPackaged /* 개발 중에만 화면 구조 진단 (배포본은 사람 품의를 건드리면 안 됨) */, debugDir: app.isPackaged ? path.join(app.getPath('userData'), 'debug') : path.join(__dirname, '..', 'debug'), cfg: store.config(), store, ui: j, log: m => j.info(m), naverKeys: naverKeys(), fetch: net.fetch, gwWindow: () => gwWindow(false), showGw, makeNaverWindow, creds: gwCreds };
   j.done = (async () => {
     try { j.result = await fn(env); j.state = 'done'; try { j.info('✔ 완료'); } catch (e) { /* 끝난 뒤 들어온 취소 — 이미 다 함 */ } }
     catch (e) { j.error = e instanceof R.InputError ? `입력 오류: ${e.message}` : e.message; j.state = j.cancelled ? 'cancelled' : 'error';
@@ -699,7 +699,7 @@ async function route(p, body = {}) {
       const keep = prev ? (({ report, gwReport, reportStatus, resolutionNo }) => ({ report, gwReport, reportStatus, resolutionNo }))(old) : {};   // 작성 중이던 보고서·보고 품의 연결·전송한 결의번호는 유지
       const pa = old.apply || {};   // 본문을 이번에 못 읽었거나 빈 칸이면 전에 읽어 둔 값을 그대로 (다시 읽다 실패하면 출장지·기간이 지워졌음 — UI 테스트로 발견 2026-10-23)
       const or = (v, p) => (v !== '' && v != null && !(Array.isArray(v) && !v.length)) ? v : p;
-      store.save(id, { ...keep, id, created: new Date().toISOString(), title: R.applyTitle(reason), status: '그룹웨어', gwApply: { key: r.key, ym: r.ym, day: String(r.day), seq: String(r.seq) },
+      store.save(id, { ...old, ...keep, id, created: old.created || new Date().toISOString(), title: R.applyTitle(reason), status: '그룹웨어',   // 전에 둔 기록(환원 확인·교통비 조회 등)은 그대로 두고 신청 내용만 다시 읽음 gwApply: { key: r.key, ym: r.ym, day: String(r.day), seq: String(r.seq) },
         apply: { reason, destination: or(f && f.destination, pa.destination || ''), start: or(f && f.start, pa.start || pday), end: or(f && f.end, pa.end || pday), start_time: or(f && f.start_time, pa.start_time || ''), end_time: or(f && f.end_time, pa.end_time || ''),
           category: or(f && f.category, pa.category || '일반'), project: or(f && f.project, pa.project || ''), transport: f && f.transport ? { mode: f.transport, to: '', from: '', total: null } : (pa.transport || { mode: '', to: '', from: '', total: null }),   // 본문을 못 읽으면 교통편 모름 (보고서에서 자차·대중교통 둘 다 안내)
           companions: or(f && f.companions, pa.companions || []), companion_purpose: or(f && f.companion_purpose, pa.companion_purpose || ''), purpose: or(f && f.purpose, pa.purpose || ''), expenses: pa.expenses || [] } });

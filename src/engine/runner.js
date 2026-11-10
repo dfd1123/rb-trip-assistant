@@ -181,7 +181,8 @@ function settleLines(rep, cfg, log = () => {}) {
   const year = usedOn.slice(0, 4) || String(new Date().getFullYear());
   const startM = Number(usedOn.slice(5, 7)) || 0;
   const endY = Number(([...String(rep.period).matchAll(/(\d{4})[.-]\d{2}[.-]\d{2}/g)].pop() || [])[1]) || +year;   // 기간 끝 날짜의 해
-  const dated = rep.expenses.map(e => R.vehicleItem(e, rep.transport_mode)).map(e => { if (e.date) return e; const m = /^(\d{1,2})\/(\d{1,2})\b/.exec(e.memo || ''); const y = m && startM && +m[1] < startM && endY > +year ? +year + 1 : year;   // 12/30~1/2 출장의 '1/1' 은 다음 해 (해를 넘긴 출장일 때만 — 10월 출장의 '9/28' 예매 영수증은 그해)
+  const endM = Number(([...String(rep.period).matchAll(/\d{4}[.-](\d{2})[.-]\d{2}/g)].pop() || [])[1]) || 12;   // 기간 끝 달 (해를 넘긴 출장에서 1월 영수증만 다음 해 — 12/30~1/2 출장의 '11/20 예매' 는 그해)
+  const dated = rep.expenses.map(e => R.vehicleItem(e, rep.transport_mode)).map(e => { if (e.date) return e; const m = /^(\d{1,2})\/(\d{1,2})\b/.exec(e.memo || ''); const y = m && startM && +m[1] < startM && endY > +year && +m[1] <= endM ? +year + 1 : year;   // 12/30~1/2 출장의 '1/1' 은 다음 해 (해를 넘긴 출장일 때만 — 10월 출장의 '9/28' 예매 영수증은 그해)
     const d = m ? `${y}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}` : '';
     return { ...e, date: d && !isNaN(Date.parse(`${d}T00:00:00`)) && new Date(`${d}T00:00:00`).getDate() === +m[2] ? d : '' }; });   // '10/32' 같은 오타는 날짜 없음으로   // 날짜는 AI 가 읽은 필드 우선, 없으면(직접 쓴 줄) 적요 앞 M/D
   const capped = R.capMealRows(dated, cfg.rates);
@@ -335,9 +336,10 @@ async function runListBudget(env, { from = '', to = '' } = {}) {
     }
     const docs = await attachApprovalDocs(gw, rows, env.log, { from, to });
     env.log(`API 로 품의 ${rows.length}건 읽음 (${((Date.now() - t0) / 1000).toFixed(1)}초, 삭제 가능 ${rows.filter(r => !r.locked).length}건)`);
-    if (env.debugDir) await gw.diagApprovalList().catch(() => {});
-    if (env.debugDir) await gw.diagReportFlow().catch(() => {});
-    if (env.debugDir) await gw.diagResolutionInput().catch(() => {});   // 한 번만: 결의서입력 화면 구조 기록 (보고서 3단계 개발용, 읽기만)   // 한 번만: 결의서전송 화면 구조 기록 (보고서 자동화 개발용, 읽기만)   // 한 번만(파일 없을 때): 전자결재 상신문서 목록 API 기록 (결재양식으로 출장 판별하기 위함, 10초쯤)
+    // 개발 중에만 (env.dev): 배포본에도 debugDir 은 있어 진단이 실제 승인 화면의 품의를 체크하고 [결의서전송/취소]를 눌렀음 (2026-11-10)
+    if (env.dev && env.debugDir) await gw.diagApprovalList().catch(() => {});
+    if (env.dev && env.debugDir) await gw.diagReportFlow().catch(() => {});
+    if (env.dev && env.debugDir) await gw.diagResolutionInput().catch(() => {});   // 한 번만: 결의서입력 화면 구조 기록 (보고서 3단계 개발용, 읽기만)   // 한 번만: 결의서전송 화면 구조 기록 (보고서 자동화 개발용, 읽기만)   // 한 번만(파일 없을 때): 전자결재 상신문서 목록 API 기록 (결재양식으로 출장 판별하기 위함, 10초쯤)
     return { rows, reportDocs: reportDocsOf(docs), via: 'api', ms: Date.now() - t0 };
   } catch (e) {
     try { require('fs').mkdirSync(env.debugDir, { recursive: true }); require('fs').appendFileSync(require('path').join(env.debugDir, 'api-error.log'), `${new Date().toISOString()} ${e.message}\n`); } catch (e2) { /* */ }

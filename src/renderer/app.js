@@ -69,6 +69,7 @@ function expRow(tbody, e={}, onchange){
   sel.value = e.item || (tid==='a_exp' ? 'domestic_lodging' : 'domestic_transport');
   amt.value = (e.amount === 0 || e.amount) && e.amount !== '' ? Number(e.amount).toLocaleString('ko-KR') : '';   // 0원도 그대로 보임
   memo.value = e.memo || '';
+  tr.addEventListener('input', () => { tr.dataset.touched = '1'; });   // 사람이 손댄 줄 — 영수증을 읽어 예상 금액 줄을 바꿀 때 이 줄은 안 지움 (직접 쓴 식대 줄이 사라졌음 — 2026-11-10)
   if(e.kind) tr.dataset.kind = e.kind;   // AI 가 읽은 영수증 종류 (주유·통행료·택시…) — 면세·법인차량 차량유지비 판단
   if(pay){ pay.value = e.pay || 'personal';
     // 법인카드면 '면세(부가세 불공제)' 체크: 항공권·주유비 등은 기본으로 켬. 개인카드는 공급가액만이라 해당 없음
@@ -227,7 +228,7 @@ function fillApply(d){
   $('#a_start').value = dt.start||''; $('#a_end').value = dt.end||''; $('#a_start_time').value = dt.start_time||''; $('#a_end_time').value = dt.end_time||'';
   setRadio('a_category', d.category||'일반'); $('#a_project').value = d.project||'';
   const t = d.transport||{}; $$('input[name=a_mode]').forEach(x => x.checked = false); if(t.mode) setRadio('a_mode', t.mode);   // 교통편은 정해졌을 때만 (안 정했으면 비워 둠)
-  $('#a_to').value = t.to||''; if(t.from) $('#a_from').value = t.from;
+  $('#a_to').value = t.to||''; $('#a_from').value = t.from || (META && META.config && META.config.defaultOrigin) || '';   // 출발지도 이 신청 것만 ([다시 신청]한 출장의 출발지가 다음 신청에 남았음)
   placeGeo = t.place && t.place.lng ? t.place : null;
   $('#a_fare').value = t.total === 0 || t.total ? Number(t.total).toLocaleString('ko-KR') : ''; fareShot = t.screenshot || ''; $('#a_fare_desc').textContent = '';   // 0원도 넣은 값
   $('#a_corporate_car').value = t.corporate_car || '';   // 없으면 비움 — 전 출장의 차가 남지 않게
@@ -686,6 +687,7 @@ function renderOrphans(trips, shown = new Set()){
     tb.appendChild(tr);
   });
   const sync = () => { $('#btnGwDel').disabled = !$$('#gwRows tbody input:checked').length; };
+  $('#btnGwDel').onclick = () => { const keys = new Set($$('#gwRows tbody input:checked').map(c => c.dataset.key)); deleteGwRows(rows.filter(r => keys.has(r.key))); };   // [선택 삭제] (핸들러가 빠져 눌러도 아무 일 없었음 — 2026-11-10)
   tb.querySelectorAll('input').forEach(c => c.onchange = sync);
   $('#gwAllCb').onchange = e => { tb.querySelectorAll('input:not(:disabled)').forEach(c => c.checked = e.target.checked); sync(); };
   sync();
@@ -873,7 +875,7 @@ $('#btnRQuick').onclick = async () => {
   finally { delete btn.dataset.busy; syncRQuick(true); }
 };
 $('#btnAddDay').onclick = () => schedRow();
-$('#btnAddRExp').onclick = () => expRow($('#r_exp tbody'), {}, refreshReport);
+$('#btnAddRExp').onclick = () => { expRow($('#r_exp tbody'), {}, refreshReport); $('#r_exp tbody').lastElementChild.dataset.touched = '1'; };
 $('#btnNewReport').onclick = async () => {   // 신청 내용만 남기고 영수증·메모·경비·보고사항 다 비움 (그룹웨어 기록은 안 건드림)
   if(!currentTrip) return;
   if(!confirm('작성 중인 보고서 내용(영수증·메모·경비·보고사항)을 모두 비우고 새로 시작할까요?')) return;
@@ -900,7 +902,7 @@ function applyReceipts(got){
   const tb = $('#r_exp tbody');
   const rowsOf = () => [...tb.querySelectorAll('tr')].map(tr => ({ tr, item: tr.querySelector('.item').value, proofs: JSON.parse(tr.dataset.proofs || '[]') }));
   const items = new Set(got.filter(g => g.item).map(g => g.item));
-  rowsOf().filter(r => items.has(r.item) && !r.proofs.length).forEach(r => r.tr.remove());   // 예상 금액 줄 → 실제 영수증으로 대체
+  rowsOf().filter(r => items.has(r.item) && !r.proofs.length && !r.tr.dataset.touched).forEach(r => r.tr.remove());   // 예상 금액 줄 → 실제 영수증으로 대체 (사람이 손댄 줄은 둠)
   got.forEach(g => {
     const proofs = g.proofs || [];
     const memo = g.failed ? '' : [g.date && g.date.slice(5).split('-').map(Number).join('/'), g.memo || g.vendor].filter(Boolean).join(' ');   // 거래처비고 형식 "10/2 1인 조식"
@@ -1008,14 +1010,14 @@ function syncApplyDefaults(){
 }
 const aiKeyRow = () => { const cli = ($('#s_ai').value === 'claude_cli'); $('#s_key').closest('.row').classList.toggle('hidden', cli); $('#btnAiClear').classList.toggle('hidden', cli); };   // Claude Code 는 키 없이 그 PC 로그인으로
 const aiModelOf = k => { const c = META.config; return c.aiModelFor && c.aiModelFor === k ? c.aiModel || '' : ''; };   // 모델 칸은 그 AI 에 저장한 것만 (다른 AI 로 바꾸면 비움)
-function loadAiSettings(){
+function loadAiSettings(clearKey = false){   // clearKey: 저장·삭제 뒤에만 키 칸을 비움 (뒤에서 '내 정보 불러오기'가 끝나며 다시 그릴 때 치던 키가 지워졌음 — 2026-11-10)
   const c = META.config, sel = $('#s_ai');
   sel.innerHTML = '<option value="none">사용 안 함 (템플릿)</option>' + Object.entries(META.providers).map(([k,v]) => `<option value="${k}">${v.label}</option>`).join('');
   sel.value = c.aiProvider || (c.aiBuiltin ? 'gemini' : 'none'); $('#s_model').value = aiModelOf(sel.value);
   $('#s_model').placeholder = META.providers[sel.value] ? `기본: ${META.providers[sel.value].model}` : '비우면 기본 모델';
   const keyHint = () => { const k = $('#s_ai').value; $('#s_key').placeholder = c.aiKeySet && !c.aiBuiltin && c.aiProvider && k !== c.aiProvider && k !== 'none' ? '이 회사의 API 키를 넣어 주세요 (예전 회사 키는 이 회사에 쓰지 않아요)' : c.aiKeySet && !c.aiBuiltin ? '저장됨 (바꾸려면 새 키 입력)' : k === 'gemini' && c.aiBuiltin ? '팀 공용 Gemini 키 사용 중 (개인 키를 넣으면 그게 우선)' : k === 'none' ? '' : 'API 키 붙여넣기 (필수)'; };
   $('#btnAiClear').hidden = !(c.aiKeySet && !c.aiBuiltin);   // 개인 키가 있을 때만. 팀 공용 키는 앱에 들어 있어 지울 수 없음
-  $('#s_key').value = ''; keyHint(); aiKeyRow(); sel.oninput = () => { keyHint(); aiKeyRow(); };   // 설정을 열 때마다 리스너가 쌓이지 않게 (덮어쓰기)
+  if(clearKey) $('#s_key').value = ''; keyHint(); aiKeyRow(); sel.oninput = () => { keyHint(); aiKeyRow(); };   // 설정을 열 때마다 리스너가 쌓이지 않게 (덮어쓰기)
 
   const r = c.rates; $('#s_lodging').value = r.lodgingPerNight; $('#s_breakfast').value = r.breakfast; $('#s_lunch').value = r.lunch; $('#s_dinner').value = r.dinner; $('#s_fare_margin').value = r.fareMargin ?? 20000;
   $('#s_rank').value = c.rank || 'staff'; $('#s_car_fuel').value = c.carFuel || 'gasoline'; $('#s_car_type').value = c.carType || '1'; $('#s_has_car').value = c.hasCar === false ? 'no' : 'yes';
@@ -1024,9 +1026,9 @@ $('#s_ai').onchange = () => { const k = $('#s_ai').value; $('#s_model').value = 
 $('#btnAiSave').onclick = async () => {
   const body = {aiProvider: $('#s_ai').value, aiModel: $('#s_model').value.trim()};
   if($('#s_key').value.trim()) body.aiKey = $('#s_key').value.trim();
-  await rpc('/api/config', body); META = await rpc('/api/meta'); loadAiSettings(); $('#s_ai_msg').textContent = '저장됨';
+  await rpc('/api/config', body); META = await rpc('/api/meta'); loadAiSettings(true); $('#s_ai_msg').textContent = '저장됨';
 };
-$('#btnAiClear').onclick = async () => { await rpc('/api/config', {clearAiKey: true}); META = await rpc('/api/meta'); loadAiSettings(); $('#s_ai_msg').textContent = '키 삭제됨'; };
+$('#btnAiClear').onclick = async () => { await rpc('/api/config', {clearAiKey: true}); META = await rpc('/api/meta'); loadAiSettings(true); $('#s_ai_msg').textContent = '키 삭제됨'; };
 $('#btnAiTest').onclick = async () => {
   $('#s_ai_msg').textContent = '확인 중…';
   try { const r = await rpc('/api/ai/test'); $('#s_ai_msg').textContent = `연결됨: "${r.reply}"`; } catch(e){ $('#s_ai_msg').textContent = e.message; }
@@ -1077,7 +1079,8 @@ function puItemRow(it = {}){
   const tr = document.createElement('tr');
   tr.innerHTML = '<td><input class="name"></td><td><input class="unit"></td><td><input class="qty" inputmode="numeric"></td><td><input class="price" inputmode="numeric"></td><td><input class="amt" inputmode="numeric"></td><td><input class="due" type="date"></td><td><input class="note" placeholder="예: 옵션 1.0M"></td><td><button class="btn small del" type="button">✕</button></td>';
   const q = c => tr.querySelector('.' + c);
-  q('name').value = it.part_no && !(it.name || '').includes(it.part_no) ? `${it.name || ''} (${it.part_no})`.trim() : (it.name || ''); q('unit').value = it.unit || 'EA'; q('qty').value = it.qty ?? 1; q('price').value = it.unit_price != null && it.unit_price !== '' ? Number(it.unit_price).toLocaleString('ko-KR') : '';   // 비운 단가는 비운 채로 (0 아님) q('amt').value = it.amount != null ? Number(it.amount).toLocaleString('ko-KR') : ''; q('due').value = it.due || ''; q('note').value = it.note || '';
+  q('name').value = it.part_no && !(it.name || '').includes(it.part_no) ? `${it.name || ''} (${it.part_no})`.trim() : (it.name || ''); q('unit').value = it.unit || 'EA'; q('qty').value = it.qty ?? 1; q('price').value = it.unit_price != null && it.unit_price !== '' ? Number(it.unit_price).toLocaleString('ko-KR') : '';   // 비운 단가는 비운 채로 (0 아님)
+  q('amt').value = it.amount != null && it.amount !== '' ? Number(it.amount).toLocaleString('ko-KR') : ''; q('due').value = it.due || ''; q('note').value = it.note || '';   // (주석에 묻혀 금액·납기·비고가 안 채워졌음 — 2026-11-10)
   const recalc = () => { if(q('price').value.trim() !== '') q('amt').value = Math.round(qtyNum(q('qty').value) * snum(q('price').value)).toLocaleString('ko-KR'); puRender(); };   // 단가를 비워 두면 금액은 그대로 (단가 = 금액 ÷ 수량은 보낼 때)
   q('qty').addEventListener('input', recalc); q('price').addEventListener('input', recalc);
   q('amt').addEventListener('input', puRender); q('due').addEventListener('change', puRender); q('note').addEventListener('input', puRender);
@@ -1182,7 +1185,7 @@ function renderUrlCard(){
   const has = !!puLink; $('#url_card').classList.toggle('hidden', !has); if(!has) return;
   $('#url_name').textContent = puLink.title || puLink.url; $('#url_name').title = puLink.url;
   $('#url_info').textContent = puLink.info || '캡처가 사유 칸과 첨부에 들어가요';
-  $('#url_thumb').src = puLink.shot ? 'file://' + puLink.shot : '';
+  $('#url_thumb').src = puLink.shot ? 'file:///' + String(puLink.shot).replace(/\\/g, '/').replace(/^\/+/, '') : '';   // 윈도우 'C:\…' 도 올바른 file URL 로
   $('#pu_url').value = puLink.url;
 }
 function readUrl(next){
@@ -1252,7 +1255,7 @@ $('#btnPurchase').onclick = async () => {
     <table class="cf-tbl pu-cf"><colgroup><col><col style="width:64px"><col style="width:110px"><col style="width:92px"></colgroup><thead><tr><th>품명</th><th>수량</th><th class="n">공급가액</th><th>납기</th></tr></thead><tbody>${d.items.map(i => `<tr><td>${escH(i.name)}${i.part_no ? ' <span class="sub">' + escH(i.part_no) + '</span>' : ''}</td><td>${i.qty}${escH(i.unit)}</td><td class="n">${won(i.amount === '' ? i.qty * i.unit_price : i.amount)}</td><td>${escH(i.due || '-')}</td></tr>`).join('')}</tbody><tfoot><tr><td colspan="2">합계 (${d.vat_included ? 'VAT 포함' : 'VAT 미포함'})</td><td class="n">${won(total)}</td><td></td></tr></tfoot></table>`;
   const warn = '<div class="cf-warn">⚠️ <b>시행자와 결재라인은 앱이 넣지 않아요.</b> 작성 창이 뜨면 이 결재 건에 맞게 <b>꼭 직접 선택</b>한 뒤 [상신]을 눌러 주세요.</div>';
   if(!(await confirmSubmit({ title: '이대로 그룹웨어에 입력할까요?', html: html + warn, note: '본문·첨부·수신및참조까지 채워요. 시행자·결재라인 선택과 [상신]은 직접.' }))) return;
-  runJob('구매의뢰서 입력', '/api/job/purchase', {data: d}, () => { $('#pu_status').textContent = '그룹웨어 작성 창에 채웠어요. 결재선을 확인하고 [상신]을 눌러 주세요.'; loadPurchaseList(); });
+  runJob('구매의뢰서 입력', '/api/job/purchase', {data: d}, () => { resetPurchase(); try { localStorage.removeItem('pu_draft'); } catch(e){ /* */ } $('#pu_status').textContent = '그룹웨어 작성 창에 채웠어요. 결재선을 확인하고 [상신]을 눌러 주세요.'; loadPurchaseList(); });   // 보낸 내용은 비움 (남아 있으면 다음에 그대로 또 보내짐)
 };
 
 /* ---------- 외부 방문객 출입 신청 ---------- */
@@ -1436,7 +1439,7 @@ async function vsSend(){
   const lineBox = `<div class="cf-line"><h4>⚠️ 결재선은 직접 지정해요 — 유형 ${escH(d.type)}</h4><div class="flow">${steps.map(escH).map(x => `<b>${x}</b>`).join('<span>→</span>')}</div>
     <p>작성 창이 뜨면 이 순서로 결재선을 지정한 뒤 [상신]을 눌러 주세요.${d.type === 'C' ? ' <b>방문 사무실 사업부서장</b>을 꼭 추가해요.' : ''}${d.type !== 'A' ? ` 결재가 끝나면 '신청한 방문'에서 신청서와 보안 준수 서약서(${escH(d.count)}부)를 인쇄해 경영지원부에 내요.` : ''}</p></div>`;
   if(!(await confirmSubmit({ title: '이대로 그룹웨어에 입력할까요?', html: lineBox + html, note: '본문·수신및참조(경영지원부)까지 채워요. 결재선 지정과 [상신]은 직접.' }))) return;
-  runJob('방문객 신청서 입력', '/api/job/visitor', {data: d}, () => { $('#vs_status').textContent = '그룹웨어 작성 창에 채웠어요. 결재선을 지정하고 [상신]을 눌러 주세요.'; });
+  runJob('방문객 신청서 입력', '/api/job/visitor', {data: d}, () => { $('#btnNewVisitor').click(); try { localStorage.removeItem('vs_draft'); } catch(e){ /* */ } $('#vs_status').textContent = '그룹웨어 작성 창에 채웠어요. 결재선을 지정하고 [상신]을 눌러 주세요.'; });   // 보낸 내용은 비움 (남아 있으면 다음에 같은 방문이 또 신청됨)
 }
 $('#btnVsSend').onclick = $('#btnVisitor').onclick = vsSend;
 
@@ -1497,7 +1500,7 @@ function watchJob(title, onDone, {quiet = false, onEnd = null, id = 0} = {}){   
 }
 async function answer(v){ $('#jobAsk').style.display='none'; await rpc('/api/job/answer', {value: v, id: watchedJobId}); }
 $('#jobYes').onclick = () => {
-  if(!$('#jobInput').classList.contains('hidden')){ const n = num($('#jobInput').value); if(!n && $('#jobInput').value!=='0') return; $('#jobInput').value=''; return answer(n); }
+  if(!$('#jobInput').classList.contains('hidden')){ const raw = $('#jobInput').value; if(!/\d/.test(raw)) return; const n = num(raw); $('#jobInput').value=''; return answer(n); }   // '0원'·' 0' 도 0 으로 답함
   answer(true);
 };
 $('#jobNo').onclick = () => answer(false);
@@ -1515,7 +1518,10 @@ $('#askGo').onclick = () => { const v = $('#askInput').value.trim(); if(v) askDo
 $('#askSkip').onclick = () => askDone('');
 attachAc($('#askInput'), $('#askAc'), { onPick: pl => { $('#askInput').value = pl.name; askDone(pl.name); } });
 $('#askInput').addEventListener('keydown', e => { if(e.key === 'Enter' && !e.isComposing && !e.defaultPrevented) $('#askGo').click(); });
-$('#jobClose').onclick = () => { rpc('/api/job/cancel'); $('#jobPanel').style.display = 'none'; $('#dim').classList.remove('on'); };   // 닫기 = 진행 중이던 작업 취소(그룹웨어 품의도 삭제)
+$('#jobClose').onclick = async () => {   // 닫기 = 진행 중이던 작업 취소(그룹웨어 품의도 삭제) → 진행 중이면 한 번 물어봄 (패널 치우려다 작업이 날아갔음)
+  const cur = await rpc('/api/job').catch(() => null);
+  if(cur && (cur.state === 'running' || cur.state === 'waiting') && !confirm('진행 중인 작업을 취소할까요?\n만들던 그룹웨어 품의도 지워요. (작업은 두고 패널만 치우려면 [취소]를 누르세요)')) return;
+  rpc('/api/job/cancel'); $('#jobPanel').style.display = 'none'; $('#dim').classList.remove('on'); };
 $('#jobCancel').onclick = () => rpc('/api/job/cancel');
 $('#jobShow').onclick = () => rpc('/api/gw/show');
 function alertErr(m){ $('#jobPanel').style.display='block'; $('#jobTitle').textContent='오류'; $('#jobLog').textContent = m; $('#jobAsk').style.display='none'; }
@@ -1577,7 +1583,7 @@ $('#loginForm').onsubmit = async e => {
   $('#lg_ok').disabled = true; $('#lg_ok').textContent = '로그인 중…'; $('#lg_err').textContent = '';
   try {
     const r = await rpc('/api/gw/login', { id: $('#lg_id').value, pw: $('#lg_pw').value, save: $('#lg_save').checked });
-    if(r.loggedIn){ closeLogin(); setGwPill('ok'); META = await rpc('/api/meta'); showGwSaved(); if(r.note) alertErr(r.note); }
+    if(r.loggedIn){ closeLogin(); setGwPill('ok'); META = await rpc('/api/meta'); showGwSaved(); if(r.note) alertErr(r.note); if(!$('#tab-trips').classList.contains('hidden')) autoGwCheck(true); }   // 출장 보고 탭에서 로그인했으면 바로 목록 읽기 ('확인하는 중' 글만 남았음 — 2026-11-10)
     else $('#lg_err').textContent = r.error;
   } catch(err){ $('#lg_err').textContent = err.message; }
   finally { $('#lg_ok').disabled = false; $('#lg_ok').textContent = '로그인'; }
