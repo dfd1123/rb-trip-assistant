@@ -119,7 +119,7 @@ echo "▶ Release ${TAG} → ${RELEASE_REPO}"
 # 만들기(Draft) → 파일 올리기 → 공개, 세 단계로. 한 번에 만들면 올리다 끊겼을 때 Draft 로 남아 앱이 새 버전을 못 본다 (version.json 은 공개된 latest 에서만 받음)
 # 파일은 gh 가 아니라 curl 로 올린다: gh release upload 는 100MB 안팎 파일에서 연결도 안 맺고 멈춰 v0.4.4 배포가 두 번 끊겼음 (2026-11-08). curl 은 같은 파일을 6초에 올림
 gh release view "$TAG" --repo "$RELEASE_REPO" >/dev/null 2>&1 || gh release create "$TAG" --repo "$RELEASE_REPO" --title "와니의 결재 도우미 v${VERSION}" --notes "$NOTES" --draft
-REL_ID=$(gh api "repos/${RELEASE_REPO}/releases/tags/${TAG}" -q .id); TOKEN=$(gh auth token)
+REL_ID=$(gh release view "$TAG" --repo "$RELEASE_REPO" --json databaseId -q .databaseId); TOKEN=$(gh auth token)   # releases/tags/{tag} API 는 Draft 를 못 찾아 404 (v0.4.5 배포에서 멈춤)
 for f in "${FILES[@]}" dist/version.json; do
   name=$(basename "$f"); size=$(stat -f%z "$f" 2>/dev/null || stat -c%s "$f")
   have=$(gh api "repos/${RELEASE_REPO}/releases/${REL_ID}/assets" --paginate -q ".[]|select(.name==\"${name}\")|[.id,.size,.state]|@tsv")
