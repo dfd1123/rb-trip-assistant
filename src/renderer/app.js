@@ -94,7 +94,7 @@ function expRow(tbody, e={}, onchange){
     let proofs = (e.proofs || []).slice();
     const draw = () => {
       const box = tr.querySelector('.files'); box.innerHTML = '';
-      if(!proofs.length){ const s = document.createElement('div'); s.className = 'empty'; s.textContent = '영수증 사진이나 PDF (없으면 비워 둠)'; box.appendChild(s); }
+      if(!proofs.length){ const s = document.createElement('div'); s.className = 'empty'; s.textContent = '영수증 사진이나 PDF (없으면 정산에서 빠져요)'; box.appendChild(s); }
       proofs.forEach((p, i) => {
         const chip = document.createElement('div'); chip.className = 'chip';
         const nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = (/\.pdf$/i.test(p) ? '📄 ' : '🖼️ ') + p.split(/[\\/]/).pop(); nm.title = p + ' (눌러서 열기)'; nm.onclick = () => rpc('/api/open', {path: p});
@@ -925,7 +925,7 @@ function applyReceipts(got){
   const tb = $('#r_exp tbody');
   const rowsOf = () => [...tb.querySelectorAll('tr')].map(tr => ({ tr, item: tr.querySelector('.item').value, proofs: JSON.parse(tr.dataset.proofs || '[]') }));
   const items = new Set(got.filter(g => g.item).map(g => g.item));
-  rowsOf().filter(r => items.has(r.item) && !r.proofs.length && !r.tr.dataset.touched).forEach(r => r.tr.remove());   // 예상 금액 줄 → 실제 영수증으로 대체 (사람이 손댄 줄은 둠)
+  rowsOf().filter(r => (items.has(r.item) || !claimableTr(r.tr)) && !r.proofs.length && !r.tr.dataset.touched).forEach(r => r.tr.remove());   // 예상 금액 줄 → 실제 영수증으로 대체. 영수증이 안 온 과목의 예상 줄도 지움 (영수증 없이는 정산 못 함 — 자차 유류비 줄만 남김). 사람이 손댄 줄은 둠
   got.forEach(g => {
     const proofs = g.proofs || [];
     const memo = g.failed ? '' : [g.date && g.date.slice(5).split('-').map(Number).join('/'), g.memo || g.vendor].filter(Boolean).join(' ');   // 거래처비고 형식 "10/2 1인 조식"

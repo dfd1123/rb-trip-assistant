@@ -163,9 +163,12 @@ function updateReport(){
   if($('#reportView').classList.contains('hidden')) return;
   const files = (typeof rqFiles !== 'undefined' ? rqFiles : []).length, memo = !!$('#rq_memo').value.trim();
   const written = !!$('#r_report').value.trim();
-  const exps = readExp($('#r_exp tbody'));
+  // 정산에 들어가는 줄만 (영수증이 붙은 줄 + 자차 유류비 줄 — app.js claimableTr). 영수증 없는 줄을 합계에 넣어 보여 줬음 (사용자 제보 2026-11-10)
+  const expTrs = [...$('#r_exp tbody').querySelectorAll('tr')], expAll = readExp($('#r_exp tbody'), true);
+  const filled = expAll.map((e, i) => ({ e, ok: claimableTr(expTrs[i]) })).filter(x => x.e.amount !== '');   // 금액 빈 줄은 빼고
+  const exps = filled.filter(x => x.ok).map(x => x.e), noProof = filled.length - exps.length;
   const sched = $$('#r_sched textarea'), schedOk = sched.length > 0 && sched.every(x => x.value.trim());
-  const key = JSON.stringify([files, memo, written, exps, schedOk, radio('r_fund'), $('#r_period').value, $('#r_destination').value]);
+  const key = JSON.stringify([files, memo, written, exps, noProof, schedOk, radio('r_fund'), $('#r_period').value, $('#r_destination').value]);
   if(key === reportKey) return; reportKey = key;
   // 단계
   const st = [files > 0, memo, written];
@@ -184,7 +187,7 @@ function updateReport(){
     rows.appendChild(d);
   });
   const proofs = exps.reduce((s, e) => s + ((e.proofs || []).length ? 1 : 0), 0);
-  $('#rcCount').textContent = `영수증 ${proofs}장`;
+  $('#rcCount').textContent = `영수증 ${proofs}장` + (noProof ? ` · 영수증 없는 ${noProof}줄 제외` : '');
   countTo($('#rcTotal'), exps.reduce((s, e) => s + e.amount, 0));
   const items = [
     { label: '보고사항', ok: written, focus: '#r_report' },
@@ -192,7 +195,7 @@ function updateReport(){
     { label: '자금과목', ok: !!radio('r_fund'), focus: '#r_fund input' },
     { label: '출장일시', ok: !!$('#r_period').value.trim(), focus: '#r_period' },
     { label: '출장지', ok: !!$('#r_destination').value.trim(), focus: '#r_destination' },
-    { label: '증빙 첨부', ok: exps.length > 0 && proofs === exps.length, optional: true, focus: '#r_exp' },
+    { label: '증빙 첨부', ok: exps.length > 0 && !noProof, optional: true, focus: '#r_exp' },
   ];
   renderReady('#rReadyList', '#rReadyBar', '#rReadyPct', items, '#btnReport', '그룹웨어에 정산 입력하기');
 }
