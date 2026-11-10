@@ -753,14 +753,19 @@ test('정산 자가 테스트 2026-10-28: 미지출액 0·면세 오판·식대 
   assert.deepEqual(settleLines(rep, {}).map(l => l.planDate), ['2026-11-23', '2026-12-23']);
 });
 
-test('보고서 초안: 자차 교통비를 지도 조회값으로 못 바꾸면 신청 때 더한 여유분은 뺌 (자가 테스트 2026-10-28)', () => {
+test('보고서 초안: 자차 유류비 줄은 넣지 않음(화면이 네이버 지도로 조회), 대중교통은 여유분 빼고 증빙 없이 (사용자 확인 2026-11-10)', () => {
   const fs = require('fs'), os = require('os'), path = require('path');
   const { Store } = require('../src/engine/store'); const { reportDraft } = require('../src/engine/runner');
   const s = new Store(fs.mkdtempSync(path.join(os.tmpdir(), 'ta-draft-')));
-  s.save('t', { apply: { reason: 'r', destination: 'd', start: '2026-10-30', end: '2026-10-30', purpose: 'p', companions: [], transport: { mode: 'car', to: 'd' },
-    expenses: [{ item: 'domestic_transport', amount: 80000, memo: '출장 유류비 및 통행료 (왕복 + 여유 20,000원)' }] }, fare: { total: 60000, source: 'input' } });
+  const apply = mode => ({ reason: 'r', destination: 'd', start: '2026-10-30', end: '2026-10-30', purpose: 'p', companions: [], transport: { mode, to: 'd' },
+    expenses: [{ item: 'domestic_transport', amount: 80000, memo: `출장 ${mode === 'car' ? '유류비 및 통행료' : '대중교통비'} (왕복 + 여유 20,000원)` }, { item: 'meal', amount: 9000, memo: '식대' }] });
+  s.save('c', { apply: apply('car'), fare: { total: 60000, screenshot: '/x/교통비_car_1.png', source: 'input' } });
+  assert.deepEqual(reportDraft(s, {}, 'c').expenses.map(e => e.item), ['meal']);   // 신청 금액(유류비+통행료)을 넣어 두면 조회 실패 때 그대로 청구됐음
+  s.save('t', { apply: apply('transit'), fare: { total: 60000, screenshot: '/x/교통비_transit_1.png', source: 'input' } });
   const e = reportDraft(s, {}, 't').expenses[0];
-  assert.equal(e.amount, 60000); assert.ok(!/여유/.test(e.memo), e.memo);
+  assert.equal(e.amount, 60000); assert.ok(!/여유/.test(e.memo), e.memo); assert.deepEqual(e.proofs, []);   // 지도 캡처는 영수증이 아님
+  s.save('t2', { apply: apply('transit') });
+  assert.equal(reportDraft(s, {}, 't2').expenses[0].amount, 60000);   // 조회값이 없으면 신청액에서 여유분만 뺌
 });
 
 test('한 줄 메모 자가 테스트 2026-10-28: 모델명 숫자·요일 조사·주말 걸친 범위·잘못된 M/D·해 넘김·새벽 출발·밤 12시·장소', () => {
@@ -981,4 +986,5 @@ test('영수증 없는 경비는 정산에서 빠짐 — 자차 유류대만 예
   assert.deepEqual(settleLines(R.parseReport({ ...base, transport: { mode: 'car' }, expenses: exp }), {}).map(l => l.amount).sort(), [0, 30000, 9000].sort());   // 자차 유류비 줄은 영수증 없어도 들어감, 영수증 없는 통행료는 빠짐
   assert.deepEqual(settleLines(R.parseReport({ ...base, transport: { mode: 'car' }, expenses: [{ item: 'meal', amount: 9000, memo: '10/20 1인 중식' }] }), {}), []);   // 자차라도 식대는 영수증 필요
   assert.deepEqual(settleLines(R.parseReport({ ...base, expenses: exp }), {}).map(l => l.amount), [9000, 0]);   // 교통편 모름도 자차 아님
+  assert.deepEqual(settleLines(R.parseReport({ ...base, transport: { mode: 'car' }, expenses: [{ item: 'domestic_transport', amount: 75814, memo: '출장 유류비 및 통행료 (왕복)' }] }), {}), []);   // 예전 초안 줄(통행료 포함)은 영수증 없이 안 들어감
 });

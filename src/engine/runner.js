@@ -163,13 +163,14 @@ function reportDraft(store, cfg, id) {
     purpose: a.purpose, report: '',
     schedule: days.map(date => ({ date, place: a.destination, detail: '' })),
     transport: a.transport ? { mode: a.transport.mode, from: a.transport.from || '', to: a.transport.to || '', place: a.transport.place || (r.fare && r.fare.place && r.fare.place.lng ? r.fare.place : null) } : null,
-    // 교통비는 신청 때 더한 여유분 없이 실제(네이버 지도) 금액으로, 증빙은 지도 캡처. 자차는 내 차 기준(8km/L)으로 조회한 것만 증빙이 되고,
-    // 정산엔 유류대만 넣는다 (통행료·하이패스는 영수증으로 따로 — 지도 추정값은 증빙이 안 됨)
-    expenses: (r.expenses || a.expenses).map(({ item, amount, memo }) => item === 'domestic_transport' && r.fare && r.fare.total && (a.transport.mode !== 'car' || r.fare.basis === carBasis({ type: cfg.carType, fuel: cfg.carFuel }))
-      ? (a.transport.mode === 'car' ? R.fuelOnlyExpense(r.fare) : { item, amount: r.fare.total, memo: memo.replace(/ \+ 여유 [\d,]+원/, ''), proofs: r.fare.screenshot ? [r.fare.screenshot] : [] })
-      : item === 'domestic_transport' && /\+ 여유 [\d,]+원/.test(memo || '')   // 지도 조회값이 없으면 신청액에서 여유분은 뺀다 (영수증 없는 돈이 청구될 뻔)
-        ? { item, amount: Math.max(0, amount - Number(/\+ 여유 ([\d,]+)원/.exec(memo)[1].replace(/,/g, ''))), memo: memo.replace(/ \+ 여유 [\d,]+원/, ''), proofs: [] }
-        : { item, amount, memo, proofs: [] }),
+    // 자차 유류비는 초안에 넣지 않는다 — 보고서 화면이 네이버 지도로 유류대를 새로 조회해 넣고 그 캡처를 증빙으로 붙인다 (app.js lookupFuel).
+    // 신청 금액(유류비+통행료)을 넣어 두면 조회가 안 될 때 영수증 없는 통행료가 그대로 청구됐음 (사용자 확인 2026-11-10)
+    // 그 밖의 줄(대중교통·식대·숙박)은 신청 금액을 자리만 잡아 둔다: 증빙이 없어 영수증을 붙이기 전엔 정산에 안 들어감. 교통비는 여유분을 빼고
+    expenses: (r.expenses || a.expenses).filter(e => !(e.item === 'domestic_transport' && (a.transport || {}).mode === 'car')).map(({ item, amount, memo }) => {
+      if (item !== 'domestic_transport') return { item, amount, memo, proofs: [] };
+      const margin = /\+ 여유 ([\d,]+)원/.exec(memo || '');
+      return { item, amount: r.fare && r.fare.total ? r.fare.total : margin ? Math.max(0, amount - Number(margin[1].replace(/,/g, ''))) : amount, memo: String(memo || '').replace(/ \+ 여유 [\d,]+원/, ''), proofs: [] };
+    }),
     attachments: [],
   };
 }
@@ -249,6 +250,8 @@ async function attachApprovalDocs(gw, rows, log, range = null) {
   const r = range || listRange('', '');
   let docs = [];
   try { docs = await gw.apiApprovalDocs(r.from.replace(/-/g, ''), r.to.replace(/-/g, '')); } catch (e) { log(`(결재문서 목록 못 읽음: ${String(e.message).slice(0, 120)} — 적요로 판단해요)`); }
+  const reps = docs.filter(d => d.form === R.REPORT_FORM);   // 목록과 보고서 짝짓기가 어긋날 때 볼 수 있게 남김
+  log(`결재 문서 ${docs.length}건 (${r.from} ~ ${r.to}) · 출장보고서 ${reps.length}건${reps.length ? ': ' + reps.slice(0, 5).map(d => `${d.title} [${d.status} ${d.date}]`).join(' / ') : ''}`);
   const byNo = Object.fromEntries(docs.filter(d => d.docNo).map(d => [d.docNo, d]));
   for (const r of rows) {
     const d = r.docNo && byNo[r.docNo];

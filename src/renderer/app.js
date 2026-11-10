@@ -592,7 +592,7 @@ async function loadTrips(){
   // 올라간 출장보고서 결재 문서: 이 PC에서 올린 건 제목으로. 그룹웨어에서 직접 올린 건(이 PC 기록 없음)은 출장 이름이 같고 신청 뒤에 올라간 보고서를 짝지음
   // (목록 API가 결의 전송 금액을 주지 않아 정산 여부로는 알 수 없음). 같은 이름 출장이 여러 번이면 최근 신청부터 그 뒤 가장 이른 보고서를 하나씩
   // ponytail: 같은 이름 출장 중 앞의 것만 보고서를 늦게 올리면 짝이 바뀔 수 있음 — 결의서입력 API로 품의↔결의를 직접 잇게 되면 그걸로
-  const core = x => nz(x).replace(/^(\([^)]*\)|\[[^\]]*\])+/, '').replace(/(로인한)?출장(보고)?(의건)?$/, '');   // '(결재라인수정)[양식] KAI 기술 지원 출장의 건' → 'KAI기술지원'
+  const core = x => nz(x).replace(/^(\([^)]*\)|\[[^\]]*\])+/, '').replace(/(으?로인한)?출장(보고)?(의건)?$/, '');   // '(결재라인수정)[양식] KAI 기술 지원 출장의 건' → 'KAI기술지원'
   const dnum = x => String(x || '').replace(/\D/g, '').slice(0, 8);
   const mine = new Set(), paired = {};
   // 이름이 같은 출장이 여럿이면 보고 문서 하나를 두 출장에 붙이지 않는다 (최근 신청부터, 신청일 이후 가장 이른 문서)
@@ -703,36 +703,33 @@ async function autoGwCheck(force){   // 탭을 열 때 그룹웨어 상태를 �
   runJob('그룹웨어 상태 확인', '/api/job/gw-list', gwRange(), r => { setGw(r.rows, r.reportDocs); showVia(r); loadTrips(); refundCheckOnce(); }, {quiet: true});
 }
 $('#btnGwList').onclick = () => runJob('그룹웨어 상태 확인', '/api/job/gw-list', gwRange(), r => { setGw(r.rows, r.reportDocs); showVia(r); loadTrips(); refundCheckOnce(); }, {quiet: true});
-/* 조회 기간(날짜): 기본 오늘부터 3개월 전까지, 최대 1년. 바꾸면 바로 다시 읽고, 선택은 이 PC에 기억 */
+/* 조회 기간(날짜): 기본 오늘부터 3개월 전까지, 최대 1년. 바꾸면 바로 다시 읽고, 선택은 이 PC에 기억.
+   끝 날짜는 기본으로 '오늘'을 따라온다 (gw_follow). 끝을 직접 지난 날로 고른 기간만 그 날에 고정.
+   예전엔 '저장한 날 = 끝 날짜'인지로 따라올지 정했는데, 조회할 때마다 저장한 날을 오늘로 덮어써서 앱을 켜 둔 채 날이 바뀌면
+   끝이 그대로 멈췄음 → 오늘 올린 출장보고서가 조회에서 빠져 [보고서 작성]이 다시 보였음 (사용자 제보 2026-11-10: 끝 11/08, 보고서 11/10) */
 const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const gwFollow = () => { try { return localStorage.gw_follow !== '0'; } catch(e){ return true; } };   // 표시가 없으면(예전 버전에서 넘어옴) 따라옴
+const setGwFollow = on => { try { localStorage.gw_follow = on ? '1' : '0'; } catch(e){ /* */ } };
 function gwRange(){
   const today = new Date(), def = new Date(today); def.setMonth(def.getMonth() - 3);
   let from = $('#gwFrom').value || ymd(def), to = $('#gwTo').value || ymd(today);
-  // 끝이 '그날 오늘'이던 기간은 날짜가 바뀌면 오늘까지 같은 길이로 밈. 앱을 켜 둔 채 날이 바뀌면 끝이 멈춰 있어서
-  // 오늘 올린 출장보고서가 조회에서 빠지고 [보고서 작성]이 다시 보였음 (사용자 제보 2026-11-10 — 끝 11/08, 보고서 11/10)
-  let on = ''; try { on = localStorage.gw_saved_on || ''; } catch(e){ /* */ }
-  if(on && to === on && on < ymd(today)){ const nf = new Date(`${from}T00:00:00`); nf.setDate(nf.getDate() + Math.round((new Date(`${ymd(today)}T00:00:00`) - new Date(`${to}T00:00:00`)) / 864e5)); from = ymd(nf); to = ymd(today); }
+  if(gwFollow() && to !== ymd(today)){   // 날짜가 바뀌었으면 같은 길이로 오늘까지 밈
+    const nf = new Date(`${from}T00:00:00`); nf.setDate(nf.getDate() + Math.round((new Date(`${ymd(today)}T00:00:00`) - new Date(`${to}T00:00:00`)) / 864e5)); from = ymd(nf); to = ymd(today);
+  }
   if(from > to) [from, to] = [to, from];
   const lim = new Date(`${to}T00:00:00`); lim.setFullYear(lim.getFullYear() - 1);
   if(from < ymd(lim)) from = ymd(lim);   // 최대 1년
   $('#gwFrom').value = from; $('#gwTo').value = to;
-  try { localStorage.gw_from = from; localStorage.gw_to = to; localStorage.gw_saved_on = ymd(today); } catch(e){ /* */ }
+  try { localStorage.gw_from = from; localStorage.gw_to = to; } catch(e){ /* */ }
   // 빠른 버튼 표시: 끝이 오늘이고 시작이 정확히 n개월 전이면 그 버튼을 켬
   $$('#gwRange .quickr .btn').forEach(b => { const d = new Date(today); d.setMonth(d.getMonth() - Number(b.dataset.m)); b.classList.toggle('on', to === ymd(today) && from === ymd(d)); });
   return {from, to};
 }
-$$('#gwRange .quickr .btn').forEach(b => b.onclick = () => { const today = new Date(), d = new Date(today); d.setMonth(d.getMonth() - Number(b.dataset.m)); $('#gwFrom').value = ymd(d); $('#gwTo').value = ymd(today); gwRange(); $('#btnGwList').click(); });
-// 저장한 기간 되살리기: 끝이 '그날 오늘'이었으면(기본·1/3/6개월) 오늘 기준으로 같은 길이만큼 밀어 줌. 끝을 직접 고른 기간만 그대로
-// (예전엔 끝 날짜가 저장된 날에 멈춰 있어서 그 뒤에 올린 품의가 목록에서 빠졌음)
-try {
-  const f = localStorage.gw_from, t = localStorage.gw_to, on = localStorage.gw_saved_on;
-  if(f && t){
-    if(!on || t === on){ const today = new Date(), shift = Math.round((new Date(`${ymd(today)}T00:00:00`) - new Date(`${t}T00:00:00`)) / 864e5), nf = new Date(`${f}T00:00:00`); nf.setDate(nf.getDate() + shift); $('#gwFrom').value = ymd(nf); $('#gwTo').value = ymd(today); }
-    else { $('#gwFrom').value = f; $('#gwTo').value = t; }
-  }
-} catch(e){ /* */ }
+$$('#gwRange .quickr .btn').forEach(b => b.onclick = () => { const today = new Date(), d = new Date(today); d.setMonth(d.getMonth() - Number(b.dataset.m)); $('#gwFrom').value = ymd(d); $('#gwTo').value = ymd(today); setGwFollow(true); gwRange(); $('#btnGwList').click(); });
+try { const f = localStorage.gw_from, t = localStorage.gw_to; if(f && t){ $('#gwFrom').value = f; $('#gwTo').value = t; } } catch(e){ /* */ }   // 저장한 기간 되살리기 (끝이 오늘을 따라오면 gwRange 가 밀어 줌)
 gwRange();
-['#gwFrom', '#gwTo'].forEach(id => $(id).onchange = () => { gwRange(); $('#btnGwList').click(); });
+$('#gwTo').onchange = () => { setGwFollow($('#gwTo').value >= ymd(new Date())); gwRange(); $('#btnGwList').click(); };   // 끝을 지난 날로 고르면 고정, 오늘로 돌리면 다시 따라옴
+$('#gwFrom').onchange = () => { if(gwFollow()) $('#gwTo').value = ymd(new Date()); gwRange(); $('#btnGwList').click(); };   // 시작만 바꿈: 방금 고른 시작 날짜는 밀지 않게 끝부터 오늘로
 function deleteGwRows(pick){
   if(!pick.length) return;
   const keys = pick.map(r => r.key);
@@ -758,7 +755,7 @@ function schedRow(r={}){
   $('#r_sched tbody').appendChild(tr);
 }
 // 정산에 들어가는 줄 = 영수증이 붙은 줄 (자차의 '출장 유류비' 줄만 예외). 엔진 rules.claimable 과 같은 규칙 — 영수증 없는 줄은 흐리게, 합계에서 뺌
-const claimableTr = tr => JSON.parse(tr.dataset.proofs || '[]').length > 0 || ((reportTransport && reportTransport.mode) === 'car' && tr.querySelector('.item').value === 'domestic_transport' && /^출장 유류비/.test(tr.querySelector('.memo').value.trim()));
+const claimableTr = tr => JSON.parse(tr.dataset.proofs || '[]').length > 0 || ((reportTransport && reportTransport.mode) === 'car' && tr.querySelector('.item').value === 'domestic_transport' && /^출장 유류비 \(/.test(tr.querySelector('.memo').value.trim()));
 const refreshReport = () => {
   const trs = [...$('#r_exp tbody').querySelectorAll('tr')];
   trs.forEach(tr => { const ok = claimableTr(tr); tr.style.opacity = ok ? '' : '.5'; tr.title = ok ? '' : '영수증이 없어 정산에서 빠져요'; });

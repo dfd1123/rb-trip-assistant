@@ -564,6 +564,9 @@ class Amaranth {
   /** 전자결재 > 상신문서 목록 (기안일 from~to, YYYYMMDD). 문서번호·결재양식·결재상태가 있어 "진짜 출장 신청/보고 문서"를 가려낼 수 있다.
    *  번들에서 확인: 상신문서 화면(UBA1010, 메뉴 1000400, 상위 1000300)이 /eap/eap107A04 를 이 본문으로 호출한다 */
   async apiApprovalDocs(from, to) {
+    // 끝 날짜는 하루 뒤까지 묻는다 (여유): 끝 날짜 당일 문서가 빠지는지는 확인 못 했고, 하루 더 물어도 내일 문서는 없으니 손해 없음.
+    // 확인된 것: 끝 11/10 → 11/11 로 물었을 때 11/10 12:49 에 상신한 출장보고서가 옴 (job.log 2026-11-10). 실제 원인은 화면의 조회 기간 끝이 11/08 에 멈춘 것 (app.js gwRange)
+    { const t = new Date(`${to.slice(0, 4)}-${to.slice(4, 6)}-${to.slice(6, 8)}T00:00:00`); if (!isNaN(t)) { t.setDate(t.getDate() + 1); to = `${t.getFullYear()}${String(t.getMonth() + 1).padStart(2, '0')}${String(t.getDate()).padStart(2, '0')}`; } }
     const out = [];
     for (let page = 1; page <= 10; page++) {
       const data = await this.apiCall('/eap/eap107A04', {

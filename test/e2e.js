@@ -113,11 +113,11 @@ app.whenReady().then(async () => {
     process.env.MOCK_FORM = 'report_form_body.html';
     const draft = runner.reportDraft(store, store.config(), id);
     assert.equal(draft.schedule.length, 3);
-    assert.equal(draft.expenses[0].item, 'domestic_transport');
+    assert.ok(!draft.expenses.some(e => e.item === 'domestic_transport'), '자차 유류비는 초안에 없음 (화면이 네이버 지도로 조회)');
     draft.report = 'SDK 래핑 완료\n실기 검증 3건 통과';
     draft.fund = '일반경비'; draft.category = '로봇';   // 출장구분은 기본값 없음
     draft.schedule[0].detail = '로봇 셋업'; draft.schedule[1].detail = '실기 검증'; draft.schedule[2].detail = '결과 공유';
-    draft.expenses[1].amount = 150000;            // 실제 숙박비
+    draft.expenses.find(e => e.item === 'domestic_lodging').amount = 150000;            // 실제 숙박비
     draft.attachments = [];
     // 정산 경비는 줄마다 증빙(이미지·PDF) 필수 → 테스트용 파일을 만들어 붙인다
     const proofDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ta-proof-'));

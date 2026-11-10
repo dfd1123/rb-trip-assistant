@@ -232,9 +232,10 @@ function overseasExpenses({ start, end, name, people = 1, grade, rate, rank = 's
 }
 
 /** 정산에 넣는 경비 = 영수증(증빙)이 붙은 줄. 자차 유류대만 예외 — 네이버 지도 기준 금액이라 영수증이 없다 (사용자 요청 2026-11-10: 자차가 아니면 영수증 없는 줄은 집계 안 함). 화면 합계(app.js claimable)도 같은 규칙 */
-// 유류비 줄 = 앱이 만든 '출장 유류비 …' 줄 (신청 때 넣은 유류비·[유류대 조회]). 통행료·택시 등은 자차여도 영수증이 있어야 함 (사용자 확인 2026-11-10)
+// 유류비 줄 = 보고서 화면이 네이버 지도로 조회해 넣은 '출장 유류비 (왕복, …)' 줄 (보통 지도 캡처가 증빙으로 붙음 — 캡처를 못 찍었을 때만 이 예외에 걸림).
+// 통행료·택시, 예전 초안의 '출장 유류비 및 통행료' 줄은 자차여도 영수증이 있어야 함 (사용자 확인 2026-11-10)
 // ponytail: 적요 앞머리로 알아봄 — 사람이 적요를 고치면 영수증 없는 줄로 빠짐(흐린 줄로 보임). 줄에 표시를 따로 달게 되면 그걸로
-const FUEL_MEMO = /^출장 유류비/;
+const FUEL_MEMO = /^출장 유류비 \(/;
 const claimable = (e, mode) => (e.proofs || []).length > 0 || (mode === 'car' && e.item === 'domestic_transport' && FUEL_MEMO.test(String(e.memo || '').trim()));
 
 function parseReport(data) {
