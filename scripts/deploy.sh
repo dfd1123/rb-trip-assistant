@@ -68,7 +68,8 @@ TAG="v${VERSION}"
 read -r -p "  → v${VERSION} 로 배포할까요? 바뀐 점 한 줄 (Release 노트): " NOTES
 NOTES=${NOTES:-"v${VERSION}"}
 read -r -p "  진행? [y/N]: " OK; [ "$OK" = "y" ] || [ "$OK" = "Y" ] || { echo "취소"; exit 0; }
-gh release view "$TAG" --repo "$RELEASE_REPO" >/dev/null 2>&1 && { echo "Error: ${TAG} 가 이미 있습니다."; exit 1; }
+# 공개된 Release 가 있으면 멈춤. Draft 로만 남아 있으면(지난 배포가 파일 올리다 끊김 — 2026-11-08 v0.4.4) 다시 빌드해 마저 올리고 공개한다
+if gh release view "$TAG" --repo "$RELEASE_REPO" --json isDraft -q .isDraft 2>/dev/null | grep -qx false; then echo "Error: ${TAG} 가 이미 있습니다."; exit 1; fi
 
 node -e "const f='package.json',j=JSON.parse(require('fs').readFileSync(f,'utf8'));j.version='${VERSION}';require('fs').writeFileSync(f,JSON.stringify(j,null,2)+'\n')"
 
@@ -105,7 +106,7 @@ printf '  %s\n' "${FILES[@]}"
 # ---------- 버전 커밋·태그 → Release(설치 파일 + version.json) ----------
 git add package.json
 if git diff --cached --quiet; then echo "  ⓘ package.json 이 이미 v${VERSION} 이라 버전 커밋은 없이 태그만 달아요."; else git commit -m "chore: v${VERSION} 배포"; fi
-git tag "$TAG"
+git tag "$TAG" 2>/dev/null || echo "  ⓘ 태그 ${TAG} 는 이미 있어요 (지난 배포에서 달림)."
 git push origin main "$TAG"
 
 BASE_URL="https://github.com/${RELEASE_REPO}/releases/download/${TAG}"
@@ -115,7 +116,23 @@ NOTES="$NOTES" node -e "
   require('fs').writeFileSync('dist/version.json',JSON.stringify(out,null,2)+'\n');
 " "${FILES[@]}"
 echo "▶ Release ${TAG} → ${RELEASE_REPO}"
-gh release create "$TAG" --repo "$RELEASE_REPO" --title "와니의 결재 도우미 v${VERSION}" --notes "$NOTES" --latest "${FILES[@]}" dist/version.json
+# 만들기(Draft) → 파일 올리기 → 공개, 세 단계로. 한 번에 만들면 올리다 끊겼을 때 Draft 로 남아 앱이 새 버전을 못 본다 (version.json 은 공개된 latest 에서만 받음)
+# 파일은 gh 가 아니라 curl 로 올린다: gh release upload 는 100MB 안팎 파일에서 연결도 안 맺고 멈춰 v0.4.4 배포가 두 번 끊겼음 (2026-11-08). curl 은 같은 파일을 6초에 올림
+gh release view "$TAG" --repo "$RELEASE_REPO" >/dev/null 2>&1 || gh release create "$TAG" --repo "$RELEASE_REPO" --title "와니의 결재 도우미 v${VERSION}" --notes "$NOTES" --draft
+REL_ID=$(gh api "repos/${RELEASE_REPO}/releases/tags/${TAG}" -q .id); TOKEN=$(gh auth token)
+for f in "${FILES[@]}" dist/version.json; do
+  name=$(basename "$f"); size=$(stat -f%z "$f" 2>/dev/null || stat -c%s "$f")
+  have=$(gh api "repos/${RELEASE_REPO}/releases/${REL_ID}/assets" --paginate -q ".[]|select(.name==\"${name}\")|[.id,.size,.state]|@tsv")
+  if [ -n "$have" ]; then
+    if [ "$(echo "$have" | cut -f2)" = "$size" ] && [ "$(echo "$have" | cut -f3)" = uploaded ]; then echo "  ✓ ${name} (이미 올라가 있음)"; continue; fi
+    gh api -X DELETE "repos/${RELEASE_REPO}/releases/assets/$(echo "$have" | cut -f1)" >/dev/null   # 올리다 만 것은 지우고 다시
+  fi
+  echo "  ↑ ${name}"
+  curl -sS --fail --http1.1 --max-time 1800 -o /dev/null -X POST -H "Authorization: token ${TOKEN}" -H "Content-Type: application/octet-stream" --data-binary @"$f" \
+    "https://uploads.github.com/repos/${RELEASE_REPO}/releases/${REL_ID}/assets?name=${name}" || { echo "Error: ${name} 올리다 끊겼어요. yarn deploy 를 다시 하면 올라간 파일은 건너뛰고 이어서 올려요."; exit 1; }
+done
+gh release edit "$TAG" --repo "$RELEASE_REPO" --draft=false --latest
+[ "$(gh release view "$TAG" --repo "$RELEASE_REPO" --json isDraft -q .isDraft)" = false ] || { echo "Error: ${TAG} 가 아직 Draft 예요. 공개로 바꾸기: gh release edit ${TAG} --draft=false --latest"; exit 1; }
 # 정리: 빌드 결과물(수백 MB~GB)은 Release 에 올라갔으니 지운다.
 # Docker 는 --rm 이라 컨테이너가 남지 않고, 이미지(electronuserland/builder:18)는 web-rainbow-ui 배포와 같이 쓰는 것이라 그대로 둔다.
 rm -rf dist
