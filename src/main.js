@@ -238,7 +238,7 @@ async function startJobNow(kind, fn, title) {
   if (!bg && gwShown) { gwShown = false; park(gwWin); }   // 사람이 새 작업을 시키면 보던 작업 창은 숨김. 팝업(전 작업의 결재 작성 창 등)은 사람이 마저 쓰는 중일 수 있어 그대로
   const env = { dev: !app.isPackaged /* 개발 중에만 화면 구조 진단 (배포본은 사람 품의를 건드리면 안 됨) */, debugDir: app.isPackaged ? path.join(app.getPath('userData'), 'debug') : path.join(__dirname, '..', 'debug'), cfg: store.config(), store, ui: j, log: m => j.info(m), naverKeys: naverKeys(), fetch: net.fetch, gwWindow: () => gwWindow(false), showGw, makeNaverWindow, creds: gwCreds };
   j.done = (async () => {
-    try { j.result = await fn(env); j.state = 'done'; try { j.info('✔ 완료'); } catch (e) { /* 끝난 뒤 들어온 취소 — 이미 다 함 */ } }
+    try { j.result = await fn(env); j.state = 'done'; try { j.info('✔ 완료'); } catch (e) { /* 끝난 뒤 들어온 취소 — 이미 다 함 */ } reportDone(j); }
     catch (e) { j.error = e instanceof R.InputError ? `입력 오류: ${e.message}` : e.message; j.state = j.cancelled ? 'cancelled' : 'error';
       if (j.state === 'error' && !(e instanceof R.InputError)) reportJob(j, 'error', e.stack || e.message); }   // 입력 검증 오류는 사람 실수라 안 보냄
     finally { if (j.state !== 'done' && mainWin && !mainWin.isDestroyed()) mainWin.focus(); }   // 성공 시엔 작성 팝업이 앞
@@ -246,7 +246,7 @@ async function startJobNow(kind, fn, title) {
   return { ok: true, id: j.id };
 }
 
-// ---------- 실패·막힘 기록을 개발자 슬랙으로 (끌 수 없음. 설정 화면에 알림) ----------
+// ---------- 실패·막힘 기록, 성공 알림을 개발자 슬랙으로 (끌 수 없음. 설정 화면에 알림) ----------
 const slackKeys = () => { const b = (() => { try { return require('./engine/builtin-key.json'); } catch (e) { return {}; } })();
   return { token: (process.env.SLACK_BOT_TOKEN || b.slackToken || '').trim(), channel: (process.env.SLACK_CHANNEL || b.slackChannel || '').trim() }; };
 /** 지금 열린 창들(작업용 그룹웨어·작성 창·네이버 지도) 캡처 + 화면 HTML */
@@ -285,6 +285,21 @@ async function reportJob(j, kind, detail) {
     const r = await require('./engine/errreport').sendReport({ token, channel, fetch: net.fetch, text: head, files });
     if (r && r.ts) j.logs.push(kind === 'error' ? '✉ 오류 기록을 개발자에게 보냈어요 (고치는 데 써요)' : '✉ 막힌 곳 기록을 개발자에게 보냈어요');
   } catch (e) { console.log('[report] 보내기 실패:', e.message); }
+}
+
+/** 결재 문서를 그룹웨어에 입력하는 작업이 성공했을 때도 알림 (사용자 요청 2026-11-11). 글 한 줄만 — 실패 때와 달리 작업 기록·화면 캡처·HTML 은 보내지 않는다 */
+const DONE_REPORT = { apply: '출장 신청', report: '출장 보고·정산', purchase: '구매의뢰', visitor: '방문 신청' };
+const doneText = (j, cfg, version, now = Date.now()) => {
+  const sec = Math.max(0, Math.round((now - j.startedAt) / 1000)), stuck = [...j.reported].filter(k => k.startsWith('stuck:')).length;
+  return `✅ 작업 완료 · ${DONE_REPORT[j.kind]} (${j.title})\n`
+    + `${cfg.name || '(이름 없음)'} · ${cfg.budgetDept || '-'} · 계정 ${cfg.lastLoginId || cfg.gwId || '-'} · v${version} · ${process.platform} ${process.arch}\n`
+    + `걸린 시간 ${sec >= 60 ? `${Math.floor(sec / 60)}분 ${sec % 60}초` : `${sec}초`}${stuck ? ` · 도중에 사람에게 넘긴 곳 ${stuck}번` : ''}`;
+};
+async function reportDone(j) {
+  try {
+    const { token, channel } = slackKeys(); if (!token || !channel || !DONE_REPORT[j.kind]) return;
+    await require('./engine/errreport').sendReport({ token, channel, fetch: net.fetch, text: doneText(j, store.config(), app.getVersion()) });
+  } catch (e) { console.log('[report] 완료 알림 보내기 실패:', e.message); }
 }
 
 // ---------- 영수증 자동 분류 ----------
