@@ -4,3 +4,4 @@ dist/
 debug/
 src/engine/builtin-key.json
 .env
+app/

@@ -14,11 +14,12 @@
     "e2e": "electron test/e2e.js",
     "e2e:settle": "electron test/e2e-settle.js",
     "e2e:purchase": "electron test/e2e-purchase.js",
-    "predist": "node scripts/write-builtin-key.js",
+    "bundle": "node scripts/bundle.js",
+    "predist": "node scripts/write-builtin-key.js && node scripts/bundle.js",
     "dist": "electron-builder",
-    "dist:win": "node scripts/write-builtin-key.js && electron-builder --win",
-    "dist:mac": "node scripts/write-builtin-key.js && electron-builder --mac",
-    "dist:linux": "node scripts/write-builtin-key.js && electron-builder --linux",
+    "dist:win": "node scripts/write-builtin-key.js && node scripts/bundle.js && electron-builder --win",
+    "dist:mac": "node scripts/write-builtin-key.js && node scripts/bundle.js && electron-builder --mac",
+    "dist:linux": "node scripts/write-builtin-key.js && node scripts/bundle.js && electron-builder --linux",
     "dev": "node scripts/brand-dev-electron.js && electron .",
     "deploy": "bash scripts/deploy.sh"
   },
@@ -28,7 +29,8 @@
   },
   "devDependencies": {
     "electron": "^33.2.1",
-    "electron-builder": "^25.1.8"
+    "electron-builder": "^25.1.8",
+    "esbuild": "^0.28.2"
   },
   "build": {
     "appId": "com.rainbowrobotics.tripassistant",
@@ -39,10 +41,13 @@
       "buildResources": "build"
     },
     "files": [
-      "src/**/*",
+      "app/**/*",
       "assets/**/*",
       "package.json"
     ],
+    "extraMetadata": {
+      "main": "app/main.js"
+    },
     "win": {
       "target": [
         {

@@ -75,9 +75,11 @@ node -e "const f='package.json',j=JSON.parse(require('fs').readFileSync(f,'utf8'
 
 # ---------- 빌드 ----------
 rm -rf dist
-trap 'rm -f "$APP_DIR/src/engine/builtin-key.json"' EXIT   # 중간에 실패해도 키 파일은 남기지 않음
+trap 'rm -f "$APP_DIR/src/engine/builtin-key.json"; rm -rf "$APP_DIR/app"' EXIT   # 실패해도 키 파일·키 박힌 번들은 안 남김
 node scripts/write-builtin-key.js
 [ -s src/engine/builtin-key.json ] || { echo "Error: 팀 공용 키(AI·환율)를 앱에 넣지 못했습니다."; exit 1; }
+node scripts/bundle.js   # src/ 를 번들·최소화해 app/ 으로 (키가 min 코드 안으로 박힘). 반드시 키 쓴 다음
+[ -s app/main.js ] || { echo "Error: 번들(app/main.js) 생성 실패."; exit 1; }
 if [ $IS_MAC = 1 ]; then
   echo "▶ macOS (arm64·x64, 서명+공증)"
   npx electron-builder --mac --arm64 --x64 --publish never
