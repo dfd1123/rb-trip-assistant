@@ -989,7 +989,56 @@ test('영수증 없는 경비는 정산에서 빠짐 — 자차 유류대만 예
   assert.deepEqual(settleLines(R.parseReport({ ...base, transport: { mode: 'car' }, expenses: [{ item: 'domestic_transport', amount: 75814, memo: '출장 유류비 및 통행료 (왕복)' }] }), {}), []);   // 예전 초안 줄(통행료 포함)은 영수증 없이 안 들어감
 });
 
-test('지출결의 parseSettle — 개인카드(외상+과세), 공급가액=총액·부가세0, 0 유효, 필수칸·자금과목 (가이드 06)', () => {
+test('지출 품의 parsePui — 예산과목 코드·적요 필수, 0 유효, 전부 0원은 막음, 제목 기본 = 적요', () => {
+  const base = { memo: '11월 사무용품', purpose: '사무용품 구매', file: '/tmp/invoice.pdf', lines: [{ code: '8120004', label: '여비교통비(판)_식대', amount: '45,000', memo: '회의 식대' }, { code: '8120002', amount: 0, memo: '0원 줄' }] };
+  const p = R.parsePui(base);
+  assert.equal(p.title, '11월 사무용품');
+  assert.deepEqual(p.lines.map(l => [l.code, l.label, l.amount]), [['8120004', '여비교통비(판)_식대', 45000], ['8120002', '', 0]]);
+  assert.deepEqual(R.parsePui({ ...base, lines: [{ label: '지급수수료', amount: 30000, memo: 'x' }] }).lines.map(l => [l.code, l.label]), [['', '지급수수료']]);   // 코드 몰라도 이름이면 됨 (코드도움에서 이름으로 찾음)
+  assert.throws(() => R.parsePui({ ...base, lines: [{ amount: 1, memo: 'x' }] }), /예산과목을 골라/);
+  assert.deepEqual(R.parsePui({ ...base, proofs: ['/tmp/fx.png'] }).proofs, ['/tmp/fx.png']);
+  assert.deepEqual(R.parsePui({ ...base, consent: '/tmp/동의서.pdf', proofs: ['/tmp/fx.png'] }).proofs, ['/tmp/동의서.pdf', '/tmp/fx.png']);   // AI 도구 동의서는 넣었으면 첨부
+  assert.deepEqual(R.parsePui({ ...base, ai_tool: true }).proofs, [], '동의서 없이도 올라감 (팀 단위 도구는 건너뛰기)');
+  assert.deepEqual(R.parsePui({ ...base, file: undefined, files: ['/a/claude.pdf', '/a/codex.pdf'] }).files, ['/a/claude.pdf', '/a/codex.pdf'], '청구서 여러 개');
+  assert.deepEqual(R.parsePui(base).files, ['/tmp/invoice.pdf'], '예전 반복 기록(file 하나)도 됨');
+  // 지원 한도는 사용자가 넣은 금액(limit)까지만: Claude 29,161 + Codex 29,161, 한도 50,000 → 29,161 + 20,839
+  const two = [{ code: '1', amount: 29161, memo: 'Claude Pro' }, { code: '1', amount: 29161, memo: 'Codex' }];
+  assert.deepEqual(R.parsePui({ ...base, limit: 50000, lines: two }).lines.map(l => l.amount), [29161, 20839]);
+  assert.deepEqual(R.parsePui({ ...base, ai_tool: true, lines: two }).lines.map(l => l.amount), [29161, 29161], '한도를 안 넣으면 앱이 깎지 않음');
+  assert.deepEqual(R.parsePui({ ...base, limit: '', lines: two }).lines.map(l => l.amount), [29161, 29161]);
+  assert.deepEqual(R.capTotal([{ amount: 60000 }, { amount: 0 }, { amount: 5000 }], 50000).map(l => l.amount), [50000, 0, 0]);
+  assert.equal(R.parsePui({ ...base, title: '직접 쓴 제목' }).title, '직접 쓴 제목');
+  assert.throws(() => R.parsePui({ ...base, memo: ' ' }), /품의 적요/);
+  assert.throws(() => R.parsePui({ ...base, purpose: '' }), /품의목적/);
+  assert.throws(() => R.parsePui({ ...base, lines: [{ code: '식대', amount: 1, memo: 'x' }] }), /예산과목 코드/);
+  assert.throws(() => R.parsePui({ ...base, lines: [{ code: '8120004', amount: 1, memo: '' }] }), /적요/);
+  assert.throws(() => R.parsePui({ ...base, lines: [{ code: '8120004', amount: 0, memo: 'x' }] }), /모두 0원/);
+  assert.throws(() => R.parsePui({ ...base, lines: [] }), /한 줄 이상/);
+  assert.throws(() => R.parsePui({ ...base, lines: [{ code: '8120004', amount: '', memo: 'x' }] }), /품의금액을 넣어/);
+  assert.throws(() => R.parsePui({ ...base, file: '' }), /청구서 및 견적서 파일을 올려/);   // 청구서 및 견적서 첨부 필수
+  assert.throws(() => R.parsePui({ ...base, file: '/tmp/a.heic' }), /PDF·이미지/);
+});
+
+test('지출 품의 제목 puiTitle — [품의서] YY년 M월 … 요청의 건 (청구서 날짜 기준)', () => {
+  assert.equal(R.puiTitle('AI 툴 결제', '2026-10-22'), '[품의서] 26년 10월 AI 툴 결제 요청의 건');
+  assert.equal(R.puiTitle('[품의서] 26년 10월 AI 툴 결제 요청의 건', '2026-10-22'), '[품의서] 26년 10월 AI 툴 결제 요청의 건', 'AI 가 틀까지 써도 한 번만');
+  assert.equal(R.puiTitle('사무용품 구매의 건', new Date('2027-01-05T00:00:00')), '[품의서] 27년 1월 사무용품 구매 요청의 건');
+  assert.equal(R.puiTitle('', '2026-11-01'), '[품의서] 26년 11월 지출 요청의 건');
+});
+
+test('매달 알림 dueRepeat — 그날 지나면, 달마다 한 번, 만든 달 제외, 꺼지면 안 함, 꺼져 있던 날 따라잡기', () => {
+  const r = { id: 'a', on: true, day: 16, base: '2026-11', last: '2026-11' };
+  const at = s => new Date(`${s}T10:00:00`);
+  assert.equal(R.dueRepeat([r], at('2026-11-20')), null, '처음 올린 달은 안 함');
+  assert.equal(R.dueRepeat([r], at('2026-12-15')), null, '그날 전');
+  assert.equal(R.dueRepeat([r], at('2026-12-16')).ym, '2026-12');
+  assert.equal(R.dueRepeat([{ ...r, last: '2026-12' }], at('2026-12-30')), null, '이번 달 이미 함');
+  assert.equal(R.dueRepeat([{ ...r, on: false }], at('2026-12-20')), null, '끄면 안 함');
+  assert.equal(R.dueRepeat([{ ...r, last: '2026-12' }], at('2027-01-18')).ym, '2027-01', '16일에 PC 꺼져 있었으면 켜진 날 따라잡음');
+  assert.equal(R.dueRepeat([{ ...r, day: 31 }], at('2027-02-28')).ym, '2027-02', '31일 반복은 짧은 달엔 말일');
+});
+
+test('지출 결의 parseSettle — 개인카드(외상+과세), 공급가액=총액·부가세0, 0 유효, 필수칸·자금과목 (가이드 06)', () => {
   const base = { pui: { ym: '2026-10', day: '15', seq: '3' }, purpose: '10월 사무용품 구매', fund: '일반경비',
     expenses: [{ amount: 33000, memo: '10/2 사무용품', file: '/tmp/a.jpg' }] };
   const s = R.parseSettle(base);

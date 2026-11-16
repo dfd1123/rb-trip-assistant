@@ -279,6 +279,49 @@ async function draftVisitor(ai, memo, { today = new Date() } = {}) {
     shoot: (Array.isArray(j.shoot) ? j.shoot : []).map(x => str(x, 20)).filter(x => R.VISITOR_SHOOTS.includes(x)), shoot_purpose: str(j.shoot_purpose, 120), urgent_reason: str(j.urgent_reason, 200) };
 }
 
+const askJson = async (ai, prompt, files = []) => {
+  const text = files.length ? await completeWithFiles(ai, prompt, files) : await complete(ai, prompt);
+  const m = /\{[\s\S]*\}/.exec(text);
+  try { return JSON.parse(m ? m[0] : text); } catch (e) { throw new Error('AI 답을 못 읽었어요. 다시 눌러 보거나 직접 입력해 주세요.'); }
+};
+
+/** 메모와 가장 비슷한 이전 지출 품의 번호 (rows 인덱스), 없으면 -1 */
+async function pickPui(ai, memo, rows) {
+  if (!rows.length) return -1;
+  const list = rows.slice(0, 40).map((r, i) => `${i}. ${r.docTitle || r.memo} (적요: ${r.memo || '-'}, ${r.total}원)`).join('\n');
+  const j = await askJson(ai, `이번에 올릴 지출 품의 메모와 같은 종류(같은 비용·용도)의 이전 품의를 고른다. JSON 하나로만 답해: {"index": 번호, 비슷한 게 없으면 -1}
+이전 품의:\n${list}\n메모: ${memo}`);
+  const i = Math.round(firstNum(j.index));
+  return Number.isInteger(i) && i >= 0 && i < Math.min(rows.length, 40) ? i : -1;
+}
+
+/** 청구서 및 견적서 + 한 줄 메모 → 지출 품의 칸. 예산과목은 틀 줄·회사 목록(items)에 있는 코드만 (지어내지 않게).
+ *  금액은 청구서 통화 그대로 — 원화 환산은 부르는 쪽 */
+async function draftPui(ai, memo, { lines = [], items = [], title = '', invoices = [], today = new Date() } = {}) {
+  const tpl = lines.length ? `이전 품의(틀) 제목: "${title}"\n이전 예산 줄 (코드 예산과목 · 금액 · 적요):\n${lines.map(l => `- ${l.code} ${l.label} · ${l.amount} · ${l.memo}`).join('\n')}\n` : '';
+  const list = items.length ? `회사 예산과목 목록 (코드 분류 > 이름):\n${items.map(x => `${x.code} ${x.path || x.name}`).join('\n')}\n` : '';
+  const files = invoices.filter(x => x.file);
+  const inv = `\n청구서 및 견적서 ${invoices.length}개: ${invoices.map(x => x.name).join(', ')}${files.length ? ` (그중 ${files.map(x => x.name).join(', ')} 는 첨부 파일 순서대로)` : ''}`
+    + invoices.filter(x => x.text).map(x => `\n--- ${x.name} 내용 (표는 탭으로 구분) ---\n${x.text}`).join('');
+  const j = await askJson(ai, `회사 전자결재 '품의서입력(복수)지출' 지출 품의를 쓴다. 청구서·견적서(영수증 포함)와 메모를 읽고 JSON 하나로만 답해. 청구서가 여러 개면 청구서마다 예산 줄 하나씩 (한 품의로 묶음).
+금액은 청구서·견적서·메모에 있는 것만 (지어내지 마, 모르면 null). 실제 낼 총액(부가세 포함)을 청구서에 적힌 통화 그대로 (환산하지 마).
+예산과목 code 는 아래 이전 예산 줄이나 회사 예산과목 목록에서 지출 성격에 가장 맞는 것을 반드시 하나 골라 그 코드를 그대로 써 (목록에 없는 코드는 쓰지 마). 목록이 아예 없을 때만 "".
+오늘: ${todayLine(today)}
+${tpl}${list}{"memo": 품의 목록에 보일 적요 한 줄 (명사형, 예: "11월 사무용품 구매"), "subject": 결재 문서 제목 가운데 말만 짧게 (예: "AI 툴 결제", "사무용품 구매") — 연월·[품의서]·"요청의 건"은 붙이지 마 (앱이 "[품의서] 26년 10월 AI 툴 결제 요청의 건" 꼴로 만듦),
+ "purpose": 품의목적 — 결재자가 이것만 읽고 승인할 수 있게 3~5문장, 결재 문체(~함, ~하고자 함). 무엇을(서비스·품목·요금제·수량), 왜(메모의 업무 용도), 이용 기간·결제 주기, 금액 근거(청구서의 금액·통화·부가세), 기대 효과 순으로. 청구서·메모에 없는 사실은 지어내지 마,
+ "ai_tool": 개인이 쓰는 AI 도구(ChatGPT·Claude·Gemini·Cursor·Copilot 등) 구독·사용료면 true, 아니면 false,
+ "lines": [{"code": 예산과목 코드, "amount": 숫자 또는 null, "currency": 그 청구서 통화 "KRW"|"USD"|그 밖의 ISO 코드, "date": 그 청구서 청구일(발행일) YYYY-MM-DD 또는 "",
+   "memo": 그 줄 적요 — 한국어로 짧게 25자 안 (품목·기간만, 금액·환율·통화는 넣지 마. 예: "Claude Pro 구독료 (10/22~11/22)")}]}
+메모: ${memo}${inv}`, files.map(x => x.file));
+  const str = (x, n = 120) => String(x ?? '').trim().slice(0, n);
+  const nameOf = Object.fromEntries([...items.map(x => [x.code, x.name]), ...lines.map(l => [l.code, l.label])]);
+  return { memo: str(j.memo, 80), subject: str(j.subject || j.title, 80), purpose: str(j.purpose, 900), aiTool: j.ai_tool === true,
+    lines: (Array.isArray(j.lines) ? j.lines : []).map(l => { const c = str(l && l.code), code = nameOf[c] ? c : '';   // 목록에 없는 코드는 버림
+      const n = l && l.amount != null && l.amount !== '' ? firstNum(l.amount) : NaN;   // 0 은 유효, 없으면 '' (빈 칸 = 미입력)
+      const cur = str(l && l.currency, 3).toUpperCase(), date = str(l && l.date, 10);
+      return { code, label: nameOf[code] || '', amount: Number.isFinite(n) ? n : '', memo: str(l && l.memo, 100), currency: /^[A-Z]{3}$/.test(cur) ? cur : 'KRW', date: /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : '' }; }) };
+}
+
 /** 한 줄 메모 → 신청서 YAML (금액 제외) */
 async function draftApply(ai, memo, { places = [], today = new Date() } = {}) {
   const known = places.length ? `\n자주 가는 곳(이름을 그대로 써): ${places.map(p => p.name).join(' / ')}` : '';
@@ -292,4 +335,4 @@ async function draftReport(ai, draft, memo) {
   return R.extractYaml(await complete(ai, R.reportPrompt(rest) + memo));
 }
 
-module.exports = { firstNum, PROVIDERS, claudeCandidates, findClaude, complete, completeWithFiles, readReceipt, readPurchaseOrder, readProductPage, draftPurchase, draftApply, draftReport, draftVisitor };
+module.exports = { firstNum, PROVIDERS, claudeCandidates, findClaude, complete, completeWithFiles, readReceipt, readPurchaseOrder, readProductPage, draftPurchase, draftApply, draftReport, draftVisitor, pickPui, draftPui };

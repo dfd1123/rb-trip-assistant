@@ -4,9 +4,10 @@
 const path = require('path');
 const R = require('./rules');
 const { Amaranth } = require('./gw');
+const AI = require('./ai');
 const { lookupFare, carBasis } = require('./naver');
 const { searchPlaces } = require('./places');
-const { applyPayload, reportPayload, purchasePayload, visitorPayload } = require('./editorFill');
+const { applyPayload, reportPayload, puiPayload, purchasePayload, visitorPayload } = require('./editorFill');
 
 function planApply(data, cfg) {
   if (!cfg.budgetDept) throw new R.InputError('설정에서 예산 부서를 골라 주세요. (그룹웨어에 로그인하면 목록을 받아와요)');
@@ -195,8 +196,8 @@ function settleLines(rep, cfg, log = () => {}) {
   return merged.map(e => ({ item: e.item, kind: e.kind || '', dup: e.dup || 0, label: e.label, pay: e.pay, noVat: e.noVat, amount: e.amount, date: e.date, supply: R.supplyAmount(e.amount, e.pay, e.noVat), vat: R.vatAmount(e.amount, e.pay, e.noVat), memo: e.memo, planDate: R.fundPlanDate(e.pay, { usedOn: e.date || usedOn }) /* 법인카드: 그 영수증을 쓴 달 기준 (10/30~11/2 출장의 11/1 영수증 = 12/23) */, proofs: e.proofs || [] }));
 }
 
-/** 출장보고서(정산). 새 품의를 만들지 않고, 승인된 신청 품의로 지출결의를 한다 (사용자가 알려 준 회사 절차):
- *  품의서승인(복수) → 신청 품의 체크 → [결의서전송/취소] → 지출결의서·집행용도 → 예산 줄 결제수단·과세구분 → 채주내역(영수증마다) → [환원]
+/** 출장보고서(정산). 새 품의를 만들지 않고, 승인된 신청 품의로 지출 결의를 한다 (사용자가 알려 준 회사 절차):
+ *  품의서승인(복수) → 신청 품의 체크 → [결의서전송/취소] → 지출 결의서·집행용도 → 예산 줄 결제수단·과세구분 → 채주내역(영수증마다) → [환원]
  *  → 사람이 확인하고 [전송]. 이어지는 결의서입력 → 결재상신 → 출장보고서 본문은 다음 단계에서 자동화한다. */
 async function runReport(env, data) {
   const { cfg, store, ui, log } = env;
@@ -222,7 +223,7 @@ async function runReport(env, data) {
     if (rec) { try { const r2 = store.load(rep.trip_id); r2.report = data; r2.reportStatus = resNo ? `결의 전송됨(${resNo})` : '결의 입력(전송 전)'; if (resNo) r2.resolutionNo = resNo; store.save(rep.trip_id, r2); } catch (e) { /* 기록 없음 */ } }
     if (!resNo) { env.showGw(); await ui.pause('[전송]을 하지 않았어요. 결의서전송 창에서 채주·첨부·환원을 확인하고 직접 [전송]한 뒤 여기서 [계속]을 눌러 주세요. 결의서입력부터는 다음에 [그룹웨어에 정산 입력하기]를 다시 누르면 이어서 해요.'); return {}; }
   }
-  // 3~4단계: 결의서입력 → [결재상신] → 결재양식 '출장보고서 및 경비정산 지출결의서' → 출장보고서 본문. [상신]은 사람이
+  // 3~4단계: 결의서입력 → [결재상신] → 결재양식 '출장보고서 및 경비정산 지출 결의서' → 출장보고서 본문. [상신]은 사람이
   const title = R.reportTitle(rep.reason);
   const opened = await gw.openResolution(resNo);
   if (opened && opened.submitted) {   // 지난번에 [상신]까지 끝낸 결의: 다시 올릴 게 없다 (전엔 '이미 결재진행 상태' 오류로만 끝나 뭘 해야 할지 몰랐음 — 2026-11-06)
@@ -237,25 +238,118 @@ async function runReport(env, data) {
   return { resolutionNo: resNo };
 }
 
-/** 지출결의(개인카드/개인지출): 승인 품의 하나를 골라 결의서전송 창에 지출결의서·채주·환원까지 채우고 멈춘다.
+/** 지출 결의(개인카드/개인지출): 승인 품의 하나를 골라 결의서전송 창에 지출 결의서·채주·환원까지 채우고 멈춘다.
  *  [전송]은 사람이 (새 금전 유형이라 전송 전 확인). 세금계산서·법인카드·결재상신은 다음 단계. */
 async function runSettle(env, data) {
   const { cfg, ui, log } = env;
   const s = R.parseSettle(data);
   const payee = cfg.name;
   if (!payee) throw new R.InputError('그룹웨어 이름을 몰라요. 설정에서 그룹웨어에 로그인해 내 정보를 불러와 주세요.');
-  log(`[지출결의] 품의 ${s.pui.ym}-${s.pui.day} 순번 ${s.pui.seq} · ${s.purpose}`);
+  log(`[지출 결의] 품의 ${s.pui.ym}-${s.pui.day} 순번 ${s.pui.seq} · ${s.purpose}`);
   const gw = new Amaranth({ win: env.gwWindow(), baseUrl: cfg.baseUrl, ui, log, debugDir: env.debugDir, creds: env.creds });
   await gw.ensureLogin();
+  // 출장 보고와 같은 길 (사용자 2026-11-16): 결의서전송(채주·환원·[전송]) → 결의서입력 → [결재상신] → 결의서 작성 창
   await gw.openApprovedBudget(s.pui);
-  await gw.settleTransfer({ purpose: s.purpose, payee, fund: s.fund, lines: s.lines });
-  env.showGw();
-  await ui.pause('지출결의서 채주·환원까지 채웠어요. 결의서전송 창에서 채주·첨부·환원을 확인하고 직접 [전송]해 주세요.');
-  return {};
+  const st = await gw.settleTransfer({ purpose: s.purpose, payee, fund: s.fund, lines: s.lines });
+  const resNo = st && st.resNo ? st.resNo : st && st.ok ? await gw.transferResolution() : '';   // 채주 저장 확인이 안 됐으면 보내지 않는다
+  if (!resNo) { env.showGw(); await ui.pause('[전송]을 하지 않았어요. 결의서전송 창에서 채주·첨부·환원을 확인하고 직접 [전송]한 뒤 [계속]을 눌러 주세요. 결의서입력부터는 다시 [그룹웨어에 지출 결의서 채우기]를 누르면 이어서 해요.'); return {}; }
+  const opened = await gw.openResolution(resNo);
+  if (opened && opened.submitted) { log(`이 결의(${resNo})는 이미 결재상신돼 '${opened.status}' 이에요${opened.docNo ? ` (문서번호 ${opened.docNo})` : ''}.`); return { resolutionNo: resNo, submitted: true }; }
+  const popup = await gw.openApproval('', s.title || s.purpose, { category: '결의서입력' });   // 양식은 그룹웨어가 고른 그대로
+  popup.setSkipTaskbar(false); popup.center(); popup.show(); popup.focus();
+  log('지출 결의서 작성 창을 띄웠어요. 본문·결재선 확인하고 [상신]은 직접 눌러 주세요.');
+  return { resolutionNo: resNo };
 }
 
-/** 지출결의할 수 있는 품의 목록: 기간 안의 지출·승인완료 품의 (apiBudgetRows). 화면 없이 API 로 */
-async function runSettleApprovals(env, { from = '', to = '' } = {}) {
+/** 지출 품의 올리기 (지출 결의 앞 단계): 품의·예산 줄 → [결재상신] 양식·제목 → 본문 → [보관].
+ *  결재선·[상신]은 사람이 — 결재선이 복사로 안 따라와 기본값으로 상신되면 회수해야 함 */
+async function runPui(env, data) {
+  const { cfg, ui, log } = env;
+  if (!cfg.budgetDept) throw new R.InputError('설정에서 예산 부서를 골라 주세요. (그룹웨어에 로그인하면 목록을 받아와요)');
+  const p = R.parsePui(data);
+  log(`[지출 품의] ${p.title}`);
+  const gw = new Amaranth({ win: env.gwWindow(), baseUrl: cfg.baseUrl, ui, log, debugDir: env.debugDir, creds: env.creds });
+  try {
+    await gw.ensureLogin();
+    await gw.enterBudget(cfg.budgetDept, p.lines, { memo: p.memo });
+    const popup = await gw.openApproval(R.PUI_FORM, p.title);
+    await gw.fillAndKeep(popup, { title: p.title, probe: '1. 품의목적', payload: puiPayload(p), attachments: [...p.files, ...p.proofs] });
+  } catch (e) { await abort(env, gw); throw e; }
+  return { seq: gw.lastBudget ? gw.lastBudget.seq : '' };
+}
+
+/** usd 가 있는 줄을 그날(from) 수출입은행 매매기준율로 원화로 + 조회 결과 이미지 (해외출장과 같은 증빙) */
+async function usdToWon(env, lines, from = new Date()) {
+  const FX = require('./fx');
+  const r = await FX.usdRate(env.fxKey, { from, fetch: env.fetch });
+  const shot = await FX.saveProof(r, path.join(env.store.tripsDir, '_fx', `환율_USD_${r.date}_${Date.now()}.png`));
+  env.log(`USD → 원화: ${r.date} 매매기준율 ${r.rate}원`);
+  return { fx: { rate: r.rate, date: r.date, shot },
+    lines: lines.map(l => l.usd === '' || l.usd == null ? l : { ...l, amount: Math.round(Number(l.usd) * r.rate) }) };   // 환율은 적요가 아니라 본문 지출 세부내역에
+}
+
+
+/** 예산과목 목록만 (화면 드롭다운용) */
+async function runBudgetItems(env) {
+  const gw = new Amaranth({ win: env.gwWindow(), baseUrl: env.cfg.baseUrl, ui: env.ui, log: env.log, debugDir: env.debugDir, creds: env.creds });
+  return { items: await budgetItems(env, gw) };
+}
+
+/** 회사 예산과목 목록 [{code, name, path}] — 그룹웨어 API 로 (못 받으면 지난번 목록) */
+async function budgetItems(env, gw) {
+  const year = String(new Date().getFullYear()), cfg = env.store.config();
+  let items = [];
+  try {
+    const user = cfg.gwUser || await gw.apiUser();
+    if (!user) throw new Error('사용자 정보(회계단위·부서·사원 코드)를 못 읽었어요');
+    let gisu = cfg.gisuOf && cfg.gisuOf.year === year ? cfg.gisuOf.gisu : '';   // 기수는 해마다 바뀜 → 그해 처음 한 번만 화면에서 읽음
+    if (!gisu) { gisu = await gw.readGisu(); if (gisu) env.store.saveConfig({ gisuOf: { year, gisu } }); }
+    if (!gisu) throw new Error('품의서입력 화면에서 회계 기수를 못 읽었어요');   // 기수 없이 부르면 빈 목록이 옴
+    items = await gw.apiBudgetItems(user, gisu);
+  } catch (e) { env.log(`(예산과목 목록을 못 읽었어요: ${e.message})`); }
+  if (items.length) env.store.saveConfig({ budgetItems: items });
+  else items = cfg.budgetItems || [];   // 못 읽으면 지난번 목록
+  env.log(`예산과목 목록 ${items.length}개`);
+  return items;
+}
+
+/** 청구서 및 견적서 + 한 줄 메모 → 지출 품의 칸. 비슷한 이전 품의의 예산 줄을 틀로, 없으면 회사 예산과목 목록에서 AI 가 고름.
+ *  USD 청구서는 청구일 수출입은행 매매기준율로 원화 환산하고 그 조회 결과 이미지를 증빙으로 (해외출장과 같음) */
+async function runPuiDraft(env, memo, invoices, prev = null) {
+  if (!env.ai) throw new R.InputError('한 줄 입력은 AI 가 있어야 해요. 설정 › AI 문장 작성에서 Gemini 를 골라 주세요. (직접 입력은 그대로 돼요)');
+  if (!memo) throw new R.InputError('무엇에 쓰려고 사는지 한 줄 적어 주세요.');
+  const gw = new Amaranth({ win: env.gwWindow(), baseUrl: env.cfg.baseUrl, ui: env.ui, log: env.log, debugDir: env.debugDir, creds: env.creds });
+  let lines = [], tpl = null;
+  if (prev && (prev.lines || []).length) {   // 매달 알림으로 다시 쓰는 품의: 지난번 예산과목·제목을 틀로 (금액·날짜는 새 청구서에서)
+    lines = prev.lines.map(l => ({ code: String(l.code || ''), label: String(l.label || ''), amount: '', memo: String(l.memo || '') }));
+    env.log(`틀: 지난번 품의 (${prev.title || prev.memo || ''})`);
+  } else {
+    const { rows } = await runSettleApprovals(env, { all: true });
+    tpl = rows[await AI.pickPui(env.ai, memo, rows)] || null;
+  }
+  if (tpl) {
+    env.log(`틀: ${tpl.ym}-${tpl.day} 순번 ${tpl.seq} · ${tpl.docTitle || tpl.memo}`);
+    try { lines = await gw.budgetLines(tpl.key); } catch (e) { env.log(`(이전 품의 줄을 못 읽었어요: ${e.message})`); }
+  }
+  const items = await budgetItems(env, gw);
+  env.log('청구서 및 견적서 읽고 칸 채우는 중');
+  const d = await AI.draftPui(env.ai, memo, { lines, items, title: tpl ? tpl.docTitle || '' : (prev && prev.title) || '', invoices });
+  env.log(`예산과목: ${d.lines.map(l => l.code ? `${l.label}(${l.code})` : '(못 고름)').join(', ') || '-'}`);
+  d.title = R.puiTitle(d.subject, d.lines.map(l => l.date).filter(Boolean).sort().pop() || new Date());   // 연월은 청구서 날짜 기준
+  // 줄마다 청구 통화: USD 는 원화로, 그 밖의 외화는 사람이 (금액 비움)
+  const other = d.lines.filter(l => l.currency !== 'KRW' && l.currency !== 'USD');
+  if (other.length) env.log(`${[...new Set(other.map(l => l.currency))].join(', ')} 청구서는 원화 금액을 직접 넣어 주세요.`);
+  d.lines = d.lines.map(l => l.currency === 'USD' && l.amount !== '' ? { ...l, usd: l.amount } : l.currency === 'KRW' ? { ...l, amount: l.amount === '' ? '' : Math.round(l.amount) } : { ...l, amount: '' });
+  let fx = null;
+  if (d.lines.some(l => l.usd !== '' && l.usd != null)) {   // ponytail: 외화 청구서가 여러 장이면 가장 늦은 청구일 환율 하나로 — 장마다 다른 환율이 필요하면 줄별로
+    const last = d.lines.filter(l => l.usd !== '' && l.usd != null).map(l => l.date).filter(Boolean).sort().pop();
+    ({ lines: d.lines, fx } = await usdToWon(env, d.lines, last ? new Date(`${last}T12:00:00`) : new Date()));
+  }
+  return { ...d, fx, items, from: tpl ? `${tpl.ym}-${String(tpl.day).padStart(2, '0')} 순번 ${tpl.seq} · ${tpl.docTitle || tpl.memo}` : '' };
+}
+
+/** 기간 안의 승인완료 '품의서입력(복수)지출' 품의, 최근 것부터. all: 상태 무관 — 새 품의 틀용 */
+async function runSettleApprovals(env, { from = '', to = '', all = false } = {}) {
   const gw = new Amaranth({ win: env.gwWindow(), baseUrl: env.cfg.baseUrl, ui: env.ui, log: env.log, debugDir: env.debugDir, creds: env.creds });
   const range = listRange(from, to); ({ from, to } = range); const months = range.months;
   const today = new Date(); const days = new Set([`${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}|${today.getDate()}`]);
@@ -270,8 +364,12 @@ async function runSettleApprovals(env, { from = '', to = '' } = {}) {
   let rows;
   try { rows = (await gw.apiBudgetRows(user, { months, days: [...days] })).filter(inRange); }
   catch (e) { env.log(`(조회 실패: ${String(e.message).slice(0, 100)} — 로그인 확인 후 다시)`); await gw.ensureLogin(); rows = (await gw.apiBudgetRows(user, { months, days: [...days] })).filter(inRange); }
-  const approved = rows.filter(r => r.kind === '지출' && /승인완료/.test(r.status));
-  env.log(`지출결의 가능한 승인 품의 ${approved.length}건 (${from}~${to})`);
+  rows = rows.filter(r => r.kind === '지출' && (all || /완료|종결/.test(r.status)));   // 승인 = '결재완료'(approState 1). '승인완료'만 보면 실제 목록에서 하나도 안 걸렸음
+  // 품의 목록 API 엔 결재양식이 없다 (출장 신청 품의도 품의구분 '지출') → 결재문서 양식을 문서번호로 붙인다. 상신 전(문서번호 없음)은 양식을 몰라 뺌
+  const docs = await attachApprovalDocs(gw, rows, env.log, range);
+  if (!docs.length && rows.some(r => r.docNo)) throw new Error('결재문서 목록을 못 읽어 결재양식을 확인하지 못했어요. 잠시 뒤 다시 불러와 주세요.');
+  const approved = rows.filter(r => r.form === R.PUI_FORM).sort((a, b) => `${b.ym}-${String(b.day).padStart(2, '0')}`.localeCompare(`${a.ym}-${String(a.day).padStart(2, '0')}`) || Number(b.seq) - Number(a.seq));
+  env.log(`${R.PUI_FORM} 품의 ${approved.length}건${all ? '' : ' (승인완료)'} (${from}~${to})`);
   return { rows: approved, from, to };
 }
 
@@ -298,7 +396,7 @@ async function attachApprovalDocs(gw, rows, log, range = null) {
   }
   return docs;
 }
-/** 결의서입력에서 올린 출장보고서 결재 문서 (양식 '출장보고서 및 경비정산 지출결의서') — 목록에서 보고 진행 상태를 보여 주는 데 씀 */
+/** 결의서입력에서 올린 출장보고서 결재 문서 (양식 '출장보고서 및 경비정산 지출 결의서') — 목록에서 보고 진행 상태를 보여 주는 데 씀 */
 const reportDocsOf = docs => (docs || []).filter(d => d.form === R.REPORT_FORM).map(({ docNo, title, status, date }) => ({ docNo, title, status, date }));
 
 /** 이 PC에 보고서 내용이 없는데 그룹웨어에 보고 품의(상신 전)가 있으면: 그 품의의 예산 줄을 경비로 되살린다.
@@ -314,7 +412,7 @@ async function runLoadReport(env, id) {
   try { await gw.ensureLogin(); lines = await gw.budgetLines(rec.gwReport.key); }
   catch (e) { log(`(경비를 못 불러왔어요: ${e.message} — 직접 넣어 주세요)`); return { draft, resumed: false, fromGw: 0 }; }
   const byLabel = Object.entries(R.BUDGET_ITEMS);
-  const expenses = lines.map(l => { const hit = byLabel.find(([, [code, label]]) => l.label.includes(label) || l.label.includes(code));
+  const expenses = lines.filter(l => l.amount > 0).map(l => { const hit = byLabel.find(([, [code, label]]) => l.code === code || l.label.includes(label) || l.label.includes(code));
     return hit ? { item: hit[0], amount: l.amount, memo: l.memo, proofs: [] } : null; }).filter(Boolean);
   log(`경비 ${expenses.length}줄 불러옴 (증빙은 다시 붙여 주세요)`);
   return { draft: { ...draft, expenses: expenses.length ? expenses : draft.expenses }, resumed: false, fromGw: expenses.length };
@@ -335,6 +433,7 @@ async function runProfile(env, { force = false } = {}) {
   if (me.deptName && (force || !cfg.budgetDept)) patch.budgetDept = me.deptName;
   if (me.coCd && me.deptCd && me.empCd) patch.gwUser = { coCd: me.coCd, deptCd: me.deptCd, empCd: me.empCd };
   store.saveConfig(patch);
+  await budgetItems(env, gw);
   log(`이름 ${patch.name || cfg.name || '-'} · 예산 부서 ${patch.budgetDept || cfg.budgetDept || '-'} · 고를 수 있는 부서 ${depts.length}개`);
   return { name: patch.name || cfg.name, budgetDept: patch.budgetDept || cfg.budgetDept, budgetDepts: depts };
 }
@@ -438,4 +537,4 @@ async function runDeleteTrip(env, id) {
   return { rows };
 }
 
-module.exports = { cachedFare, settleLines, listRange, runRefundCheck, runProfile, runLoadReport, planApply, runFare, runApply, runPurchase, runVisitor, runVisitorList, runPurchaseList, reportDraft, runReport, runSettle, runSettleApprovals, runLogin, runListBudget, runDeleteBudget, runDeleteTrip };
+module.exports = { cachedFare, settleLines, listRange, runRefundCheck, runProfile, runLoadReport, planApply, runFare, runApply, runPurchase, runVisitor, runVisitorList, runPurchaseList, reportDraft, runReport, runSettle, runSettleApprovals, runPui, runPuiDraft, runBudgetItems, runLogin, runListBudget, runDeleteBudget, runDeleteTrip };

@@ -22,7 +22,7 @@ input.rg-editor{position:absolute;left:0;top:0;width:100%;height:100%;box-sizing
 const $=s=>document.querySelector(s);
 // 가짜 API: 실제 아마란스처럼 로그인하면 oAuthToken·signKey 쿠키와 사용자 정보가 생기고, 품의 목록은 fetch 로 받는다 (앱은 목록을 API 로만 읽음)
 const ST={'작성':'2','상신대기':'2','진행중':'0','결재진행':'0','결재완료':'1','반려':'3'};
-const toApi=r=>({getDtYymm:(r.품의연월||'').replace('-',''),getDtDd:r.품의일,getSq:r.순번,getFg:r.품의구분==='지출'?'1':'2',rmkDc:r.적요||'',unitSumam:Number(String(r.총금액||'0').replace(/,/g,'')),approState:ST[r.결재상태]||'2',approStateNm:r.결재상태||'',noDoc:'',sendUnitAm:0,refundUnitAm:0,remainUnitAm:0});
+const toApi=r=>({getDtYymm:(r.품의연월||'').replace('-',''),getDtDd:r.품의일,getSq:r.순번,getFg:r.품의구분==='지출'?'1':'2',rmkDc:r.적요||'',unitSumam:Number(String(r.총금액||'0').replace(/,/g,'')),approState:ST[r.결재상태]||'2',approStateNm:r.결재상태||'',noDoc:r.문서번호||'',sendUnitAm:0,refundUnitAm:0,remainUnitAm:0});
 const realFetch=window.fetch.bind(window);
 window.fetch=async(url,opt)=>{ const u=String(url);
   if(u.endsWith('/nonprofit/NCA0018/0BN00001')){ const b=JSON.parse((opt&&opt.body)||'{}'); const ym=String(b.getDtYearMonth||'').slice(0,6);
@@ -30,7 +30,8 @@ window.fetch=async(url,opt)=>{ const u=String(url);
     const extra=st&&st.approve?st.approve.map(a=>({품의연월:a.품의연월,품의일:a.품의일,순번:a.순번,품의구분:'지출',적요:a.적요+'로 인한 출장',총금액:a.총금액,결재상태:a.결재상태})):[];
     const top=JSON.parse(localStorage.top||'[]').concat(extra).filter(r=>r.순번&&(r.품의연월||'').replace('-','')===ym&&(!b.getDt||String(+r.품의일)===String(+b.getDtDate)));
     return new Response(JSON.stringify({resultCode:0,resultData:top.map(toApi)}),{status:200,headers:{'Content-Type':'application/json'}}); }
-  if(u.endsWith('/eap/eap107A04')) return new Response(JSON.stringify({resultCode:200,resultData:{list:{list:[],totalCount:0}}}),{status:200,headers:{'Content-Type':'application/json'}});
+  if(u.endsWith('/eap/eap107A04')){ const docs=JSON.parse(localStorage.docs||'[]');   // 상신문서 목록 (테스트가 localStorage.docs 로 넣음: DOC_NO·FORM_NM·DOC_TITLE)
+    return new Response(JSON.stringify({resultCode:200,resultData:{list:{list:docs,totalCount:docs.length}}}),{status:200,headers:{'Content-Type':'application/json'}}); }
   return realFetch(url,opt); };
 function route(){
   if(localStorage.auth){ document.cookie='oAuthToken=mock-token; path=/'; document.cookie='signKey=mock-key; path=/'; sessionStorage.userInfo=JSON.stringify({coCd:'1000',deptCd:'MBU1000',empCd:'250303'}); }

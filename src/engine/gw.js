@@ -214,26 +214,58 @@ class Amaranth {
     });
   }
 
-  /** 예산 줄 '부서' 사업코드도움의 전체 목록 이름들 (아무것도 고르지 않고 닫는다). 못 읽으면 [] */
-  async budgetDeptList() {
-    const p = this.page, title = '^사업코드도움$';
+  /** 예산 줄 첫 행 col 칸의 코드도움을 검색어 없이 조회해 전체 행을 읽고 아무것도 고르지 않고 닫는다. 못 읽으면 []. diag: 개발 중 요청 기록 파일 이름 */
+  async codeHelpRows(col, title, diag) {
+    const p = this.page;
     const findDlg = `(re) => { const r = new RegExp(re); const h = all('*').filter(e => ownText(e) && vis(e) && r.test(e.textContent.trim())).pop(); return h ? dialog(h.textContent.trim()) : null; }`;
     let stop = null;
     try { if (this.debugDir) stop = await p.netLogStart(); } catch (e) { stop = null; }
     try {
-      await this.openCodeHelp('예산과목', 0, '부서', title);
+      await this.openCodeHelp('예산과목', 0, col, title);
       const btn = await p.eval(`(re) => { const d = (${findDlg})(re); const b = d && (d.querySelector('#tutorial-conditionPanel-search, [class*=searchButton]') || all('button', d).find(x => vis(x) && !norm(x.textContent) && x.querySelector('img[src*=search]'))); return b && vis(b) ? center(b) : null; }`, title);
       if (btn) await p.click(btn);
-      const rows = await p.waitFor(`(re) => { const d = (${findDlg})(re); const g = d && rgFind(d); const rs = g ? rgRows(g).filter(Boolean) : []; return rs.length ? rs : null; }`, [title], { timeout: 6000 });
-      // 행마다 이름 칸: 키가 nm/name 이고 한글인 값 → 없으면 한글 값 아무거나
-      const names = (rows || []).map(r => { const es = Object.entries(r).filter(([, v]) => typeof v === 'string' && /[가-힣]/.test(v));
-        const hit = es.find(([k]) => /(nm|name)$/i.test(k)) || es[0]; return hit ? hit[1].trim() : ''; }).filter(Boolean);
-      return [...new Set(names)];
+      return (await p.waitFor(`(re) => { const d = (${findDlg})(re); const g = d && rgFind(d); const rs = g ? rgRows(g).filter(Boolean) : []; return rs.length ? rs : null; }`, [title], { timeout: 6000 })) || [];
     } finally {
       try { await p.clickWhere(`(re) => { const d = (${findDlg})(re); return d && all('button', d).filter(b => vis(b) && /^(취소|닫기)$/.test(norm(b.textContent))).pop(); }`, title); }
       catch (e) { await p.key('Escape'); }
-      if (stop) { try { const net = await stop(); require('fs').writeFileSync(require('path').join(this.debugDir, 'net-dept-codehelp.json'), JSON.stringify(net.filter(r => !/static|langPack|event0/.test(r.url)), null, 1)); } catch (e) { /* 진단 */ } }
+      if (stop) { try { const net = await stop(); require('fs').writeFileSync(require('path').join(this.debugDir, diag), JSON.stringify(net.filter(r => !/static|langPack|event0/.test(r.url)), null, 1)); } catch (e) { /* 진단 */ } }
     }
+  }
+  /** 행에서 이름 칸: 키가 nm/name 이고 한글인 값 → 없으면 한글 값 아무거나 */
+  static rowName(r) { const es = Object.entries(r).filter(([, v]) => typeof v === 'string' && /[가-힣]/.test(v)); const hit = es.find(([k]) => /(nm|name)$/i.test(k)) || es[0]; return hit ? hit[1].trim() : ''; }
+
+  /** 예산 줄 '부서' 사업코드도움의 전체 목록 이름들. 못 읽으면 [] */
+  async budgetDeptList() {
+    return [...new Set((await this.codeHelpRows('부서', '^사업코드도움$', 'net-dept-codehelp.json')).map(Amaranth.rowName).filter(Boolean))];
+  }
+  /** 품의서입력 화면의 회계 기수(gisu, 2026년 = '16'): 화면이 그룹웨어 설정에서 받아 상태에 들고 있는 값을 읽는다 (React). 못 읽으면 '' */
+  async readGisu() {
+    // 품의서입력 화면이 열릴 때 부르는 설정 API (net-gisu.json 에서 확인: menuCode NPC1023) 응답의 기수 목록에서 오늘이 든 기수
+    const res = await this.apiCall('/system/preferenceCommon/0BN00001', { menuCode: 'NPC1023', sctrlDModuleCds: ['N0', 'A0', 'A', 'S0', 'H5', 'N1'], moduleCds: ['BN', 'S'], moduleCdType: 'list' });
+    const d = new Date(), today = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+    const dt = v => String(v ?? '').replace(/\D/g, '').slice(0, 8);
+    // 키 이름(gisu·frDt/toDt 등)은 대소문자·꼴이 다를 수 있어 모양으로 찾는다: gisu + 시작일 + 끝일
+    const pick = x => { if (!x || typeof x !== 'object' || Array.isArray(x)) return '';
+      const ks = Object.keys(x), g = ks.find(k => /^gisu$/i.test(k)), fr = ks.find(k => /^(fr|from|start)[_a-z]*dt$|^gisu_?fr/i.test(k)), to = ks.find(k => /^(to|end)[_a-z]*dt$|^gisu_?to/i.test(k));
+      return g && fr && to && dt(x[fr]).length === 8 && dt(x[fr]) <= today && dt(x[to]) >= today ? String(x[g]) : ''; };
+    const find = o => { if (!o || typeof o !== 'object') return ''; const g = pick(o); if (g) return g; for (const v of Object.values(o)) { const r = find(v); if (r) return r; } return ''; };
+    const gisu = find(res);
+    if (!gisu && this.debugDir) try { require('fs').writeFileSync(require('path').join(this.debugDir, 'api-preference.json'), JSON.stringify(res, null, 1)); } catch (e) { /* 진단 */ }
+    return gisu;
+  }
+  /** 회사 예산과목 전체 [{code, name}] — 예산과목 코드도움이 부르는 API (helpTy ABGT_BUDGET_CODE) */
+  async apiBudgetItems(user, gisu) {
+    const ask = mgtCd => this.apiCall('/nonprofit/NPCodePicker/0BN00001', { helpTy: 'ABGT_BUDGET_CODE', gisu, langKind: 'KOR', coCd: user.coCd, empCd: user.empCd, divCd: user.coCd, mgtCd, bottomCd: '' });
+    let rows = await ask('');
+    if (!(rows || []).length) rows = await ask(user.deptCd);   // 예산 줄 코드도움은 그 줄 부서(mgtCd)를 같이 보냄
+    this.log(`예산과목 API: 기수 ${gisu} · ${(rows || []).length}행`);
+    if (this.debugDir) try { require('fs').writeFileSync(require('path').join(this.debugDir, 'api-budget-items.json'), JSON.stringify({ gisu, rows: (rows || []).slice(0, 5) }, null, 1)); } catch (e) { /* 진단 */ }
+    const out = new Map();
+    for (const r of rows || []) {
+      const code = String(r.bgtCd || ''), name = String(r.bgtNm || Amaranth.rowName(r) || '').trim();
+      if (code && name && !out.has(code)) out.set(code, { code, name, path: String(r.hBgtNm || r.bglistCd || '').trim() });   // path: '판관비 > 지급수수료(판)' 같은 분류 (AI 매칭용)
+    }
+    return [...out.values()];
   }
 
   async openCodeHelp(gridHdr, row, col, titleRe) {
@@ -310,7 +342,7 @@ class Amaranth {
 
   /** 코드도움에서 고르기: 검색 → (re 가 있으면 그에 맞는) 줄 → 하나면 선택, 여럿이면 사람에게 모달로 고르게.
    *  remember 를 주면 고른 걸 이 작업(결재건) 동안 기억해 다음 채주 줄부터는 안 묻고 같은 걸로 */
-  async pickInCodeHelpBy(titleRe, query, { re = '', label = '', remember = '' }) {
+  async pickInCodeHelpBy(titleRe, query, { re = '', label = '', remember = '', what = '거래처' }) {
     const p = this.page, ui = this.ui;
     this.picks = this.picks || {};
     const kept = remember && this.picks[remember];
@@ -335,8 +367,8 @@ class Amaranth {
       pick = got.hits.find(h => h.text === kept);
       if (!pick) throw new Error(`전에 고른 '${kept}' 줄이 이번 검색 결과에 없어요`);
     } else if (got.hits.length > 1) {
-      const k = typeof ui.askChoice === 'function' ? await ui.askChoice(`'${query}' 이름의 거래처가 ${got.hits.length}건 검색됐어요. 이 결재건에서 쓸 거래처를 골라 주세요 (이번 작업의 다음 채주 줄도 같은 걸로 넣어요).`, got.hits.map(h => h.row)) : '';
-      if (k === '' || k == null) throw new Error(`'${query}' 거래처가 ${got.hits.length}건이라 고르지 못했어요`);
+      const k = typeof ui.askChoice === 'function' ? await ui.askChoice(`'${query}' 이름의 ${what}가 ${got.hits.length}건 검색됐어요. 이 결재건에서 쓸 ${what}를 골라 주세요${remember ? ' (이번 작업의 다음 줄도 같은 걸로 넣어요)' : ''}.`, got.hits.map(h => h.row)) : '';
+      if (k === '' || k == null) throw new Error(`'${query}' ${what}가 ${got.hits.length}건이라 고르지 못했어요`);
       pick = got.hits[Number(k)];
     }
     if (remember) this.picks[remember] = pick.text;
@@ -435,12 +467,15 @@ class Amaranth {
         if (!norm(got).includes(norm(dept))) throw new Error(`부서 칸이 '${got || '빈칸'}'입니다`);
       } catch (e) { await this.debugDump('dept', '사업코드도움'); await ui.assist(`부서 선택 실패(${e.message}). ${i + 1}번째 줄 부서를 '${dept}'로 지정해 주세요.`); }
       try {
-        await this.openCodeHelp('예산과목', i, '예산과목', '(예산과목|예산|과목).*(코드)?도움$');
-        await this.pickInCodeHelp('(예산과목|예산|과목).*(코드)?도움$', ex.code, ex.code);
+        const itemRe = '(예산과목|예산|과목).*(코드)?도움$';
+        await this.openCodeHelp('예산과목', i, '예산과목', itemRe);
+        if (ex.code) await this.pickInCodeHelp(itemRe, ex.code, ex.code);
+        else await this.pickInCodeHelpBy(itemRe, ex.label, { re: norm(ex.label).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), label: ex.label, what: '예산과목' });   // 코드를 모르면 이름으로 (여럿이면 사람이 고름)
         await sleep(400);
         const got = String(((await this.rowVals('예산과목', i)) || {})['예산과목'] || '');
-        if (!norm(got).includes(norm(ex.code)) && !norm(got).includes(norm(ex.label.split('_').pop()))) throw new Error(`예산과목 칸이 '${got || '빈칸'}'입니다`);
-      } catch (e) { await this.debugDump('budget-item', '(예산과목|예산|과목).*(코드)?도움$'); await ui.assist(`예산과목 선택 실패(${e.message}). ${i + 1}번째 줄 예산과목을 ${ex.code} ${ex.label}로 지정해 주세요.`); }
+        const want = [ex.code, ex.label && ex.label.split('_').pop()].filter(Boolean).map(norm);   // 빈 글자는 아무 칸에나 '포함'돼 버려 확인이 안 됐음
+        if (!want.some(w => norm(got).includes(w))) throw new Error(`예산과목 칸이 '${got || '빈칸'}'입니다`);
+      } catch (e) { await this.debugDump('budget-item', '(예산과목|예산|과목).*(코드)?도움$'); await ui.assist(`예산과목 선택 실패(${e.message}). ${i + 1}번째 줄 예산과목을 ${[ex.code, ex.label].filter(Boolean).join(' ')}로 지정해 주세요.`); }
       try {
         await this.editCell('예산과목', i, '품의금액', String(ex.amount));
         await p.dblclick(await this.cellPoint('예산과목', i, '적요'));
@@ -934,8 +969,11 @@ class Amaranth {
     await p.click(await this.cellPoint('품의구분', idx, '순번'));
     await p.waitFor(() => { const g = grid('예산과목'); return g && rows(g).some((_, i) => (rowVals(g, i) || {})['예산과목']); }, [], { timeout: 6000 });
     await sleep(300);
+    // 화면 칸엔 없는 예산과목 코드(bgtCd)가 데이터 행엔 있다 — 새 품의 사업코드도움은 코드로 찾음
+    const data = await p.eval(() => { try { const g = grid('예산과목'); const r = g && rgFind(document, g); return r ? rgRows(r) : null; } catch (e) { return null; } }).catch(() => null);
+    if (data && data.some(x => x && x.bgtCd)) return data.filter(x => x && x.bgtCd).map(x => ({ code: String(x.bgtCd), label: String(x.bgtNm || x.bgtCd), amount: Math.round(Number(x.unitAm) || 0), memo: String(x.rmkDc || '') }));
     const lines = await p.eval(() => { const g = grid('예산과목'); return g ? rows(g).map((_, i) => rowVals(g, i)).filter(v => v && v['예산과목']) : []; });
-    return lines.map(v => ({ label: String(v['예산과목'] || ''), amount: Number(String(v['품의금액'] || '').replace(/[^\d]/g, '')) || 0, memo: String(v['적요'] || '') })).filter(l => l.amount > 0);
+    return lines.map(v => ({ code: '', label: String(v['예산과목'] || ''), amount: Number(String(v['품의금액'] || '').replace(/[^\d]/g, '')) || 0, memo: String(v['적요'] || '') }));
   }
 
   async revealBudgetRow(key) {
@@ -1010,7 +1048,7 @@ class Amaranth {
     return { deleted: del.length, skipped: skip.length, rows: after };
   }
 
-  // ---------- 보고서: 승인된 신청 품의로 지출결의(결의서전송) ----------
+  // ---------- 보고서: 승인된 신청 품의로 지출 결의(결의서전송) ----------
   /** 품의서승인(복수)에서 신청 품의(ym·day·seq) 행을 체크한다. 화면 기본 조회가 이번 달이라 품의일자 시작을 그 달 1일로 넓힌다 */
   async openApprovedBudget({ ym, day, seq }, { noAssist = false } = {}) {
     const p = this.page;
@@ -1270,7 +1308,7 @@ class Amaranth {
     const budgetsAll = await p.eval(() => { const g = grid('결제수단'); return rows(g).map((_, i) => rowVals(g, i) || {}); });
     const rowIdx = [], budgets = budgetsAll.filter((v, i) => v['예산과목'] && rowIdx.push(i));   // rowIdx[계획 번호] = 화면 행 번호 (예산과목 없는 줄이 앞에 있으면 어긋났음)
     if (!budgets.length) throw new Error('결의서전송 창의 예산내역이 비어 있어요. 집행용도를 넣고 Enter 두 번 눌러 예산내역이 내려온 뒤 다시 해 주세요.');   // 비어 있으면 채주 없이 "환원할 금액 없음" 으로 넘어가 빈 결의를 전송하려 했음
-    if (budgets.length === 1) lines.forEach(l => { if (!l.label) l.label = budgets[0]['예산과목']; });   // 지출결의(일반): 과목이 하나면 라벨 없는 줄을 그 과목으로. 과목 여러 개면 라벨 없는 줄은 planPayees 에서 left 로 빠져 안내된다
+    if (budgets.length === 1) lines.forEach(l => { if (!l.label) l.label = budgets[0]['예산과목']; });   // 지출 결의(일반): 과목이 하나면 라벨 없는 줄을 그 과목으로. 과목 여러 개면 라벨 없는 줄은 planPayees 에서 left 로 빠져 안내된다
     const failed = [];   // 저장 확인이 안 된 채주 줄
     const { plan, left } = planPayees(budgets, lines);   // 같은 예산과목 영수증 여러 장 = 그 예산 줄 아래 채주 여러 줄 (식대 4일치 등)
     for (const pb of plan) pb.index = rowIdx[pb.index];
@@ -1659,7 +1697,11 @@ class Amaranth {
     // 결의서입력의 상신 창은 결재양식이 드롭다운(값이 입력칸에 보임)으로 미리 골라져 뜬다 → 이미 그 양식이면 건드리지 않는다
     const formShown = () => p.eval(f => { const d = dialog('전자결재상신'); if (!d) return false;
       return all('input', d).some(i => vis(i) && norm(i.value) === norm(f)) || all('*', d).some(e => vis(e) && ownText(e) && norm(e.textContent) === norm(f)); }, formName);
-    if (await formShown()) this.log(`결재양식: ${formName} (이미 선택됨)`);
+    if (!formName) {   // 양식을 모르는 결의(지출 결의): 그룹웨어가 미리 골라 둔 양식 그대로
+      const shown = await p.eval(() => { const d = dialog('전자결재상신'); const lb = d && all('*', d).find(e => vis(e) && ownText(e) && norm(e.textContent) === '결재양식');
+        let c = lb; for (let i = 0; c && i < 5; i++) { c = c.parentElement; const x = c && all('input', c).filter(e => vis(e) && e.value)[0]; if (x) return x.value; } return ''; }).catch(() => '');
+      this.log(`결재양식: ${shown || '(못 읽음)'} (그룹웨어가 고른 그대로)`);
+    } else if (await formShown()) this.log(`결재양식: ${formName} (이미 선택됨)`);
     else try {
       // 결재양식 칸(라벨 옆)을 눌러 목록을 열고 양식 이름을 고른다. 예전 품의서 상신 창(분류 목록 → 양식)도 같이 처리
       const box = await p.eval(() => { const d = dialog('전자결재상신'); const lb = d && all('*', d).find(e => vis(e) && ownText(e) && norm(e.textContent) === '결재양식');

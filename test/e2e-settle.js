@@ -272,6 +272,18 @@ app.whenReady().then(async () => {
       console.log('E2E 정산 이미 상신된 결의 (오류 아님) OK');
     }
 
+    if (run(15)) {
+      // ---- 15) 지출 결의(개인카드): 출장 보고와 같은 길 — 결의서전송 [전송] → 결의서입력 → [결재상신] → 작성 창 (사용자 2026-11-16)
+      const ONE = { ...APPLY(), 적요: 'AI 툴 결제', budgets: [{ 부서: '매니퓰레이터 사업부', 예산과목: '지급수수료(판)', 예산과목비고: 'Claude Pro', 품의금액: '50,000' }] };
+      mock.setSettle(STATE({ approve: [ONE] })); ui.logs.length = 0;
+      const r15 = await runner.runSettle(env, { pui: { ym: '2026-10', day: '14', seq: '4' }, purpose: 'Claude Pro 구독료', fund: '일반경비', expenses: [{ amount: 29161, memo: 'Claude Pro 구독료', file: png('15_claude.png') }] });
+      const s15 = mock.getSettle(), e15 = s15.approve[0].resolutions.find(r => r.결의구분 === '지출결의서');
+      assert.ok(e15 && e15.결의번호, '[전송]까지 해야 함');
+      assert.equal(r15.resolutionNo, e15.결의번호);
+      assert.deepEqual(s15.approvalFor, [e15.결의번호], '결의서입력에서 결재상신까지');
+      console.log('E2E 지출 결의 (전송 → 결의서입력 → 결재상신) OK');
+    }
+
   } catch (e) {
     code = 1; console.error('E2E 정산 실패:', e.stack || e);
     try { const w = BrowserWindow.getAllWindows().find(x => /127\.0\.0\.1/.test(x.webContents.getURL()));   // 화면 상태 (칸 위치·맨 위 요소)

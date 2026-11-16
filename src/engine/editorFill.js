@@ -76,7 +76,19 @@ const fillForm = (payload) => {
     return false;
   };
 
-  for (const f of payload.fields) {
+  // 표가 아닌 문단 칸 (품의서입력(복수)지출: "<p>1. 품의목적</p><p>   - </p>"): 제목 문단 바로 다음 '- ' 문단에 글을 넣는다. 줄마다 '- '
+  for (const s of payload.paras || []) {
+    const ps = Array.from(doc.querySelectorAll('p'));
+    const head = ps.find(p => norm(p.textContent) === norm(s.heading));
+    if (!head) { result.missing.push(s.heading); continue; }
+    let slot = head.nextElementSibling;
+    if (!slot || slot.tagName !== 'P' || !/^-?$/.test(norm(slot.textContent))) { slot = doc.createElement('p'); head.after(slot); }   // 자리 문단이 없거나 이미 글이 있으면 새 문단
+    const lines = String(s.text ?? '').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    slot.innerHTML = lines.map(l => `&nbsp;&nbsp;&nbsp;- ${esc(l)}`).join('<br />') || '&nbsp;&nbsp;&nbsp;- ';
+    result.filled.push(s.heading);
+  }
+
+  for (const f of payload.fields || []) {
     const name = [].concat(f.label || f.option)[0];
     if (!f.label && f.option) {   // 라벨 칸 없는 체크박스 줄 (예: 촬영/녹음 '☐해당없음 ☐사진 촬영 필요 …'): 체크박스 뒤 글자로 그 칸을 찾아 그것만 체크
       const want = norm(f.option);
@@ -155,7 +167,7 @@ const fillForm = (payload) => {
 
 const hasLabel = (label) => {
   const norm = s => (s || '').replace(/[\s\u200b\u00a0]/g, '');
-  return Array.from(document.querySelectorAll('td,th')).some(td => norm(td.textContent) === norm(label));
+  return Array.from(document.querySelectorAll('td,th,p')).some(td => norm(td.textContent) === norm(label));   // p: 문단 제목으로 찾는 양식 (품의서입력(복수)지출 '1. 품의목적')
 };
 
 const FILL_JS = fillForm.toString();
@@ -176,6 +188,15 @@ function applyPayload(a) {
   if (a.category === '연구과제' && a.project) fields.push({ label: '구분', replace: ['과제명', a.project] });
   if (t.mode === 'corporate' && t.corporate_car) fields.push({ label: '법인차량이용시', check: [t.corporate_car] });
   return { fields };
+}
+
+/** 지출 품의 본문 (실제 양식 구조: test/fixtures/pui_multi_body.html). 3·4번 표(dbTable1·2)는 그룹웨어가 품의 그리드로 채운다.
+ *  지출 세부내역을 비우면 예산 줄로 만든다 */
+function puiPayload(p) {
+  const won = n => Math.round(Number(n) || 0).toLocaleString('ko-KR');
+  const fx = p.fx ? [`환율: USD ${Number(p.fx.rate).toLocaleString('ko-KR')}원 (${p.fx.date} 수출입은행 매매기준율, 조회 결과 첨부)`] : [];
+  const detail = p.detail || [...p.lines.map(l => `${(l.label || l.code).split('_').pop()} ${won(l.amount)}원 (${l.memo}${l.usd !== '' && l.usd != null ? `, $${Number(l.usd).toFixed(2)}` : ''})`), ...fx].join('\n');
+  return { fields: [], paras: [{ heading: '1. 품의목적', text: p.purpose }, { heading: '2. 지출 세부내역', text: detail }] };
 }
 
 function reportPayload(r) {
@@ -261,4 +282,4 @@ const readVisitorDoc = (html) => {
 };
 const VISITOR_READ_JS = readVisitorDoc.toString();
 
-module.exports = { FILL_JS, FIND_JS, VISITOR_READ_JS, applyPayload, reportPayload, purchasePayload, visitorPayload };
+module.exports = { FILL_JS, FIND_JS, VISITOR_READ_JS, applyPayload, reportPayload, puiPayload, purchasePayload, visitorPayload };

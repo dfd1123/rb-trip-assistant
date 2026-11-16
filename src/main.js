@@ -2,7 +2,7 @@
 // 와니의 결재 도우미 - Electron 메인 프로세스
 // 화면(렌더러) ↔ 작업(엔진) 중계. 그룹웨어와 네이버 지도는 앱 안의 별도 창(내장 Chromium)에서 조작한다.
 
-const { app, BrowserWindow, ipcMain, clipboard, shell, safeStorage, dialog, session, net } = require('electron');
+const { app, BrowserWindow, ipcMain, clipboard, shell, safeStorage, dialog, session, net, Tray, Menu, Notification, nativeImage } = require('electron');
 try { process.loadEnvFile(require('path').join(__dirname, '..', '.env')); } catch (e) { /* 개발용 .env 없음 (배포본엔 없음) */ }
 // 우분투 24.04 이상 AppImage: AppArmor 가 user namespace 를 막고 AppImage 는 SUID 샌드박스도 못 쓰니 샌드박스 없이 켠다
 // (deb·rpm 은 설치 스크립트가 AppArmor 프로필을 넣어 샌드박스를 그대로 쓴다)
@@ -41,7 +41,7 @@ let mainWin = null, gwWin = null, store = null;
 }
 
 if (!app.requestSingleInstanceLock()) app.quit();
-app.on('second-instance', () => { if (mainWin) { if (mainWin.isMinimized()) mainWin.restore(); mainWin.focus(); } });
+app.on('second-instance', () => showMain());   // 트레이에만 있을 때 다시 켜면 창을 띄움
 
 function createMain() {
   mainWin = new BrowserWindow({
@@ -50,7 +50,7 @@ function createMain() {
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
   mainWin.loadFile(path.join(__dirname, 'renderer', 'index.html'));
-  mainWin.on('closed', () => { mainWin = null; if (process.platform !== 'darwin') app.quit(); });   // 숨긴 그룹웨어 창이 있어도 종료
+  mainWin.on('closed', () => { mainWin = null; if (process.platform !== 'darwin' && !keepInBackground()) app.quit(); });   // 숨긴 그룹웨어 창이 있어도 종료 (자동 반복이 켜져 있으면 트레이에 남음)
   if (process.env.TRIP_ASSISTANT_SMOKE) {           // CI/개발용: 화면 캡처 후 종료
     mainWin.webContents.on('console-message', (...a) => { const m = a[0] && a[0].message !== undefined ? a[0].message : a[2]; console.log('[renderer]', m); });
     mainWin.webContents.once('did-finish-load', async () => {
@@ -213,7 +213,7 @@ let job = null;
 // 화면에 안 보이게 도는 작업(목록 갱신·환원 점검 등). 사람이 시킨 작업이 오면 양보한다 — 전엔 "작업창의 [취소]를 누르라"고 했는데 숨은 작업이라 누를 곳이 없었음
 // 끊어도 되돌릴 게 없는 작업(그룹웨어에 아무것도 안 만듦): 사람 확인을 기다리던 중이어도 새 작업이 오면 취소하고 넘어감
 const PREEMPTIBLE_JOBS = new Set(['fare', 'login', 'receipts', 'po-read', 'url-read']);
-const BACKGROUND_JOBS = new Set(['gw-list', 'gw-profile', 'refund-check', 'purchase-list', 'report-load', 'settle-approvals']);
+const BACKGROUND_JOBS = new Set(['gw-list', 'gw-profile', 'refund-check', 'purchase-list', 'report-load', 'settle-approvals', 'pui-draft', 'pui-items']);
 // 시작 요청은 하나씩 차례로: 앞 작업이 멈추길 기다리는 사이 두 번째 요청이 오면 둘 다 새 작업을 만들어 같은 창을 동시에 만졌음 (자가 테스트 2026-10-28).
 // 차례로 처리하면 뒤 요청은 앞 요청이 시작한 작업을 보고 판단한다 (교통비 조회는 마지막 것이 이김)
 let startChain = Promise.resolve();
@@ -288,7 +288,7 @@ async function reportJob(j, kind, detail) {
 }
 
 /** 결재 문서를 그룹웨어에 입력하는 작업이 성공했을 때도 알림 (사용자 요청 2026-11-11). 글 한 줄만 — 실패 때와 달리 작업 기록·화면 캡처·HTML 은 보내지 않는다 */
-const DONE_REPORT = { apply: '출장 신청', report: '출장 보고·정산', purchase: '구매의뢰', visitor: '방문 신청', settle: '지출결의' };
+const DONE_REPORT = { apply: '출장 신청', report: '출장 보고·정산', purchase: '구매의뢰', visitor: '방문 신청', settle: '지출 결의', pui: '지출 품의' };
 const doneText = (j, cfg, version, now = Date.now()) => {
   const sec = Math.max(0, Math.round((now - j.startedAt) / 1000)), stuck = [...j.reported].filter(k => k.startsWith('stuck:')).length;
   return `✅ 작업 완료 · ${DONE_REPORT[j.kind]} (${j.title})\n`
@@ -571,8 +571,9 @@ async function route(p, body = {}) {
       return { ok: true };
     }
     case '/api/pick-po': {   // 발주서 1개: PDF·워드·엑셀·이미지
-      const r = await dialog.showOpenDialog(mainWin, { title: '발주서·견적서 선택 (PDF·워드·엑셀·이미지 1개)', properties: ['openFile'], filters: [{ name: '발주서', extensions: ['pdf', 'docx', 'xlsx', 'png', 'jpg', 'jpeg', 'webp'] }] });
-      return { path: r.canceled ? '' : r.filePaths[0] };
+      const what = body.what === 'invoice' ? '청구서 및 견적서' : body.what === 'consent' ? R.AI_CONSENT : '발주서·견적서';
+      const r = await dialog.showOpenDialog(mainWin, { title: `${what} 선택 (PDF·워드·엑셀·이미지${body.many ? ', 여러 개 가능' : ' 1개'})`, properties: body.many ? ['openFile', 'multiSelections'] : ['openFile'], filters: [{ name: what, extensions: ['pdf', 'docx', 'xlsx', 'png', 'jpg', 'jpeg', 'webp'] }] });
+      return { path: r.canceled ? '' : r.filePaths[0], paths: r.canceled ? [] : r.filePaths };
     }
     case '/api/pick-proofs': {   // 정산 증빙: 이미지·PDF 1개
       const r = await dialog.showOpenDialog(mainWin, { title: body.many ? '영수증·증빙 선택 (여러 개)' : '증빙 자료 선택 (이미지·PDF 1개)', properties: body.many ? ['openFile', 'multiSelections'] : ['openFile'],
@@ -726,12 +727,84 @@ async function route(p, body = {}) {
     case '/api/job/fare': return startJob('fare', env => runner.runFare({ ...env, force: Boolean(body.force) }, body), body.title);
     case '/api/job/apply': runner.planApply(body.data, cfg); return startJob('apply', env => runner.runApply(env, body.data, { save: false }), body.title);     // 보관·상신은 사람이
     case '/api/job/report': { const rep = R.parseReport(body.data); assertFilesExist(rep.expenses.flatMap(e => e.proofs || []), '증빙'); } return startJob('report', env => runner.runReport(env, body.data), body.title);
-    case '/api/job/settle-approvals': return startJob('settle-approvals', env => runner.runSettleApprovals(env, { from: String(body.from || ''), to: String(body.to || '') }), body.title);   // 지출결의할 수 있는 승인 품의 목록
+    case '/api/job/settle-approvals': return startJob('settle-approvals', env => runner.runSettleApprovals(env, { from: String(body.from || ''), to: String(body.to || ''), all: !!body.all }), body.title);
+    case '/api/job/pui-items': return startJob('pui-items', env => runner.runBudgetItems(env), body.title);   // 예산과목 드롭다운 (API)
+    case '/api/job/pui-draft': {   // 청구서 및 견적서 + 한 줄 메모 → 지출 품의 칸 (비슷한 이전 품의를 틀로)
+      const fs = (Array.isArray(body.paths) ? body.paths : [body.path]).map(f => String(f || '')).filter(Boolean);   // 여러 개 가능 (Claude·Codex 구독 등)
+      if (!fs.length) throw new R.InputError('청구서 및 견적서 파일을 먼저 올려 주세요.');
+      assertFilesExist(fs, '청구서 및 견적서');
+      const invoices = fs.map(f => { const ext = path.extname(f).slice(1).toLowerCase(), mime = PROOF_MIME[ext];
+        if (ext === 'docx' || ext === 'xlsx') return { name: path.basename(f), text: require('./engine/office').officeText(f) };
+        if (!mime) throw new R.InputError('청구서 및 견적서는 PDF·이미지·워드(.docx)·엑셀(.xlsx) 파일이어야 해요.');
+        return { name: path.basename(f), file: { mime, data: require('fs').readFileSync(f).toString('base64') } }; });
+      return startJob('pui-draft', env => runner.runPuiDraft({ ...env, ai: aiSettings(cfg), fxKey: fxKey() }, String(body.memo || '').trim().slice(0, 1000), invoices, body.tpl || null), body.title);   // tpl: 알림으로 다시 쓰는 지난 품의 (예산과목 틀)
+    }
+    case '/api/pui/repeats': return repeats();
+    case '/api/pui/repeat-add': {   // 방금 올린 지출 품의를 다음 달부터 매달 day 일에 알림. 청구서는 매달 새로 받으니 저장 안 함
+      const d = body.data || {}, now = new Date(), day = Math.round(Number(body.day));
+      if (!(day >= 1 && day <= 31)) throw new R.InputError('알림 받을 날(1~31일)을 넣어 주세요.');
+      const keep = { cmd: String(d.cmd || ''), memo: String(d.memo || ''), title: String(d.title || ''), purpose: String(d.purpose || ''), consent: String(d.consent || ''), limit: Number(d.limit) || 0,
+        lines: (d.lines || []).map(l => ({ code: String(l.code || ''), label: String(l.label || ''), memo: String(l.memo || '') })) };   // 예산과목·문구만 (다음에 틀로)
+      const list = saveRepeats([...repeats(), { id: Date.now().toString(36), on: true, day, base: ymOf(now), last: ymOf(now), done: ymOf(now), created: now.toISOString(), data: keep }]);
+      remindNotify('🔔 매달 알림을 켰어요', `매달 ${day}일에 이렇게 알려 드려요 — ${keep.memo}`, showMain);   // 맥은 처음 알림 때 OS 가 알림 허용을 물음 → 켤 때 바로 묻게
+      return list;
+    }
+    case '/api/pui/notify-test': remindNotify('🔔 지출 품의 올릴 때예요', '알림 시험이에요 — 그날이 되면 이렇게 알려 드려요.', showMain); return { ok: true };
+    case '/api/pui/repeat-done': return saveRepeats(repeats().map(r => r.id === body.id ? { ...r, done: ymOf(new Date()) } : r));   // 알림 받고 이번 달 품의를 올림 → 배지 끔
+    case '/api/pui/repeat-set': return saveRepeats(repeats().map(r => r.id === body.id ? { ...r, on: !!body.on } : r));   // 끄기·켜기
+    case '/api/pui/repeat-del': return saveRepeats(repeats().filter(r => r.id !== body.id));
+    case '/api/job/pui': { const pq = R.parsePui(body.data); assertFilesExist([...pq.files, ...pq.proofs], '청구서 및 견적서'); return startJob('pui', env => runner.runPui(env, body.data), body.title); }   // 결재선·상신은 사람이   // 지출 결의할 수 있는 승인 품의 목록
     case '/api/job/settle': { const s = R.parseSettle(body.data); assertFilesExist(s.lines.flatMap(l => l.proofs || []), '영수증'); return startJob('settle', env => runner.runSettle(env, body.data), body.title); }   // 전송은 사람이
     case '/api/job/cancel': if (job) job.cancel(); return { ok: true };
     case '/api/job': return job ? job.snapshot(Number(body.since || 0)) : { state: 'none' };
     case '/api/job/answer': if (job && (!body.id || body.id === job.id)) { job.answer(body.value); if (gwShown) hideGw(); } return { ok: true };   // 다른 작업의 질문에 답이 가지 않게. [계속]이면 사람이 보던 작업 창을 다시 숨김 (띄워 둔 채 두면 자꾸 만져서 꼬임 — 2026-11-03). 다시 필요하면 작업이 직접 띄움
     default: throw new Error(`알 수 없는 요청: ${p}`);
+  }
+}
+
+// ---------- 지출 품의 매달 알림 (청구서가 매달 새로 발급돼 앱이 대신 올리지 않음) ----------
+// 켜진 알림이 있으면 트레이 상주 + 로그인 때 숨겨서 켜짐 (꺼져 있던 날은 켜질 때 따라잡음)
+const repeats = () => store.config().puiRepeats || [];
+const keepInBackground = () => repeats().some(r => r.on);
+const ymOf = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+let tray = null;
+function saveRepeats(list) { store.saveConfig({ puiRepeats: list }); syncBackground(); return list; }
+function showMain() { if (!mainWin || mainWin.isDestroyed()) return createMain(); if (mainWin.isMinimized()) mainWin.restore(); mainWin.show(); mainWin.focus(); }
+/** 알림 id 의 품의를 화면에서 다시 쓰게 (창이 없으면 띄운 뒤) */
+function openRemind(id) {
+  if (!mainWin || mainWin.isDestroyed()) { createMain(); mainWin.webContents.once('did-finish-load', () => setTimeout(() => mainWin && mainWin.webContents.send('pui-remind', id), 800)); return; }
+  showMain(); mainWin.webContents.send('pui-remind', id);
+}
+function syncBackground() {
+  const on = keepInBackground();
+  if (app.isPackaged) app.setLoginItemSettings({ openAtLogin: on, openAsHidden: on, args: on ? ['--hidden'] : [] });   // 개발 중엔 electron 실행 파일이 등록돼 버려 안 함
+  if (on && !tray) {
+    tray = new Tray(nativeImage.createFromPath(ICON).resize({ width: 18, height: 18 }));
+    tray.setToolTip('와니의 결재 도우미 — 지출 품의 알림 켜짐');
+    tray.setContextMenu(Menu.buildFromTemplate([{ label: '열기', click: showMain }, { type: 'separator' }, { label: '끝내기 (알림도 멈춤)', click: () => app.quit() }]));
+    tray.on('click', showMain);
+  } else if (!on && tray) { tray.destroy(); tray = null; }
+  // 슬랙처럼 앱 아이콘에 빨간 숫자: 알림은 왔는데 아직 안 올린 품의 수
+  const ym = ymOf(new Date()), pending = repeats().filter(r => r.on && r.last === ym && r.done !== ym).length;
+  try { app.setBadgeCount(pending); } catch (e) { /* 지원 안 하는 OS */ }
+}
+/** 슬랙처럼 화면 구석 알림 + 소리. 맥 알림 소리는 시스템 설정(앱별 '소리 재생')을 따라 안 날 수 있어 앱이 직접 재생 (Glass) */
+function remindNotify(title, body, onClick) {
+  const mac = process.platform === 'darwin';
+  try {
+    // 맥 소리는 아래서 직접(두 번 안 나게). 닫을 때까지 남는 건 배포본 Info.plist 의 alert 스타일 덕 (개발 모드 Electron 은 배너라 사라짐)
+    const n = new Notification({ title, body, icon: ICON, silent: mac, timeoutType: 'never', ...(onClick ? { actions: [{ type: 'button', text: '지금 올리기' }], closeButtonText: '나중에' } : {}) });
+    if (onClick) { n.on('click', onClick); n.on('action', onClick); }
+    n.show();
+  } catch (e) { /* 알림 못 띄움 — 앱 안 카드·배지로도 보임 */ }
+  if (mac) try { require('child_process').spawn('afplay', ['/System/Library/Sounds/Glass.aiff'], { stdio: 'ignore', detached: true }).unref(); } catch (e) { /* 소리 없음 */ }
+}
+function remindDue() {
+  if (!store) return;
+  for (let due = R.dueRepeat(repeats()); due; due = R.dueRepeat(repeats())) {
+    const { rep, ym } = due;
+    saveRepeats(repeats().map(r => r.id === rep.id ? { ...r, last: ym } : r));   // 이번 달 알림 보냄
+    remindNotify('🔔 지출 품의 올릴 때예요', `${rep.data.memo}\n새로 받은 청구서 및 견적서만 넣고 보내면 돼요.`, () => openRemind(rep.id));
   }
 }
 
@@ -744,9 +817,12 @@ app.whenReady().then(() => {
   // macOS Dock 아이콘은 번들 아이콘(build/icon.png, 애플 규격대로 둘레 여백 있음)을 그대로 쓴다.
   // 여기서 setIcon(꽉 찬 icon-512)으로 덮으면 다른 앱보다 크게 보인다. 개발 모드는 brand-dev-electron.js 가 같은 아이콘을 넣어 둔다.
   store = new Store(process.env.TRIP_ASSISTANT_DATA || app.getPath('userData'));
-  createMain();
+  const hidden = keepInBackground() && (process.argv.includes('--hidden') || app.getLoginItemSettings().wasOpenedAsHidden);   // 로그인 자동 시작: 창 없이 트레이로
+  if (!hidden) createMain();
+  syncBackground();
   updater.start();
+  setTimeout(remindDue, 30 * 1000); setInterval(remindDue, 30 * 60 * 1000);   // 켤 때(꺼져 있던 날 따라잡기) + 30분마다
   if (!app.isPackaged) watchForDev();
   app.on('activate', () => { if (!mainWin || mainWin.isDestroyed()) createMain(); });
 });
-app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
+app.on('window-all-closed', () => { if (process.platform !== 'darwin' && !keepInBackground()) app.quit(); });   // 자동 반복이 켜져 있으면 트레이에 남음

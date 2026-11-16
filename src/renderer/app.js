@@ -475,7 +475,7 @@ function histSave(memo, key = 'q_hist'){
   try { localStorage[key] = JSON.stringify([memo, ...histLoad(key).filter(m => m !== memo)].slice(0, HIST_MAX)); } catch(e){ /* 저장 공간 없음 */ }
   histRender(key);
 }
-for (const [key, memo] of [['q_hist', '#q_memo'], ['vs_hist', '#vs_memo']]){
+for (const [key, memo] of [['q_hist', '#q_memo'], ['vs_hist', '#vs_memo'], ['pq_hist', '#pq_cmd']]){
   $('#' + key).onchange = () => { if($('#' + key).value){ $(memo).value = $('#' + key).value; $(memo).focus(); } $('#' + key).value = ''; };
   histRender(key);
 }
@@ -945,7 +945,7 @@ function applyReceipts(got){
   dz.addEventListener('drop', e => addRqFiles([...e.dataTransfer.files].map(f => window.api.pathForFile(f))));
   $('#btnPickReceipts').onclick = async () => { const {paths} = await rpc('/api/pick-proofs', {many: true}); addRqFiles(paths || []); };
   // 창 아무 데나 떨어뜨려도 앱이 파일을 열어 버리지 않게
-  ['dragover', 'drop'].forEach(ev => window.addEventListener(ev, e => { if(!e.target.closest || !e.target.closest('#r_drop, #po_drop')) e.preventDefault(); }));
+  ['dragover', 'drop'].forEach(ev => window.addEventListener(ev, e => { if(!e.target.closest || !e.target.closest('#r_drop, #po_drop, #pq_drop, #ac_drop')) e.preventDefault(); }));
 }
 $('#reportView').addEventListener('input', e => { if(e.target.classList) e.target.classList.remove('need'); });   // 입력 시작하면 빈 칸 표시 해제
 $$('input[name=r_fund]').forEach(x => x.addEventListener('change', () => $('#r_fund').classList.remove('need')));
@@ -1303,8 +1303,8 @@ async function initVisitor(){
   if(!$('#vs_host').value) $('#vs_host').value = c.name || '';
   vsCheckUrgent();
 }
-/* ---------- 지출결의 (개인카드·개인지출, 가이드 06) ---------- */
-let stInited = false, stApprovals = [];
+/* ---------- 지출 결의 (개인카드·개인지출, 가이드 06) ---------- */
+let stInited = false;
 const stFund = () => radio('st_fund') || '일반경비';
 function addStRow(e = {}){
   const tr = document.createElement('tr');
@@ -1341,28 +1341,270 @@ const readStExp = () => [...$('#st_exp tbody').querySelectorAll('tr')].map(tr =>
   amount: num(tr.querySelector('.amt').value), memo: tr.querySelector('.memo').value.trim(),
   fund: tr.querySelector('.fund').value, planDate: tr.querySelector('.plan').value || '', file: tr.dataset.file || '',
 })).filter(e => e.amount || e.memo || e.file);
-function loadStApprovals(){
-  runJob('승인 품의 불러오기', '/api/job/settle-approvals', {}, r => {
-    stApprovals = r.rows || [];
-    const sel = $('#st_pui'), keep = sel.value;
-    sel.innerHTML = '<option value="">품의를 고르세요</option>' + stApprovals.map(x =>
-      `<option value="${x.ym}|${x.day}|${x.seq}">${escH(`${x.ym}-${String(x.day).padStart(2, '0')} 순번 ${x.seq} · ${x.memo || '(적요 없음)'} · ${x.total}원`)}</option>`).join('');
-    if(keep) sel.value = keep;
-    $('#st_err').textContent = stApprovals.length ? '' : '최근 3개월에 지출결의할 수 있는 승인완료 지출 품의가 없어요.';
+/* 📋 지출 결의: 올린 지출 품의 목록 (출장 보고처럼). 승인된 품의 → [지출 결의서 작성] */
+let stListed = false;
+function stSetRange(m){ const t = new Date(), f = new Date(t); f.setMonth(f.getMonth() - m); $('#stFrom').value = ymd(f); $('#stTo').value = ymd(t); $$('#stRange .quickr .btn').forEach(b => b.classList.toggle('on', Number(b.dataset.m) === m)); }
+function openStForm(x){
+  $('#st_pui').value = `${x.ym}|${x.day}|${x.seq}`;
+  $('#st_pui_name').textContent = (x.docTitle || x.memo || '').replace(/^\[[^\]]*\]\s*/, '');
+  if(!$('#st_purpose').value.trim()) $('#st_purpose').value = x.memo || '';
+  $('#st_err').textContent = ''; $('#stForm').classList.remove('hidden'); $('#stForm').scrollIntoView({block: 'start', behavior: 'smooth'});
+}
+function loadStList(){
+  stListed = true;
+  runJob('지출 품의 목록', '/api/job/settle-approvals', {all: true, from: $('#stFrom').value, to: $('#stTo').value}, r => {
+    const rows = r.rows || [], box = $('#stRows');
+    if(r.from) $('#stFrom').value = r.from; if(r.to) $('#stTo').value = r.to;
+    box.innerHTML = rows.length ? '' : '<div class="none">📭<b>이 기간에 올린 지출 품의가 없어요</b><span>조회 기간을 넓히거나 [✍️ 지출 품의]에서 올리세요.</span></div>';
+    rows.forEach(x => {
+      const el = document.createElement('div'); el.className = 'item';
+      const ok = DONE.test(x.status), bad = REJECTED.test(x.status);
+      if(bad) el.classList.add('rejected');
+      el.innerHTML = `<div><b></b>${pill('품의', x.status, x.docNo ? `${x.status} · ${x.docNo}` : x.status)}<div class="sub" style="margin:2px 0 0"></div>${bad ? '<div class="err" style="margin-top:4px">품의가 반려됐어요. 사유를 그룹웨어에서 확인하고 [✍️ 지출 품의]에서 다시 올리세요.</div>' : ''}</div>
+        <div class="inline">${x.locked ? '' : '<button class="btn small danger del">삭제</button>'}${ok ? '<button class="btn primary go">지출 결의서 작성</button>' : ''}</div>`;
+      el.querySelector('b').textContent = (x.docTitle || x.memo || '').replace(/^\[[^\]]*\]\s*/, '');
+      el.querySelector('.sub').textContent = `${Number(x.ym.slice(5, 7))}월 ${x.day}일 품의 · ${x.total}원`;
+      if(el.querySelector('.go')) el.querySelector('.go').onclick = () => openStForm(x);
+      if(el.querySelector('.del')) el.querySelector('.del').onclick = () => {
+        if(!confirm(`그룹웨어에서 이 품의를 삭제할까요? 되돌릴 수 없어요.\n\n${el.querySelector('b').textContent} (${x.total}원)`)) return;
+        runJob('품의 삭제', '/api/job/gw-delete', {keys: [x.key]}, loadStList, {userAction: true});
+      };
+      box.appendChild(el);
+    });
   }, {quiet: true, userAction: true});
+}
+/* 지출 품의 (지출 결의 앞 단계) */
+/** 예산과목 드롭다운: 그룹웨어 API 목록(pqItems)을 분류별로. sel: 고른 코드 (목록에 없으면 그 줄만 따로 보여 줌) */
+function pqItemOptions(sel = '', label = ''){
+  const groups = new Map();
+  pqItems.forEach(x => { const g = (x.path || '').includes('>') ? x.path.split('>')[0].trim() : '기타'; if(!groups.has(g)) groups.set(g, []); groups.get(g).push(x); });
+  const extra = sel && !pqItems.some(x => x.code === sel) ? `<option value="${escH(sel)}" selected>${escH(label || sel)} (${escH(sel)})</option>` : '';
+  return `<option value="">${pqItems.length ? '예산과목 고르기' : '예산과목 목록 불러오는 중…'}</option>${extra}`
+    + [...groups].map(([g, xs]) => `<optgroup label="${escH(g)}">${xs.map(x => `<option value="${escH(x.code)}"${x.code === sel ? ' selected' : ''}>${escH(x.name)} (${escH(x.code)})</option>`).join('')}</optgroup>`).join('');
+}
+const pqItemName = code => (pqItems.find(x => x.code === code) || {}).name || '';
+function addPqRow(l = {}){
+  const tr = document.createElement('tr');
+  tr.innerHTML = `<td><select class="item"></select></td>
+    <td><input class="code" readonly tabindex="-1" placeholder="자동"></td>
+    <td><input class="amt" inputmode="numeric" placeholder="원"></td>
+    <td><input class="memo" placeholder="예: Claude Pro 구독료 (10/22~11/22)"></td>
+    <td><button class="del" type="button" title="줄 삭제">✕</button></td>`;
+  const amt = tr.querySelector('.amt'), sel = tr.querySelector('.item');
+  tr.dataset.usd = l.usd ?? '';   // 외화 줄: 자동 반복 때 그달 환율로 다시 계산
+  tr.dataset.label = l.label || '';
+  amt.oninput = () => { amt.value = amt.value ? num(amt.value).toLocaleString('ko-KR') : ''; tr.dataset.usd = ''; };   // 원화를 직접 고치면 그 금액으로 고정
+  sel.innerHTML = pqItemOptions(l.code || '', l.label);
+  sel.onchange = () => { tr.querySelector('.code').value = sel.value; tr.dataset.label = pqItemName(sel.value); };
+  tr.querySelector('.del').onclick = () => tr.remove();
+  tr.querySelector('.code').value = l.code || '';
+  if(l.amount != null && l.amount !== '') amt.value = num(l.amount).toLocaleString('ko-KR');
+  tr.querySelector('.memo').value = l.memo || '';
+  $('#pq_lines tbody').appendChild(tr);
+}
+// 완전히 빈 줄만 뺀다 — 0원은 사용자가 넣은 값
+const readPqLines = () => [...$('#pq_lines tbody').querySelectorAll('tr')].map(tr => ({
+  code: tr.querySelector('.item').value, label: pqItemName(tr.querySelector('.item').value) || (tr.querySelector('.item').value ? tr.dataset.label : ''),
+  amount: tr.querySelector('.amt').value === '' ? '' : num(tr.querySelector('.amt').value), memo: tr.querySelector('.memo').value.trim(), usd: tr.dataset.usd || '',
+})).filter(l => l.code || l.label || l.amount !== '' || l.memo);
+let pqDrafted = '', pqInfo = '', pqFx = null;   // pqDrafted: AI 로 채운 청구서 및 견적서+메모 (같으면 다시 안 채움) · pqFx: 외화 환산 {rate, date, shot}
+let pqItems = [];   // 회사 예산과목 목록 [{code, name}] (그룹웨어 코드도움에서 읽어 설정에 저장한 것)
+// AI 도구 이용 지원 동의서: 개인용인지 팀용인지 앱은 모름 → AI 도구 품의로 보이면 모달로 묻고 첨부(필수 아님). 올린 파일은 이 PC에 기억해 다음에도 제안
+let pqAiTool = false, acFile = (() => { try { return localStorage.pq_consent || ''; } catch(e){ return ''; } })();
+function renderAcFile(){
+  const has = !!acFile; $('#ac_drop').classList.toggle('has', has); $('#ac_card').classList.toggle('hidden', !has);
+  $('#ac_name').textContent = has ? acFile.split(/[\\/]/).pop() : ''; $('#ac_name').title = acFile;
+}
+function useAcFile(f){
+  if(!f) return;
+  if(!/\.(pdf|png|jpe?g|webp)$/i.test(f)) return ($('#ac_err').textContent = '동의서는 PDF·이미지 파일이어야 해요.');
+  acFile = f; $('#ac_err').textContent = ''; try { localStorage.pq_consent = f; } catch(e){ /* */ } renderAcFile();
+}
+/** → {act: 'ok'|'skip'|'cancel', limit} — 지원 한도는 앱이 정하지 않고 사용자에게 물음 */
+function askAiConsent(){
+  return new Promise(res => {
+    const m = $('#aiConsentModal'); $('#ac_err').textContent = ''; renderAcFile(); m.classList.add('on');
+    const done = act => { m.classList.remove('on'); ['#acOk', '#acSkip', '#acCancel', '#acX'].forEach(id => $(id).onclick = null); document.removeEventListener('keydown', key); res(act); };
+    const key = e => { if(e.key === 'Escape') done('cancel'); };
+    $('#acOk').onclick = () => acFile ? done('ok') : ($('#ac_err').textContent = '동의서를 올려 주세요. 팀에서 같이 쓰는 도구면 [건너뛰기]를 누르세요.');
+    $('#acSkip').onclick = () => done('skip'); $('#acCancel').onclick = $('#acX').onclick = () => done('cancel');
+    document.addEventListener('keydown', key);
+  });
+}
+/** 동의서 전에 먼저: 지원 한도 → 금액(원) | 0(한도 없음) | null(취소). 앱이 정하지 않고 사용자에게 물음, 지난번 값은 미리 채움 */
+function askAiLimit(total){
+  return new Promise(res => {
+    const m = $('#aiLimitModal'), lim = $('#al_limit'); $('#al_err').textContent = '';
+    try { lim.value = localStorage.pq_limit ? num(localStorage.pq_limit).toLocaleString('ko-KR') : ''; } catch(e){ lim.value = ''; }
+    const hint = () => { const v = lim.value ? num(lim.value) : 0; $('#al_sum').textContent = `청구 합계 ${total.toLocaleString('ko-KR')}원${v ? (total > v ? ` → ${v.toLocaleString('ko-KR')}원으로 품의해요` : ' — 한도 안이에요') : ''}`; };
+    lim.oninput = () => { lim.value = lim.value ? num(lim.value).toLocaleString('ko-KR') : ''; $('#al_err').textContent = ''; hint(); }; hint();
+    m.classList.add('on'); setTimeout(() => lim.focus(), 50);
+    const done = v => { m.classList.remove('on'); ['#alOk', '#alNone', '#alCancel', '#alX'].forEach(id => $(id).onclick = null); document.removeEventListener('keydown', key);
+      if(v !== null) try { localStorage.pq_limit = v ? String(v) : ''; } catch(e){ /* */ } res(v); };
+    const key = e => { if(e.key === 'Escape') done(null); else if(e.key === 'Enter' && !e.isComposing) $('#alOk').click(); };
+    $('#alOk').onclick = () => { const v = lim.value ? num(lim.value) : 0; if(!v) return ($('#al_err').textContent = '한도 금액을 넣거나 [한도 없음]을 누르세요.'); done(v); };
+    $('#alNone').onclick = () => done(0); $('#alCancel').onclick = $('#alX').onclick = () => done(null);
+    document.addEventListener('keydown', key);
+  });
+}
+function setPqItems(items){
+  if(!items || !items.length) return; pqItems = items;
+  [...$('#pq_lines tbody').querySelectorAll('tr')].forEach(tr => { const s = tr.querySelector('.item'); s.innerHTML = pqItemOptions(s.value, tr.dataset.label); });   // 고른 값은 그대로
+}
+const pqRevealForm = () => $('#pqNew').classList.remove('pre');
+let pqFiles = [];   // 청구서 및 견적서 (여러 개: Claude·Codex 구독 등)
+function renderPqFile(busy = false){
+  const has = pqFiles.length > 0; $('#pq_drop').classList.toggle('has', has); $('#pq_card').classList.toggle('hidden', !has);
+  const box = $('#pq_files'); box.innerHTML = '';
+  pqFiles.forEach(f => {
+    const name = f.split(/[\\/]/).pop(), ext = name.split('.').pop().toLowerCase(), el = document.createElement('div'); el.className = 'pofile';
+    el.innerHTML = `<span class="ico">${ext === 'pdf' ? '📄' : ext === 'docx' ? '📝' : ext === 'xlsx' ? '📊' : '🖼️'}</span><div class="meta"><b></b></div><span class="acts"><button class="btn small" type="button" title="빼기">✕</button></span>`;
+    el.querySelector('b').textContent = name; el.querySelector('b').title = f;
+    el.querySelector('button').onclick = () => { pqFiles = pqFiles.filter(x => x !== f); pqInfo = ''; pqFx = null; renderPqFile(); };
+    box.appendChild(el);
+  });
+  $('#pq_info').textContent = busy ? `청구서 및 견적서 ${pqFiles.length}개 읽는 중` : (pqInfo || `${pqFiles.length}개 · 그룹웨어 품의에 모두 첨부돼요`); $('#pq_info').classList.toggle('busy', busy);
+}
+function usePqFiles(list){
+  const ok = (list || []).filter(Boolean);
+  if(ok.some(f => !/\.(pdf|docx|xlsx|png|jpe?g|webp)$/i.test(f))) return alertErr('청구서 및 견적서는 PDF·워드(.docx)·엑셀(.xlsx)·이미지 파일이어야 해요.');
+  if(!ok.length) return;
+  pqFiles = [...new Set([...pqFiles, ...ok])]; pqInfo = ''; pqFx = null; pqAiTool = false; renderPqFile();
+}
+/** 칸 값 → {data} 또는 {err} */
+function pqRead(){
+  const memo = $('#pq_memo').value.trim(), purpose = $('#pq_purpose').value.trim(), lines = readPqLines();
+  const err = !pqFiles.length ? '청구서 및 견적서 파일을 올려 주세요. 품의에 첨부돼요.' : !memo ? '품의 적요를 적어 주세요.' : !purpose ? '품의목적을 적어 주세요.' : !lines.length ? '예산 줄을 한 줄 이상 넣어 주세요.'
+    : lines.some(l => l.amount === '') ? '모든 줄에 품의금액을 넣어 주세요 (0원도 돼요).'
+    : lines.some(l => !l.memo) ? '모든 줄에 적요를 적어 주세요.' : !lines.some(l => l.amount > 0) ? '품의 금액을 한 줄 이상 넣어 주세요 (지금은 전부 0원이에요).' : '';
+  return err ? { err } : { data: { memo, title: $('#pq_title').value.trim(), purpose, detail: $('#pq_detail').value.trim(), lines, files: pqFiles, proofs: pqFx ? [pqFx.shot] : [], fx: pqFx && lines.some(l => l.usd !== '') ? { rate: pqFx.rate, date: pqFx.date } : null } };
+}
+async function submitPui(){
+  const { data, err } = pqRead();
+  $('#pq_err').textContent = err || '';
+  if(err && !pqFiles.length){ $('#pq_drop').scrollIntoView({block: 'center'}); return alertErr(err); }
+  if(err){ pqRevealForm(); $('#pq_err').scrollIntoView({block: 'center'}); return; }
+  if(pqAiTool){   // 개인 AI 도구: ① 지원 한도 → ② 동의서
+    const limit = await askAiLimit(data.lines.reduce((s, l) => s + l.amount, 0)); if(limit === null) return;
+    const a = await askAiConsent(); if(a === 'cancel') return;
+    data.consent = a === 'ok' ? acFile : ''; data.ai_tool = a === 'ok'; data.limit = limit;
+  }
+  const won = n => Number(n).toLocaleString('ko-KR'), sum = ls => ls.reduce((s, l) => s + l.amount, 0);
+  // 사용자가 넣은 지원 한도까지만 품의: 앞 줄부터 채우고 넘는 만큼 깎음 (엔진 R.capTotal 과 같은 규칙 — 실제로 깎는 건 엔진)
+  let left = data.limit || 0; const shown = data.limit ? data.lines.map(l => { const a = Math.min(l.amount, Math.max(0, left)); left -= a; return { ...l, amount: a, cut: a !== l.amount }; }) : data.lines;
+  const html = `<div class="cf-title">${escH(data.title || data.memo)}</div>
+    <dl class="cf-grid"><dt>적요</dt><dd>${escH(data.memo)}</dd><dt>청구서 및 견적서</dt><dd>${data.files.map(f => escH(f.split(/[\\/]/).pop())).join('<br>')}</dd>${pqFx ? `<dt>환율</dt><dd>USD ${won(pqFx.rate)}원 (${escH(pqFx.date)} 매매기준율, 조회 결과 첨부)</dd>` : ''}<dt>품의목적</dt><dd>${escH(data.purpose)}</dd>${shown.map((l, i) => `<dt>예산과목</dt><dd><select class="cf-item" data-i="${i}" style="width:100%">${pqItemOptions(l.code, l.label)}</select><br>${won(l.amount)}원${l.cut ? ' (한도로 깎음)' : ''} · ${escH(l.memo)}</dd>`).join('')}<dt>합계</dt><dd><b>${won(sum(shown))}원</b></dd>${pqAiTool ? `<dt>지원 한도</dt><dd>${data.limit ? `<b>${won(data.limit)}원</b>${sum(data.lines) > data.limit ? ` — 청구 ${won(sum(data.lines))}원에서 넘는 만큼 깎음` : ' — 청구 합계가 한도 안'}` : '없음'}</dd>` : ''}${data.ai_tool ? `<dt>동의서</dt><dd>${escH(data.consent.split(/[\\/]/).pop())}</dd>` : ''}</dl>
+    <div class="cf-repeat"><label class="cf-repeat-head"><input type="checkbox" id="cf_repeat"><b>🔔 매달 알림 받기</b></label>
+      <div class="cf-repeat-day">다음 달부터 매달 <input type="number" id="cf_day" min="1" max="31" placeholder="일" disabled> 일에 알려 줘요 — 그때 새 청구서만 넣고 바로 올리면 돼요 <span class="err" id="cf_day_err"></span></div></div>`;
+  const asked = confirmSubmit({ title: '이대로 지출 품의를 올릴까요?', html, note: `결재양식 '품의서입력(복수)지출'로 본문까지 채워 [보관]해요. 결재선 지정과 [상신]은 직접.` });
+  // 매달 알림: 체크하면 '며칠'이 필수 — 채우기 전엔 [보내기] 잠금
+  const dayOk = () => { const d = Number($('#cf_day').value); return Number.isInteger(d) && d >= 1 && d <= 31; };
+  const syncRepeat = () => { const on = $('#cf_repeat').checked; $('#cf_day').disabled = !on; $('.cf-repeat').classList.toggle('on', on);
+    $('#cf_day_err').textContent = on && !dayOk() ? ($('#cf_day').value ? '1~31 사이로 넣어 주세요' : '며칠에 알릴지 넣어 주세요') : ''; $('#cfYes').disabled = on && !dayOk(); };
+  $('#cf_repeat').onchange = () => { syncRepeat(); if($('#cf_repeat').checked) $('#cf_day').focus(); }; $('#cf_day').oninput = syncRepeat;
+  // 예산과목은 AI 가 고른 걸 사용자가 보고 바꿀 수 있게 (그룹웨어 API 목록 드롭다운)
+  if(!(await asked)) return;
+  const picked = $$('#cfBody .cf-item').map((s, i) => ({ code: s.value, label: pqItemName(s.value) || (s.value ? data.lines[i].label : '') }));
+  // 아래 예산 줄 표에도 반영 (빈 줄은 readPqLines 처럼 건너뜀)
+  [...$('#pq_lines tbody').querySelectorAll('tr')].filter(tr => tr.querySelector('.item').value || tr.querySelector('.memo').value.trim() || tr.querySelector('.amt').value)
+    .forEach((tr, i) => { if(!picked[i]) return; const s = tr.querySelector('.item'); s.innerHTML = pqItemOptions(picked[i].code, picked[i].label); tr.querySelector('.code').value = picked[i].code; tr.dataset.label = picked[i].label; });
+  if(picked.some(p => !p.code)){ alertErr('예산과목을 모든 줄에 골라 주세요.'); return; }
+  data.lines = data.lines.map((l, i) => ({ ...l, ...picked[i] }));
+  const repeat = $('#cf_repeat').checked, day = Number($('#cf_day').value), from = pqTpl;   // 체크했으면 위에서 1~31 확인됨
+  runJob('지출 품의 올리기', '/api/job/pui', {data}, async () => {
+    $('#pq_status').textContent = $('#pq_err').textContent = '지출 품의를 보관했어요. 작성 창에서 결재선을 지정하고 직접 [상신]하세요. 승인되면 [📋 지출 결의]에서 지출 결의서를 써요.';
+    if(from) { await rpc('/api/pui/repeat-done', {id: from.id}).catch(() => {}); pqTpl = null; loadPqRepeats(); }   // 알림 받고 올림 → 배지 끔
+    if(repeat){ try { await rpc('/api/pui/repeat-add', {data: {...data, cmd: $('#pq_cmd').value.trim()}, day}); loadPqRepeats(); } catch(e){ alertErr(`매달 알림을 저장하지 못했어요: ${e.message}`); } }
+  }, {userAction: true});
+}
+/* 🔔 매달 알림 목록: [지금 올리기]·켜기·끄기·삭제 */
+let pqTpl = null;   // 알림으로 다시 쓰는 지난 품의 {id, title, memo, lines} — 초안 때 예산과목 틀로
+async function loadPqRepeats(){
+  const list = await rpc('/api/pui/repeats').catch(() => []), box = $('#pqRepeatRows'), d = new Date(), ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  $('#pqRepeats').classList.toggle('hidden', !list.length); box.innerHTML = '';
+  list.forEach(r => {
+    const el = document.createElement('div'); el.className = 'item'; const due = r.on && r.last === ym && r.done !== ym;
+    el.innerHTML = `<div><b></b>${due ? ' <span class="pill bad">이번 달 올릴 차례</span>' : r.done === ym ? ' <span class="pill ok">이번 달 올림</span>' : ''}<div class="sub" style="margin:2px 0 0"></div></div>
+      <div class="inline" style="gap:10px"><button class="btn ${due ? 'primary' : 'small'} go">지금 올리기</button><label class="inline" style="gap:6px;font-size:13px"><input type="checkbox" class="on" style="width:auto"> 켜짐</label><button class="btn small danger del">삭제</button></div>`;
+    el.querySelector('b').textContent = r.data.memo;
+    el.querySelector('.sub').textContent = `매달 ${r.day}일 알림${r.data.limit ? ` · 지원 한도 ${Number(r.data.limit).toLocaleString('ko-KR')}원` : ''} · 예산과목 ${r.data.lines.map(l => l.label || l.code).filter(Boolean).join(', ') || '-'}`;
+    const on = el.querySelector('.on'); on.checked = r.on;
+    on.onchange = async () => { await rpc('/api/pui/repeat-set', {id: r.id, on: on.checked}); loadPqRepeats(); };
+    el.querySelector('.go').onclick = () => openPuiRemind(r.id);
+    el.querySelector('.del').onclick = async () => { if(!confirm(`'${r.data.memo}' 매달 알림을 지울까요?`)) return; await rpc('/api/pui/repeat-del', {id: r.id}); loadPqRepeats(); };
+    box.appendChild(el);
+  });
+}
+/** 알림(또는 [지금 올리기]) → 지난 품의로 화면을 채우고 새 청구서만 받게 */
+async function openPuiRemind(id){
+  const r = (await rpc('/api/pui/repeats').catch(() => [])).find(x => x.id === id); if(!r) return;
+  $('nav [data-tab="settle"], [data-tab="settle"]')?.click(); initSettle(); setRadio('st_view', 'pui'); $('#pqNew').classList.remove('hidden'); $('#stNew').classList.add('hidden');
+  pqTpl = { id: r.id, title: r.data.title, memo: r.data.memo, lines: r.data.lines };
+  pqFiles = []; pqFx = null; pqAiTool = false; pqDrafted = ''; pqInfo = ''; renderPqFile();
+  $('#pq_cmd').value = r.data.cmd || r.data.memo; $('#pqNew').classList.add('pre');
+  $('#pq_status').textContent = `🔔 '${r.data.memo}' — 새로 받은 청구서 및 견적서만 넣고 [그룹웨어에 보내기]를 누르세요. 예산과목은 지난번 그대로 써요.`;
+  $('#pq_drop').scrollIntoView({block: 'center'});
+}
+window.api.onPuiRemind && window.api.onPuiRemind(id => openPuiRemind(id));
+function pqFill(r){
+  $('#pq_memo').value = r.memo || ''; $('#pq_title').value = r.title || ''; $('#pq_purpose').value = r.purpose || ''; $('#pq_detail').value = '';
+  $('#pq_lines tbody').innerHTML = ''; (r.lines.length ? r.lines : [{}]).forEach(addPqRow);
+}
+function pqSend(){
+  const memo = $('#pq_cmd').value.trim(), pre = $('#pqNew').classList.contains('pre');
+  if(!pqFiles.length){ $('#pq_drop').scrollIntoView({block: 'center'}); return alertErr('청구서 및 견적서 파일을 먼저 올려 주세요. 품의에 첨부돼요.'); }
+  if(!memo){ if(pre){ $('#pq_cmd').focus(); return alertErr('무엇에 쓰려고 사는지 한 줄 적어 주세요.'); } return submitPui(); }
+  if(pqDrafted === pqFiles.join('|') + '\n' + memo) return submitPui();
+  histSave(memo, 'pq_hist');
+  $('#pq_status').textContent = ''; renderPqFile(true);
+  runJob('지출 품의 초안', '/api/job/pui-draft', {memo, paths: pqFiles, tpl: pqTpl}, r => {
+    pqDrafted = pqFiles.join('|') + '\n' + memo; pqFx = r.fx || null; setPqItems(r.items); pqFill(r);
+    pqAiTool = !!r.aiTool;
+    const total = r.lines.reduce((s, l) => s + (Number(l.amount) || 0), 0);
+    pqInfo = `품의금액 ${total.toLocaleString('ko-KR')}원${pqFx ? ` (USD × ${pqFx.rate.toLocaleString('ko-KR')}원)` : ''} · 그룹웨어 품의에 첨부돼요`; renderPqFile();
+    const noItem = r.lines.some(l => !l.code);
+    $('#pq_status').textContent = [r.from ? `이전 품의를 틀로 썼어요: ${r.from}` : '', noItem ? '예산과목을 못 고른 줄이 있어요 — 칸에서 골라 주세요.' : ''].filter(Boolean).join(' · ');
+    submitPui();
+  }, {quiet: true, userAction: true, onEnd: () => renderPqFile()});
 }
 function initSettle(){
   if(stInited) return; stInited = true;
+  setPqItems((META.config || {}).budgetItems);
+  runJob('예산과목 목록', '/api/job/pui-items', {}, r => setPqItems(r.items), {quiet: true});   // 그룹웨어 API 로 최신 목록 (드롭다운)
+  loadPqRepeats();
+  $('#btnPqNotifyTest').onclick = () => rpc('/api/pui/notify-test').catch(e => alertErr(e.message));
+  $('#btnAcPick').onclick = async () => { const {path} = await rpc('/api/pick-po', {what: 'consent'}); useAcFile(path); };
+  $('#btnAcClear').onclick = () => { acFile = ''; try { localStorage.removeItem('pq_consent'); } catch(e){ /* */ } renderAcFile(); };
+  { const dz = $('#ac_drop');
+    ['dragenter', 'dragover'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.add('over'); }));
+    ['dragleave', 'drop'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.remove('over'); }));
+    dz.addEventListener('drop', e => { const f = e.dataTransfer.files[0]; if(f) useAcFile(window.api.pathForFile(f)); }); }
+  if(!$('#pq_lines tbody').children.length) addPqRow();
+  $('#btnPqAdd').onclick = () => addPqRow();
+  $('#btnPui').onclick = submitPui;
+  $('#btnPqSend').onclick = pqSend;
+  $$('input[name=st_view]').forEach(r => r.addEventListener('change', () => { const v = radio('st_view'); $('#pqNew').classList.toggle('hidden', v !== 'pui'); $('#stNew').classList.toggle('hidden', v !== 'settle'); window.scrollTo(0, 0); if(v === 'settle' && !stListed) loadStList(); }));
+  stSetRange(3);
+  $$('#stRange .quickr .btn').forEach(b => b.onclick = () => { stSetRange(Number(b.dataset.m)); loadStList(); });
+  ['#stFrom', '#stTo'].forEach(s => $(s).onchange = () => { $$('#stRange .quickr .btn').forEach(b => b.classList.remove('on')); loadStList(); });
+  $('#btnStList').onclick = loadStList;
+  $('#pq_cmd').addEventListener('keydown', e => { if(e.key === 'Enter' && (e.metaKey || e.ctrlKey)) pqSend(); });
+  $('#pqManual').onclick = e => { e.preventDefault(); pqRevealForm(); };
+  $('#btnPqPick').onclick = $('#btnPqMore').onclick = async () => { const {paths} = await rpc('/api/pick-po', {what: 'invoice', many: true}); usePqFiles(paths); };
+  { const dz = $('#pq_drop');
+    ['dragenter', 'dragover'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.add('over'); }));
+    ['dragleave', 'drop'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.remove('over'); }));
+    dz.addEventListener('drop', e => usePqFiles([...e.dataTransfer.files].map(f => window.api.pathForFile(f)))); }   // 여러 개 한꺼번에
+  $('#btnNewPui').onclick = () => { if(!confirm('입력 중인 지출 품의 내용을 모두 비울까요?')) return; ['#pq_cmd', '#pq_memo', '#pq_title', '#pq_purpose', '#pq_detail'].forEach(s => $(s).value = ''); $('#pq_lines tbody').innerHTML = ''; addPqRow(); $('#pq_err').textContent = $('#pq_status').textContent = ''; pqDrafted = pqInfo = ''; pqFiles = []; pqFx = null; pqAiTool = false; pqTpl = null; renderPqFile(); $('#pqNew').classList.add('pre'); };
   if(!$('#st_exp tbody').children.length) addStRow();
   $('#btnStAdd').onclick = () => addStRow();
-  $('#btnStLoad').onclick = loadStApprovals;
-  $('#btnNewSettle').onclick = () => { if(!confirm('입력 중인 지출결의 내용을 모두 비울까요?')) return; $('#st_purpose').value = ''; $('#st_exp tbody').innerHTML = ''; addStRow(); $('#st_err').textContent = ''; };
+  $('#btnNewSettle').onclick = () => { if(!confirm('입력 중인 지출 결의 내용을 모두 비울까요?')) return; $('#st_purpose').value = ''; $('#st_exp tbody').innerHTML = ''; addStRow(); $('#st_err').textContent = ''; };
   $('#btnSettle').onclick = submitSettle;
 }
 function submitSettle(){
   const err = $('#st_err'); err.textContent = '';
   const pui = $('#st_pui').value;
-  if(!pui){ err.textContent = '정산할 승인 품의를 골라 주세요.'; return; }
+  if(!pui){ err.textContent = '위 목록에서 승인된 품의의 [지출 결의서 작성]을 눌러 주세요.'; return; }
   const purpose = $('#st_purpose').value.trim();
   if(!purpose){ err.textContent = '집행용도(적요)를 적어 주세요.'; return; }
   const expenses = readStExp();
@@ -1372,7 +1614,7 @@ function submitSettle(){
   if(expenses.some(e => e.amount > 0 && !e.file) && !confirmNoProof('영수증')) return;
   const [ym, day, seq] = pui.split('|');
   const data = { pui: {ym, day, seq}, purpose, fund: stFund(), expenses };
-  runJob('지출결의서 작성', '/api/job/settle', {data}, () => { $('#st_err').textContent = '지출결의서 채주·환원까지 채웠어요. 결의서전송 창에서 확인하고 직접 [전송]하세요.'; }, {userAction: true});
+  runJob('지출 결의서 작성', '/api/job/settle', {data}, () => { $('#st_err').textContent = '결의서를 전송하고 결의서 작성 창을 띄웠어요. 본문·결재선 확인하고 [상신]은 직접 하세요.'; }, {userAction: true});
 }
 /* 방문 시간: 시작·끝 시각 칸 두 개 ↔ 엔진·본문은 "14:00~16:00" 한 줄. 끝을 안 골랐으면 빈 값(=빠진 것) */
 const vsTimeOf = () => $('#vs_t1').value && $('#vs_t2').value ? `${$('#vs_t1').value}~${$('#vs_t2').value}` : '';
@@ -1567,7 +1809,7 @@ function watchJob(title, onDone, {quiet = false, onEnd = null, id = 0} = {}){   
     const q = s.question;
     $('#jobShow').textContent = '작업 중인 창 열기';
     $('#jobShow').classList.toggle('hidden', !(q || s.state === 'error'));   // 사람이 손봐야 할 때(질문·실패)만 작업 창을 보여 준다
-    const what = {apply: '와니가 작성 중', report: '와니가 작성 중', fare: '와니가 교통비 조회 중', 'trip-delete': '와니가 삭제 중', 'gw-delete': '와니가 삭제 중', 'gw-list': '그룹웨어 로그인·품의 상태를 확인 중이에요', 'gw-profile': '그룹웨어에서 내 정보를 불러오는 중이에요', 'report-load': '그룹웨어에서 보고서를 불러오는 중이에요', 'po-read': '와니가 발주서 읽는 중', 'url-read': '와니가 제품 페이지 읽는 중', purchase: '와니가 작성 중', 'purchase-list': '구매의뢰 목록을 읽는 중이에요', visitor: '와니가 작성 중', 'visitor-list': '방문 신청 목록을 읽는 중이에요', settle: '와니가 지출결의서 채우는 중', 'settle-approvals': '승인 품의를 불러오는 중이에요', 'refund-check': '정산 환원을 확인하는 중이에요', receipts: '와니가 영수증 읽는 중', login: '그룹웨어 로그인 상태를 확인 중이에요'}[s.kind] || '와니가 처리 중';
+    const what = {apply: '와니가 작성 중', report: '와니가 작성 중', fare: '와니가 교통비 조회 중', 'trip-delete': '와니가 삭제 중', 'gw-delete': '와니가 삭제 중', 'gw-list': '그룹웨어 로그인·품의 상태를 확인 중이에요', 'gw-profile': '그룹웨어에서 내 정보를 불러오는 중이에요', 'report-load': '그룹웨어에서 보고서를 불러오는 중이에요', 'po-read': '와니가 발주서 읽는 중', 'url-read': '와니가 제품 페이지 읽는 중', purchase: '와니가 작성 중', 'purchase-list': '구매의뢰 목록을 읽는 중이에요', visitor: '와니가 작성 중', 'visitor-list': '방문 신청 목록을 읽는 중이에요', settle: '와니가 지출 결의서 채우는 중', 'settle-approvals': '품의 목록을 불러오는 중이에요', pui: '와니가 지출 품의 올리는 중', 'pui-draft': '비슷한 이전 품의를 찾아 칸을 채우는 중이에요', 'pui-items': '예산과목 목록을 불러오는 중이에요', 'refund-check': '정산 환원을 확인하는 중이에요', receipts: '와니가 영수증 읽는 중', login: '그룹웨어 로그인 상태를 확인 중이에요'}[s.kind] || '와니가 처리 중';
     $('#dimWhat').textContent = what; $('.wani .pen').textContent = /삭제/.test(what) ? '🧹' : /조회|확인/.test(what) ? '🔍' : '✍️';
     const textQ = q && (q.type === 'text' || q.type === 'choice');
     $('#jobAsk').style.display = q && !textQ ? 'block' : 'none';
@@ -1697,6 +1939,20 @@ $('#btnGwLogout').onclick = async () => {
 };
 $('#btnGwForget').onclick = async () => { await rpc('/api/gw/forget'); META = await rpc('/api/meta'); showGwSaved(); };
 window.addEventListener('focus', () => { if(Date.now() - gwChecked > 20 * 60 * 1000 && !$('#loginModal').classList.contains('on')) checkGw(); });
+// 앱으로 돌아오면 보고 있는 목록을 다시 읽음 (react-query refetchOnWindowFocus 처럼). 그룹웨어에서 결재가 바뀌었을 수 있어서
+// ponytail: 30초 안 재포커스는 건너뜀 — 그룹웨어 조회가 몇 초씩 걸려 창 오갈 때마다 돌면 작업 줄이 막힘
+let focusAt = 0;
+window.addEventListener('focus', async () => {
+  if(Date.now() - focusAt < 30 * 1000 || !$('#gwPill').classList.contains('ok') || $('[id$="Modal"].on')) return;   // 확인·로그인 창이 떠 있으면 그대로
+  const cur = await rpc('/api/job').catch(() => null);
+  if(cur && (cur.state === 'running' || cur.state === 'waiting')) return;   // 사람이 시킨 작업 중이면 안 끼어듦
+  const shown = sel => { const el = $(sel); return !!el && el.offsetParent !== null; };
+  focusAt = Date.now();
+  if(shown('#tripList')) autoGwCheck(true);
+  else if(shown('#stList')) loadStList();
+  else if(shown('#puHistory')) loadPurchaseList();
+  else if(shown('#vsHistory')) loadVisitorList();
+});
 
 /* ---------- 시작 ---------- */
 (async () => {

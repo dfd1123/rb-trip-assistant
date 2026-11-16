@@ -128,7 +128,7 @@ app.whenReady().then(async () => {
     assert.equal(rp.attachments.length, draft.expenses.length, '증빙이 전부 첨부 대상');
     console.log('E2E 보고서(초안) OK');
 
-    // ---- 출장보고서 및 경비정산 지출결의서 본문 채우기 (실제 양식 HTML) ----
+    // ---- 출장보고서 및 경비정산 지출 결의서 본문 채우기 (실제 양식 HTML) ----
     {
       const { FILL_JS, reportPayload } = require('../src/engine/editorFill');
       const w = new BrowserWindow({ show: false });
@@ -236,6 +236,42 @@ app.whenReady().then(async () => {
       assert.equal((await runner.runListBudget(env)).rows.length, before, '취소한 품의가 그룹웨어에 남아 있음');
       assert.ok(!store.list().some(t => t.apply && t.apply.reason === '취소 테스트 출장'), '취소한 출장 기록이 남아 있음');
       console.log('E2E 취소 롤백 OK');
+    }
+
+    // 지출 품의 (지출 결의 앞 단계): 품의·예산 줄 → 결재양식 '품의서입력(복수)지출' → 본문 문단(품의목적·지출 세부내역) → 보관
+    {
+      process.env.MOCK_FORM = 'pui_multi_body.html';
+      const n0 = saved.length;
+      const inv = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ta-inv-')), 'invoice-1116.png');
+      fs.writeFileSync(inv, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=', 'base64'));
+      const inv2 = path.join(path.dirname(inv), 'invoice-codex.png'); fs.copyFileSync(inv, inv2);   // 청구서 여러 개 (Claude·Codex)
+      await runner.runPui(env, { files: [inv, inv2], memo: '11월 사무용품 구매', purpose: '개발 2팀 사무용품 구매\n프린터 토너 포함', lines: [
+        { code: '8120002', label: '여비교통비(판)_국내교통비', amount: 0, memo: '0원 줄' },   // 0 은 유효
+        { code: '', label: '여비교통비(판)_식대', amount: 45000, memo: '회의 식대' }] });   // 코드 없이 이름으로 코드도움 검색
+      const s2 = JSON.parse(await gw.webContents.executeJavaScript('JSON.stringify({top:S.top, approval:window.__approval})'));
+      const top = s2.top.filter(r => r.적요 === '11월 사무용품 구매');
+      assert.equal(top.length, 1, '품의 행 1개');
+      assert.equal(top[0].총금액, '45,000');
+      assert.equal(s2.approval.form, '품의서입력(복수)지출');
+      assert.equal(saved.length, n0 + 1, '보관 1번');
+      const d = saved[saved.length - 1];
+      assert.equal(d.title, '11월 사무용품 구매', '제목 비우면 품의 적요');
+      assert.equal(d.files, 2, '청구서 및 견적서 두 개 모두 첨부');
+      for (const needle of ['- 개발 2팀 사무용품 구매<br>&nbsp;&nbsp;&nbsp;- 프린터 토너 포함', '- 국내교통비 0원 (0원 줄)<br>&nbsp;&nbsp;&nbsp;- 식대 45,000원 (회의 식대)'])
+        assert.ok(d.body.includes(needle), `본문에 '${needle}' 없음: ${d.body.slice(0, 400)}`);
+      delete process.env.MOCK_FORM;
+      console.log('E2E 지출 품의 OK');
+
+      // 품의 목록: 결재양식이 '품의서입력(복수)지출'인 것만 (출장 신청 품의도 품의구분은 '지출'), 상신 전(문서번호 없음)은 뺌
+      await gw.webContents.executeJavaScript(`(() => { const t = JSON.parse(localStorage.top || '[]'); const mine = r => r.적요 === '11월 사무용품 구매';
+        t.forEach((r, i) => { if (mine(r)) r.문서번호 = 'PUI-1'; else if (r.순번 && i % 2) r.문서번호 = 'TRIP-' + r.순번; });
+        localStorage.top = JSON.stringify(t);
+        localStorage.docs = JSON.stringify([{ DOC_NO: 'PUI-1', FORM_NM: '품의서입력(복수)지출', DOC_TITLE: '11월 사무용품 구매' },
+          ...t.filter(r => r.문서번호 && !mine(r)).map(r => ({ DOC_NO: r.문서번호, FORM_NM: '출장신청 및 출장경비 사전품의', DOC_TITLE: r.적요 }))]); return true; })()`);
+      const lr = await runner.runSettleApprovals(env, { all: true });
+      assert.deepEqual(lr.rows.map(r => r.memo), ['11월 사무용품 구매'], '지출 품의만: ' + JSON.stringify(lr.rows.map(r => [r.memo, r.form])));
+      assert.equal((await runner.runSettleApprovals(env, {})).rows.length, 0, '승인완료만 (방금 올린 건 상신대기)');
+      console.log('E2E 지출 품의 목록 (양식으로 거름) OK');
     }
   } catch (e) {
     console.error('E2E FAIL:', e.stack || e.message);

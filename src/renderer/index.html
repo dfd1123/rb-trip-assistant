@@ -16,8 +16,8 @@
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font-size:14px;line-height:1.5}
 header{background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
-.bar{max-width:1080px;margin:0 auto;padding:0 20px;display:flex;align-items:center;gap:28px;height:60px}
-.gwpill{margin-left:auto;display:flex;align-items:center;gap:6px;border:1px solid var(--line);background:#fff;border-radius:999px;padding:4px 12px;font:inherit;font-size:12px;color:var(--muted);cursor:pointer}
+.bar{max-width:1080px;margin:0 auto;padding:0 20px;display:flex;align-items:center;gap:18px;height:60px}
+.gwpill{margin-left:auto;display:flex;white-space:nowrap;flex:none;align-items:center;gap:6px;border:1px solid var(--line);background:#fff;border-radius:999px;padding:4px 12px;font:inherit;font-size:12px;color:var(--muted);cursor:pointer}
 .gwpill i{width:8px;height:8px;border-radius:50%;background:#c4c9d2}
 .gwpill.ok i{background:#22a06b} .gwpill.bad{border-color:#f0b37e;color:#b45309} .gwpill.bad i{background:#f59e0b}
 #loginModal{position:fixed;inset:0;background:rgba(15,23,42,.35);display:none;align-items:center;justify-content:center;z-index:50}
@@ -31,13 +31,16 @@ header{background:var(--panel);border-bottom:1px solid var(--line);position:stic
 #loginModal .box{background:#fff;border-radius:14px;padding:24px;width:380px;max-width:calc(100vw - 32px);box-shadow:0 20px 50px rgba(0,0,0,.2)}
 #loginModal h2{margin:0 0 4px} #loginModal input{margin-top:10px}
 .ver{color:var(--muted);font-size:12px}
-.brand{display:flex;align-items:center;gap:8px}
+.brand{display:flex;align-items:center;gap:8px;flex:none;white-space:nowrap}
 .brand img{height:34px;display:block}
 .brand b{display:block;font-size:17px;color:#16365f;letter-spacing:-.3px;line-height:1.1}
 .brand small{display:block;font-size:9px;font-weight:700;color:#16365f;letter-spacing:.4px}
-nav{display:flex;gap:4px}
-nav button{border:0;background:none;padding:8px 14px;border-radius:8px;font:inherit;color:var(--muted);cursor:pointer}
+nav{display:flex;gap:2px;flex:none;padding-top:6px}   /* padding-top: Beta 배지 자리 */
+@media (max-width:1000px){.gwpill span{display:none}.gwpill{padding:6px 8px}.brand small{display:none}}   /* 좁은 창: 메뉴가 줄바꿈되지 않게 로그인 표시는 점만 */
+nav button{border:0;background:none;padding:8px 11px;border-radius:8px;font:inherit;color:var(--muted);cursor:pointer}
 nav button.on{background:var(--accent-soft);color:var(--accent);font-weight:600}
+nav button{position:relative;white-space:nowrap}
+nav .beta{position:absolute;top:-7px;right:-4px;padding:0 5px;line-height:15px;border-radius:999px;background:#ffe9c7;color:#b45309;font-size:9.5px;font-weight:700;letter-spacing:.3px;pointer-events:none}   /* 폭을 안 차지하게 위에 겹침 */
 .aside{position:sticky;top:76px;align-self:start;max-height:calc(100vh - 90px);overflow:auto}
 @media (max-width:900px){.aside{position:static;max-height:none}}
 main{max-width:1080px;margin:0 auto;padding:24px 20px 80px}
@@ -131,6 +134,25 @@ td.proof{vertical-align:top}
 #gwRange .quickr{display:inline-flex;gap:4px}#gwRange .quickr .btn{padding:4px 10px}#gwRange .quickr .btn.on{background:var(--accent);color:#fff;border-color:var(--accent)}
 #gwRange .dates{display:inline-flex;align-items:center;gap:6px;margin-left:4px}#gwRange .tilde{color:var(--muted)}
 #gwRange input{font-size:12px;padding:4px 8px;border:1px solid var(--line);border-radius:8px;background:#fff;width:128px;height:28px;box-sizing:border-box}
+#pqNew .result{grid-template-columns:1fr}
+#puList,#vsList{margin-top:16px;border-top:1px solid var(--line)}   /* 제목·설명과 목록 줄이 붙어 보이지 않게 */
+.cf-repeat{margin-top:14px;border:2px dashed var(--accent);border-radius:12px;padding:12px 14px;background:var(--accent-soft)}
+.cf-repeat.on{border-style:solid}
+.cf-repeat-head{display:flex;align-items:center;gap:10px;cursor:pointer;font-size:15px;color:var(--ink)}
+.cf-repeat-head input{width:20px;height:20px;flex:none;margin:0;accent-color:var(--accent)}
+.cf-repeat-day{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin:8px 0 0 30px;font-size:13.5px;color:var(--ink)}
+.cf-repeat-day input{width:64px;flex:none;padding:4px 8px;font-size:14px;font-weight:600}
+.cf-repeat-day input:disabled{opacity:.45}
+.cf-repeat-day .err{margin-left:4px;font-size:12.5px}
+.ac-steps{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:0 0 12px;font-size:12.5px}
+.ac-steps span{display:inline-flex;align-items:center;gap:6px;background:var(--accent-soft);border-radius:8px;padding:5px 9px;color:var(--ink);font-weight:600}
+.ac-steps i{font-style:normal;width:18px;height:18px;border-radius:50%;background:var(--accent);color:#fff;display:grid;place-items:center;font-size:11px}
+.ac-steps em{font-style:normal;color:var(--muted)}
+#stRows .none{display:flex;flex-direction:column;align-items:center;gap:4px;padding:36px 0 28px;color:var(--muted);font-size:13px;text-align:center}#stRows .none b{color:var(--ink);font-size:14px;margin-top:4px}
+#stRange{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:12px 0 4px;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--bg);font-size:12px;color:var(--muted)}
+#stRange .lbl{font-weight:600;color:var(--ink);margin-right:2px}#stRange .quickr{display:inline-flex;gap:4px}#stRange .quickr .btn{padding:4px 10px}#stRange .quickr .btn.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+#stRange .dates{display:inline-flex;align-items:center;gap:6px;margin-left:4px}#stRange .tilde{color:var(--muted)}
+#stRange input{font-size:12px;padding:4px 8px;border:1px solid var(--line);border-radius:8px;background:#fff;width:128px;height:28px;box-sizing:border-box}
 .tsel{display:flex;align-items:center;gap:4px}.tsel select{flex:1;min-width:0}
 input.need + .tsel select{outline:2px solid #f59e0b;border-color:#f59e0b}
 #r_drop.over,.drop.over{background:var(--accent-soft);border-color:var(--accent)}
@@ -258,8 +280,8 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
 @keyframes hintBob{0%,100%{transform:translateY(0)}50%{transform:translateY(-2px)}}
 .tk-break span.need{background:#fff3cd;color:#7a4b00;font-weight:600}
 
-#cfmModal,#askModal,#carModal,#mealModal,#vsAskModal{position:fixed;inset:0;background:rgba(15,23,42,.45);display:none;align-items:center;justify-content:center;z-index:70;backdrop-filter:blur(2px)}
-#cfmModal.on,#askModal.on,#carModal.on,#mealModal.on,#vsAskModal.on{display:flex;animation:cfFade .18s ease-out}
+#cfmModal,#aiLimitModal,#aiConsentModal,#askModal,#carModal,#mealModal,#vsAskModal{position:fixed;inset:0;background:rgba(15,23,42,.45);display:none;align-items:center;justify-content:center;z-index:70;backdrop-filter:blur(2px)}
+#cfmModal.on,#aiLimitModal.on,#aiConsentModal.on,#askModal.on,#carModal.on,#mealModal.on,#vsAskModal.on{display:flex;animation:cfFade .18s ease-out}
 @keyframes cfFade{from{opacity:0}to{opacity:1}}
 /* 출장지 자동완성 (네이버 지역 검색) */
 .acwrap{position:relative;min-width:0}.acwrap input{width:100%}
@@ -270,14 +292,14 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
 #askAc{position:static;margin-top:6px;box-shadow:none}   /* 모달 본문은 overflow:auto 라 떠 있는 목록이 잘림 → 흐름 안에 */
 @keyframes dots{to{width:1.2em}}
 /* 발주서 카드: 올리면 드롭 영역이 파일 카드로 바뀜 */
-#po_drop.has{border-style:solid;border-color:#cfe2f3;background:#fff;padding:12px 14px;text-align:left;align-items:stretch}
-#po_drop.has .empty{display:none}
+#po_drop.has,#pq_drop.has,#ac_drop.has{border-style:solid;border-color:#cfe2f3;background:#fff;padding:12px 14px;text-align:left;align-items:stretch}
+#po_drop.has .empty,#pq_drop.has .empty,#ac_drop.has .empty{display:none}
 .pofile{display:flex;align-items:center;gap:12px}
 .pofile .ico{flex:none;width:44px;height:44px;border-radius:12px;background:var(--accent-soft);display:grid;place-items:center;font-size:22px}
 .pofile .meta{flex:1;min-width:0}.pofile .meta b{display:block;color:var(--ink);font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pofile .meta small{display:block;color:var(--muted);font-size:12px;margin-top:2px}.pofile .meta small.busy::after{content:'…';display:inline-block;width:0;overflow:hidden;vertical-align:bottom;animation:dots 1s steps(3) infinite}
 .pofile .acts{display:inline-flex;gap:6px;flex:none}
-#po_drop.has.over{background:var(--accent-soft)}
+#po_drop.has.over,#pq_drop.has.over{background:var(--accent-soft)}
 /* 구매 요청 미리보기 (영수증 종이) */
 .pp-vendor{margin-top:10px;padding:10px 12px;border-radius:10px;background:var(--bg)}.pp-vendor b{display:block;font-size:15px}.pp-vendor small{display:block;color:var(--muted);font-size:12px;margin-top:2px}
 .pp-row{display:grid;grid-template-columns:1fr auto auto;gap:4px 12px;align-items:baseline;font-size:13px}.pp-row .nm{font-weight:600}.pp-row .pn{grid-column:1/-1;font-size:11px;color:var(--muted);margin-top:-2px}
@@ -286,8 +308,8 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
 .pp-tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}.pp-tags span{font-size:11.5px;background:var(--accent-soft);color:var(--accent);padding:3px 9px;border-radius:999px}.pp-tags span.hot{background:#fee2e2;color:#b91c1c}.pp-tags span.need{background:#fff3cd;color:#7a4b00}
 .pu-view,.trip-view{margin:0 0 14px}.trip-view label.on span{background:#fff;color:var(--accent);box-shadow:0 4px 12px -6px rgba(27,79,143,.5)}
 /* 출장 신청: 처음엔 한 줄 칸만, 자동 작성하면 티켓·제출 준비·세부 내용이 펼쳐짐 */
-#tab-apply.pre .result,#tab-apply.pre #aFold,#reportView.pre .result,#reportView.pre #rFold,#puNew.pre .result,#puNew.pre #puFold,#vsNew.pre .result{display:none}
-#tab-apply:not(.pre) #aManual,#reportView:not(.pre) #rManual,#puNew:not(.pre) #puManual,#vsNew:not(.pre) #vsManual{display:none}
+#tab-apply.pre .result,#tab-apply.pre #aFold,#reportView.pre .result,#reportView.pre #rFold,#puNew.pre .result,#puNew.pre #puFold,#vsNew.pre .result,#pqNew.pre .result{display:none}
+#tab-apply:not(.pre) #aManual,#reportView:not(.pre) #rManual,#puNew:not(.pre) #puManual,#vsNew:not(.pre) #vsManual,#pqNew:not(.pre) #pqManual{display:none}
 #tab-apply.reveal .result,#tab-apply.reveal #aFold,#reportView.reveal .result,#reportView.reveal #rFold,#puNew.reveal .result,#puNew.reveal #puFold,#vsNew.reveal .result{animation:revealUp .45s cubic-bezier(.2,.8,.2,1) both}
 @keyframes revealUp{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
 .seg label.disabled,#tkModes button:disabled{opacity:.4;cursor:not-allowed}
@@ -311,7 +333,7 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
 .pofile .thumb{flex:none;width:64px;height:44px;border-radius:8px;object-fit:cover;border:1px solid var(--line);background:#f3f6fa}
 #pu_items td{padding:3px 3px}#pu_items input{padding:8px 6px;min-width:0}#pu_items input[type=date]{padding:8px 4px;font-size:14px}#pu_items .del{padding:6px 8px}
 #askChoices{display:flex;flex-direction:column;gap:8px}#askChoices button{text-align:left;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:#fff;font-size:14px;cursor:pointer}#askChoices button:hover{border-color:var(--accent);background:var(--accent-soft)}#askChoices button small{display:block;color:var(--muted);margin-top:2px}
-#cfmModal .box,#askModal .box,#carModal .box,#mealModal .box,#vsAskModal .box{background:#fff;border-radius:16px;width:620px;max-width:calc(100vw - 32px);max-height:calc(100vh - 48px);display:flex;flex-direction:column;box-shadow:0 30px 70px -20px rgba(0,0,0,.45);animation:cfPop .22s cubic-bezier(.2,.9,.3,1.2)}
+#cfmModal .box,#aiLimitModal .box,#aiConsentModal .box,#askModal .box,#carModal .box,#mealModal .box,#vsAskModal .box{background:#fff;border-radius:16px;width:620px;max-width:calc(100vw - 32px);max-height:calc(100vh - 48px);display:flex;flex-direction:column;box-shadow:0 30px 70px -20px rgba(0,0,0,.45);animation:cfPop .22s cubic-bezier(.2,.9,.3,1.2)}
 @keyframes cfPop{from{transform:translateY(8px) scale(.98);opacity:.6}to{transform:none;opacity:1}}
 .cf-head{display:flex;align-items:center;padding:18px 22px 10px;font-size:17px}.cf-head .x{margin-left:auto;border:0;background:none;font-size:16px;cursor:pointer;color:var(--muted)}
 .cf-body{padding:4px 22px 10px;overflow:auto}
@@ -347,7 +369,7 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
     <button data-tab="apply" class="on">출장</button>
     <button data-tab="trips" class="hidden">출장 보고</button>
     <button data-tab="purchase">구매 의뢰</button>
-    <button data-tab="settle">지출결의</button>
+    <button data-tab="settle">지출 결의<span class="beta">Beta</span></button>
     <button data-tab="visitor">방문 신청</button>
     <button data-tab="settings">설정</button>
   </nav>
@@ -507,7 +529,7 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
       <div class="title-preview" id="r_title"></div>
       <div class="err" id="r_err"></div>
       <button class="btn primary" id="btnReport" style="width:100%">그룹웨어에 정산 입력하기</button>
-      <p class="sub" style="margin:10px 0 0">승인된 신청 품의로 품의서승인 → 결의서전송 창에서 지출결의서·채주내역(영수증마다)·환원까지 채우고 멈춰요. <b>[전송]은 직접</b> 확인하고 누르세요.</p>
+      <p class="sub" style="margin:10px 0 0">승인된 신청 품의로 품의서승인 → 결의서전송 창에서 지출 결의서·채주내역(영수증마다)·환원까지 채우고 멈춰요. <b>[전송]은 직접</b> 확인하고 누르세요.</p>
       <button class="btn" id="btnBack" style="width:100%;margin-top:8px">목록으로</button>
     </div>
   </div>
@@ -685,14 +707,59 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
 </div>
 </section>
 <section id="tab-settle" class="hidden">
-<div id="stNew">
+<div class="scope pu-view" id="st_view_seg"><label><input type="radio" name="st_view" value="pui" checked><span>✍️ 지출 품의</span></label><label><input type="radio" name="st_view" value="settle"><span>📋 지출 결의</span></label></div>
+<div id="pqNew" class="pre">
 <div class="card quick hero">
-  <div class="h2row"><h2><span class="spark">✦</span> 개인카드·개인지출 지출결의서</h2><span class="inline" style="gap:6px"><button class="btn small" id="btnNewSettle" title="입력 중인 내용을 모두 비움">새로 작성</button></span></div>
-  <p class="sub">승인된 품의를 고르고 개인카드·개인지출 영수증을 줄로 넣으면, 품의서승인 → 결의서전송 창에서 지출결의서·채주(영수증마다)·환원까지 채워요. <b>[전송]은 직접</b> 확인하고 누르세요. (세금계산서·법인카드는 아직 준비 중)</p>
+  <div class="h2row"><h2><span class="spark">✦</span> 청구서 및 견적서 올리고, 한 줄 쓰면 지출 품의 끝</h2><button class="btn small" id="btnNewPui" title="입력 중인 내용을 모두 비움">새로 작성</button></div>
+  <p class="sub">청구서 및 견적서를 올리고 무엇에 쓰는지 한 줄 쓰면, 금액을 읽고 비슷한 이전 지출 품의의 예산과목으로 채워 [보관]까지 해요. 청구서 및 견적서는 품의에 첨부돼요. <b>결재선·[상신]은 직접</b>.</p>
+  <div id="pq_drop" class="drop"><div class="empty"><b>① 청구서 및 견적서를 여기에 끌어다 놓기</b><span>PDF · 워드(.docx) · 엑셀(.xlsx) · 이미지 — 여러 개 가능</span><button class="btn small" id="btnPqPick" type="button">파일 고르기</button></div>
+    <div class="hidden" id="pq_card"><div id="pq_files" style="display:flex;flex-direction:column;gap:8px"></div>
+      <div class="inline" style="justify-content:space-between;margin-top:8px"><small id="pq_info" style="color:var(--muted)"></small><button class="btn small" id="btnPqMore" type="button">+ 더 넣기</button></div></div></div>
+  <div class="qrow cmd"><textarea id="pq_cmd" placeholder="② 예: 개발 2팀 11월 사무용품 구매"></textarea>
+    <button class="btn primary glow" id="btnPqSend">✦ 그룹웨어에 보내기</button></div>
+  <div class="chips"><select id="pq_hist" class="btn small" title="이전에 입력한 문장 (최근 30개)"><option value="">이전 문장…</option></select></div>
+  <div class="qstatus" id="pq_status"></div>
+  <a href="#" class="pre-skip" id="pqManual">직접 하나씩 입력할게요 ›</a>
+</div>
+<div class="card list hidden" id="pqRepeats">
+  <div class="h2row"><h2 style="margin:0">🔔 매달 알림</h2><button class="btn small" id="btnPqNotifyTest" title="알림이 어떻게 오는지 한 번 띄워 봐요 (처음이면 OS 가 알림 허용을 물어요)">🔔 알림 시험</button></div>
+  <p class="sub" style="margin:2px 0 4px">그날이 되면 알림이 와요. 누르거나 [지금 올리기]를 누르고 새로 받은 청구서 및 견적서만 넣으면 지난번 예산과목·문구로 바로 올려요. 켜 두면 창을 닫아도 트레이에서 알려 주고, 앱을 완전히 끄면 멈춰요.</p>
+  <div id="pqRepeatRows"></div>
+</div>
+<div class="result">
+<div class="card pu-form">
+  <div class="h2row"><h2>품의 내용</h2></div>
+  <div class="row"><label>품의 적요</label><input id="pq_memo" placeholder="품의 목록에 보이는 적요 (예: 11월 사무용품 구매)"></div>
+  <div class="row"><label>제목</label><input id="pq_title" placeholder="비우면 품의 적요로"></div>
+  <div class="row"><label>품의목적</label><textarea id="pq_purpose" rows="5" placeholder="본문 '1. 품의목적'"></textarea></div>
+  <div class="row"><label>지출 세부내역</label><textarea id="pq_detail" rows="2" placeholder="본문 '2. 지출 세부내역' — 비우면 예산 줄로 만들어요"></textarea></div>
+</div>
+<div class="card">
+  <div class="h2row"><h2>예산 줄</h2><button class="btn small" id="btnPqAdd" title="예산 줄을 하나 더 추가">+ 줄 추가</button></div>
+  <table class="ed" id="pq_lines"><thead><tr><th style="width:230px">예산과목</th><th style="width:100px">코드</th><th style="width:130px">품의금액(원)</th><th>적요</th><th style="width:34px"></th></tr></thead><tbody></tbody></table>
+  <p class="sub" style="margin-top:8px">예산과목은 그룹웨어 예산과목 목록에서 골라요 (AI 가 먼저 골라 두고, 올리기 전 확인창에서도 바꿀 수 있어요). 외화 청구서는 수출입은행 매매기준율로 원화로 바꿔 넣어요.</p>
+</div>
+<div class="card ready">
+  <div class="err" id="pq_err"></div>
+  <button class="btn primary" id="btnPui" style="width:100%">그룹웨어에 지출 품의 올리기</button>
+</div>
+</div>
+</div>
+<div id="stNew" class="hidden">
+<div class="card list" id="stList">
+  <div class="inline" style="justify-content:space-between;align-items:flex-start;gap:12px"><div><h2 style="margin:0">올린 지출 품의</h2>
+    <p class="sub" style="margin:2px 0 0">품의마다 지금 상태와 다음에 할 일만 보여 줘요. 승인된 품의는 [지출 결의서 작성]을 누르세요.</p></div>
+    <button class="btn small" id="btnStList" title="그룹웨어에서 다시 읽기">↻ 새로고침</button></div>
+  <div id="stRange" class="gwrange" title="조회 기간"><span class="lbl">조회 기간</span><span class="quickr"><button class="btn small" data-m="1">1개월</button><button class="btn small on" data-m="3">3개월</button><button class="btn small" data-m="6">6개월</button></span><span class="dates"><input type="date" id="stFrom"><span class="tilde">~</span><input type="date" id="stTo"></span></div>
+  <div id="stRows" style="margin-top:8px"><div class="none">그룹웨어에서 읽는 중이에요…</div></div>
+</div>
+<div id="stForm" class="hidden">
+<div class="card quick hero">
+  <div class="h2row"><h2><span class="spark">✦</span> 지출 결의서 — <span id="st_pui_name"></span></h2><span class="inline" style="gap:6px"><button class="btn small" id="btnNewSettle" title="입력 중인 내용을 모두 비움">새로 작성</button></span></div>
+  <p class="sub">개인카드·개인지출 영수증을 줄로 넣으면 출장 보고와 같은 길로 올려요: 결의서전송(채주·환원·[전송]) → 결의서입력 → 결재상신 → 결의서 작성 창. <b>결재선·[상신]은 직접</b>. (세금계산서·법인카드는 아직 준비 중)</p>
+  <input type="hidden" id="st_pui">
 </div>
 <div class="card pu-form">
-  <div class="h2row"><h2>승인 품의 고르기</h2><button class="btn small" id="btnStLoad" title="그룹웨어에서 승인완료·지출 품의를 불러와요">↻ 승인 품의 불러오기</button></div>
-  <div class="row"><label>품의</label><select id="st_pui" style="flex:1"><option value="">[승인 품의 불러오기]를 누르세요</option></select></div>
   <div class="row"><label>집행용도(적요)</label><input id="st_purpose" placeholder="사용에 따른 적요 (예: 10월 사무용품 구매)"></div>
   <div class="row"><label>기본 자금과목</label><div class="seg" id="st_fund_seg"><label title="계정과목 '판관'"><input type="radio" name="st_fund" value="일반경비" checked>일반경비</label><label title="계정과목 '제조'"><input type="radio" name="st_fund" value="제조경비">제조경비</label></div></div>
 </div>
@@ -703,8 +770,9 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
 </div>
 <div class="card ready">
   <div class="err" id="st_err"></div>
-  <button class="btn primary" id="btnSettle" style="width:100%">그룹웨어에 지출결의서 채우기</button>
-  <p class="sub" style="margin-top:8px">품의서승인에서 고른 품의를 체크 → 결의서전송 창에서 지출결의서·채주(영수증마다)·환원까지 채우고 멈춰요. <b>[전송]은 직접</b> 확인하고 누르세요. 결재상신은 결의서입력 화면에서 직접 하세요.</p>
+  <button class="btn primary" id="btnSettle" style="width:100%">그룹웨어에 지출 결의서 올리기</button>
+  <p class="sub" style="margin-top:8px">품의서승인 → 결의서전송(채주·환원·[전송]) → 결의서입력 → [결재상신]까지 하고 결의서 작성 창을 띄워요. 본문·결재선 확인하고 <b>[상신]은 직접</b>.</p>
+</div>
 </div>
 </div>
 </section>
@@ -805,6 +873,23 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
 <div id="cfmModal"><div class="box"><div class="cf-head"><b id="cfTitle">이대로 보낼까요?</b><button class="x" type="button" id="cfX">✕</button></div>
   <div class="cf-body" id="cfBody"></div>
   <div class="cf-foot"><span class="cf-note" id="cfNote"></span><button class="btn" type="button" id="cfNo">고칠게요</button><button class="btn primary glow" type="button" id="cfYes">보내기 ✦</button></div></div></div>
+<div id="aiLimitModal"><div class="box" style="width:480px"><div class="cf-head"><b>💰 지원 한도가 있나요?</b><button class="x" type="button" id="alX">✕</button></div>
+  <div class="cf-body">
+    <p style="margin:0 0 10px">AI 도구 비용 지원에 한도가 있으면 금액을 넣어 주세요. 청구 합계가 넘으면 <b>한도까지만</b> 품의해요.</p>
+    <div class="row"><label>지원 한도</label><input id="al_limit" inputmode="numeric" placeholder="예: 50,000"></div>
+    <p class="sub" id="al_sum" style="margin:4px 0 0"></p>
+    <div class="err" id="al_err"></div>
+  </div>
+  <div class="cf-foot"><button class="btn" type="button" id="alNone" style="margin-right:auto">한도 없음</button><button class="btn" type="button" id="alCancel">취소</button><button class="btn primary glow" type="button" id="alOk">다음</button></div></div></div>
+<div id="aiConsentModal"><div class="box"><div class="cf-head"><b>개인 AI 도구 이용 품의인가요?</b><button class="x" type="button" id="acX">✕</button></div>
+  <div class="cf-body">
+    <p style="margin:0 0 10px"><b>개인용</b>이면 <b>AI 도구 이용 지원 및 비용 환수에 관한 동의서</b>를 첨부해요. <b>팀용</b>이면 [건너뛰기].</p>
+    <div class="ac-steps"><span><i>1</i>기안서 작성</span><em>→</em><span><i>2</i>Flex 서명 요청 옴</span><em>→</em><span><i>3</i>Flex에서 서명</span><em>→</em><span><i>4</i>내 프로필 › 계약서 탭에서 다운로드</span></div>
+    <div id="ac_drop" class="drop"><div class="empty"><b>동의서를 여기에 끌어다 놓기</b><span>PDF · 이미지 1개</span><button class="btn small" id="btnAcPick" type="button">파일 고르기</button></div>
+      <div class="pofile hidden" id="ac_card"><span class="ico">✍️</span><div class="meta"><b id="ac_name"></b><small>그룹웨어 품의에 첨부돼요</small></div><span class="acts"><button class="btn small" id="btnAcClear" type="button" title="동의서 빼기">✕</button></span></div></div>
+    <div class="err" id="ac_err"></div>
+  </div>
+  <div class="cf-foot"><button class="btn" type="button" id="acSkip" style="margin-right:auto">건너뛰기</button><button class="btn" type="button" id="acCancel">취소</button><button class="btn primary glow" type="button" id="acOk">확인</button></div></div></div>
 <div id="updModal"><div class="box">
   <h2 style="margin:0 0 4px">새 버전이 있어요</h2>
   <p class="sub" id="updMsg" style="margin:0"></p>

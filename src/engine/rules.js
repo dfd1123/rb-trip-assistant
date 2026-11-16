@@ -276,10 +276,10 @@ function parseReport(data) {
   return out;
 }
 
-// ---------- 결의서전송(지출결의) 규칙 ----------
+// ---------- 결의서전송(지출 결의) 규칙 ----------
 const FUNDS = ['일반경비', '제조경비'];
 /** 예산 줄 결제수단·과세구분. 출장 개인경비 = 외상+기타, 법인카드 = 신용카드+과세 (2026-10-16).
- *  개인카드 지출결의(가이드 06)는 외상+'과세' — 출장 개인경비(기타)와 다르다 */
+ *  개인카드 지출 결의(가이드 06)는 외상+'과세' — 출장 개인경비(기타)와 다르다 */
 const PAY_MODES = { personal: { method: '외상', tax: '기타' }, personalCard: { method: '외상', tax: '과세' }, card: { method: '신용카드', tax: '과세' } };
 const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 // 공휴일 (주말 아닌 날만 의미 있음). ponytail: 2026~2027 목록만 — 해가 바뀌면 여기에 추가 (음력 명절·대체공휴일·선거일은 해마다 다름)
@@ -391,7 +391,7 @@ function mergeMealRows(rows) {
   });
 }
 
-/** 지출결의(개인카드/개인지출만, 가이드 06). 승인 품의 하나로 지출결의서 채주를 만든다.
+/** 지출 결의(개인카드/개인지출만, 가이드 06). 승인 품의 하나로 지출 결의서 채주를 만든다.
  *  label 은 비워 둔다 — 예산과목이 하나면 settleTransfer 가 그 과목으로 채운다 */
 function parseSettle(data) {
   const p = data.pui || {};
@@ -414,6 +414,63 @@ function parseSettle(data) {
   if (!lines.length) throw new InputError('지출 줄을 한 줄 이상 넣어 주세요.');
   if (!lines.some(l => l.amount > 0)) throw new InputError('지출 금액이 모두 0원이에요. 금액을 넣어 주세요.');
   return { pui: { ym, day, seq }, purpose, fund: fund0, lines };
+}
+
+// 지출 결의 앞 단계 품의의 결재양식 (전자결재상신 창에서 고름 — 사용자 화면 2026-11-16)
+const PUI_FORM = '품의서입력(복수)지출';
+const INVOICE_EXT = /\.(pdf|png|jpe?g|webp|docx|xlsx)$/i;
+const AI_CONSENT = 'AI 도구 이용 지원 및 비용 환수에 관한 동의서';
+/** 지출 품의 (지출 결의 앞 단계). 예산과목은 코드로, 코드를 모르면 이름으로 예산과목 코드도움에서 찾는다.
+ *  그룹웨어 '복사'는 결재양식·제목·결재선·본문을 안 가져와 쓸모없음 → 앱이 매번 새로 작성 (사용자 확인 2026-11-16) */
+function parsePui(data) {
+  const memo = String(data.memo || '').trim();
+  if (!memo) throw new InputError('품의 적요를 적어 주세요.');
+  const purpose = String(data.purpose || '').trim();
+  if (!purpose) throw new InputError('품의목적을 적어 주세요.');
+  const lines = (Array.isArray(data.lines) ? data.lines : []).map((e, i) => {
+    const w = `lines[${i + 1}]`;
+    const code = String(e.code || '').trim(), label = String(e.label || '').trim();
+    if (code && !/^\d+$/.test(code)) throw new InputError(`${w}: 예산과목 코드는 숫자예요 (예: 8120002).`);
+    if (!code && !label) throw new InputError(`${w}: 예산과목을 골라 주세요.`);
+    const lineMemo = String(e.memo || '').trim();
+    if (!lineMemo) throw new InputError(`${w}: 적요를 적어 주세요.`);
+    if (e.amount === '' || e.amount == null) throw new InputError(`${w}: 품의금액을 넣어 주세요 (0원도 돼요).`);   // 0 은 유효, 빈 칸만 미입력
+    const usd = e.usd === '' || e.usd == null || !(Number(e.usd) >= 0) ? '' : Number(e.usd);   // 외화 줄 원금액 (본문·자동 반복 환산용)
+    return { code, label, amount: amount(e.amount, w), memo: lineMemo, usd };
+  });
+  if (!lines.length) throw new InputError('예산 줄을 한 줄 이상 넣어 주세요.');
+  if (!lines.some(l => l.amount > 0)) throw new InputError('품의 금액이 모두 0원이에요. 금액을 넣어 주세요.');
+  // 청구서 및 견적서 첨부 필수, 여러 개 가능 (예: Claude·Codex 구독 — 사용자 2026-11-16). 예전 반복 기록은 file 하나
+  const files = (Array.isArray(data.files) ? data.files : [data.file]).map(f => String(f || '').trim()).filter(Boolean);
+  if (!files.length) throw new InputError('청구서 및 견적서 파일을 올려 주세요. 품의에 첨부돼요.');
+  if (files.some(f => !INVOICE_EXT.test(f))) throw new InputError('청구서 및 견적서는 PDF·이미지·워드(.docx)·엑셀(.xlsx) 파일이어야 해요.');
+  const proofs = (Array.isArray(data.proofs) ? data.proofs : []).map(String).filter(Boolean);   // 외화 청구서: 환율 조회 결과 이미지
+  // 개인 AI 도구 이용 지원 품의의 동의서 (Flex 서명본). 개인용인지 팀용인지 앱은 몰라 필수로 막지 않음 — 화면이 물어서 넣음 (사용자 2026-11-16)
+  const consent = String(data.consent || '').trim();
+  const limit = Number(data.limit) > 0 ? Math.round(Number(data.limit)) : 0;   // 지원 한도: 사용자가 확인 모달에서 넣은 금액까지만 품의 (앱이 정하지 않음 — 사용자 2026-11-16)
+  const fx = data.fx && Number(data.fx.rate) > 0 ? { rate: Number(data.fx.rate), date: String(data.fx.date || '') } : null;   // 외화 청구서 환율 (본문 지출 세부내역에)
+  return { title: String(data.title || '').trim() || memo, memo, purpose, detail: String(data.detail || '').trim(), files,
+    lines: limit ? capTotal(lines, limit) : lines, limit, proofs: consent ? [consent, ...proofs] : proofs, fx };
+}
+/** 합계를 limit 까지: 앞 줄부터 채우고 넘는 만큼 깎는다 (깎인 줄은 capped 에 원래 금액) */
+function capTotal(lines, limit) {
+  let left = limit;
+  return lines.map(l => { const a = Math.min(l.amount, Math.max(0, left)); left -= a; return a === l.amount ? l : { ...l, amount: a, capped: l.amount }; });
+}
+
+/** 지출 품의 결재 제목: '[품의서] 26년 10월 AI 툴 결제 요청의 건' (사용자가 정한 꼴, 2026-11-16). 연월은 청구서 날짜 기준 */
+function puiTitle(subject, date = new Date()) {
+  const d = typeof date === 'string' && /^\d{4}-\d{2}/.test(date) ? new Date(`${date.slice(0, 7)}-01T00:00:00`) : date instanceof Date ? date : new Date();
+  const core = String(subject || '').replace(/^\s*\[[^\]]*\]\s*/, '').replace(/^\s*\d{2,4}년\s*\d{1,2}월\s*/, '').replace(/\s*(요청)?의?\s*건\s*$/, '').trim() || '지출';
+  return `[품의서] ${String(d.getFullYear()).slice(2)}년 ${d.getMonth() + 1}월 ${core} 요청의 건`;
+}
+
+/** 지금 알릴 매달 알림 하나: 켜짐 · 이번 달 아직 안 알림 · 만든 달 이후 · 그날 지남(짧은 달은 말일). PC 가 꺼져 있던 날은 켜질 때 따라잡음 */
+function dueRepeat(list, now = new Date()) {
+  const ym = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`, today = `${ym}-${String(now.getDate()).padStart(2, '0')}`;
+  const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const rep = (list || []).find(r => r.on && r.last !== ym && ym > r.base && now.getDate() >= Math.min(r.day, lastDay));
+  return rep ? { rep, ym, today } : null;
 }
 
 /** 신청 교통비 = 네이버 지도 왕복 + 여유분(자차·대중교통, 기본 2만원). 보고서 정산은 실제 금액으로 */
@@ -638,7 +695,7 @@ module.exports = {
   NO_VAT, RECEIPT_KINDS, NO_VAT_KINDS, placeTokens, AMBIGUOUS_PLACES,
   APPLY_FORM, REPORT_FORM, PURCHASE_FORM, parseTripPeriod, PURCHASE_PURPOSES, PURCHASE_PROJECTS, PURCHASE_RECIPIENTS, PROJECT_DETAIL_REQUIRED, purchaseTitle, parsePurchase, BUDGET_ITEMS, TRANSPORT_MODES, CORPORATE_CARS, APPLY_CATEGORIES, REPORT_CATEGORIES,
   InputError, ro, applyTitle, reportTitle, budgetMemo, parseCarText, parseTransitText, roundTrip,
-  parseApply, parseReport, parseSettle, parseExpenses, transportExpense, fuelOnlyExpense, applyPrompt, reportPrompt, extractYaml,
+  parseApply, parseReport, parseSettle, PUI_FORM, parsePui, AI_CONSENT, capTotal, dueRepeat, puiTitle, parseExpenses, transportExpense, fuelOnlyExpense, applyPrompt, reportPrompt, extractYaml,
   OVERSEAS_GRADES, OVERSEAS_RATES, OVERSEAS_RATES_EXEC, overseasGuess, overseasExpenses,
   FUNDS, PAY_MODES, vehicleItem, fundPlanDate, supplyAmount, vatAmount, noVatOf, capToBudget, planPayees, mergeMealRows, capMealRows,
 };

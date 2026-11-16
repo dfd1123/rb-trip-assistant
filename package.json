@@ -95,7 +95,8 @@
       },
       "extendInfo": {
         "CFBundleDisplayName": "Wani Approval Assistant",
-        "LSHasLocalizedDisplayName": true
+        "LSHasLocalizedDisplayName": true,
+        "NSUserNotificationAlertStyle": "alert"
       },
       "extraResources": [
         {
