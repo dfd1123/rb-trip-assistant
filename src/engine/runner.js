@@ -237,6 +237,44 @@ async function runReport(env, data) {
   return { resolutionNo: resNo };
 }
 
+/** 지출결의(개인카드/개인지출): 승인 품의 하나를 골라 결의서전송 창에 지출결의서·채주·환원까지 채우고 멈춘다.
+ *  [전송]은 사람이 (새 금전 유형이라 전송 전 확인). 세금계산서·법인카드·결재상신은 다음 단계. */
+async function runSettle(env, data) {
+  const { cfg, ui, log } = env;
+  const s = R.parseSettle(data);
+  const payee = cfg.name;
+  if (!payee) throw new R.InputError('그룹웨어 이름을 몰라요. 설정에서 그룹웨어에 로그인해 내 정보를 불러와 주세요.');
+  log(`[지출결의] 품의 ${s.pui.ym}-${s.pui.day} 순번 ${s.pui.seq} · ${s.purpose}`);
+  const gw = new Amaranth({ win: env.gwWindow(), baseUrl: cfg.baseUrl, ui, log, debugDir: env.debugDir, creds: env.creds });
+  await gw.ensureLogin();
+  await gw.openApprovedBudget(s.pui);
+  await gw.settleTransfer({ purpose: s.purpose, payee, fund: s.fund, lines: s.lines });
+  env.showGw();
+  await ui.pause('지출결의서 채주·환원까지 채웠어요. 결의서전송 창에서 채주·첨부·환원을 확인하고 직접 [전송]해 주세요.');
+  return {};
+}
+
+/** 지출결의할 수 있는 품의 목록: 기간 안의 지출·승인완료 품의 (apiBudgetRows). 화면 없이 API 로 */
+async function runSettleApprovals(env, { from = '', to = '' } = {}) {
+  const gw = new Amaranth({ win: env.gwWindow(), baseUrl: env.cfg.baseUrl, ui: env.ui, log: env.log, debugDir: env.debugDir, creds: env.creds });
+  const range = listRange(from, to); ({ from, to } = range); const months = range.months;
+  const today = new Date(); const days = new Set([`${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}|${today.getDate()}`]);
+  let user = env.cfg.gwUser || null;
+  if (!user) {
+    let u = await gw.apiUser();
+    if (!u) { await gw.ensureLogin(); const pr = await gw.readProfile(); if (pr.coCd && pr.deptCd && pr.empCd) u = { coCd: pr.coCd, deptCd: pr.deptCd, empCd: pr.empCd }; }
+    if (u) { env.store.saveConfig({ gwUser: u }); user = u; }
+  }
+  if (!user) throw new Error('사용자 정보(회계단위·부서·사원 코드)를 못 읽었어요');
+  const inRange = r => { const d = `${r.ym}-${String(r.day).padStart(2, '0')}`; return d >= from && d <= to; };
+  let rows;
+  try { rows = (await gw.apiBudgetRows(user, { months, days: [...days] })).filter(inRange); }
+  catch (e) { env.log(`(조회 실패: ${String(e.message).slice(0, 100)} — 로그인 확인 후 다시)`); await gw.ensureLogin(); rows = (await gw.apiBudgetRows(user, { months, days: [...days] })).filter(inRange); }
+  const approved = rows.filter(r => r.kind === '지출' && /승인완료/.test(r.status));
+  env.log(`지출결의 가능한 승인 품의 ${approved.length}건 (${from}~${to})`);
+  return { rows: approved, from, to };
+}
+
 async function runLogin(env) {
   const gw = new Amaranth({ win: env.gwWindow(), baseUrl: env.cfg.baseUrl, ui: env.ui, log: env.log, debugDir: env.debugDir, creds: env.creds });
   await gw.ensureLogin();
@@ -400,4 +438,4 @@ async function runDeleteTrip(env, id) {
   return { rows };
 }
 
-module.exports = { cachedFare, settleLines, listRange, runRefundCheck, runProfile, runLoadReport, planApply, runFare, runApply, runPurchase, runVisitor, runVisitorList, runPurchaseList, reportDraft, runReport, runLogin, runListBudget, runDeleteBudget, runDeleteTrip };
+module.exports = { cachedFare, settleLines, listRange, runRefundCheck, runProfile, runLoadReport, planApply, runFare, runApply, runPurchase, runVisitor, runVisitorList, runPurchaseList, reportDraft, runReport, runSettle, runSettleApprovals, runLogin, runListBudget, runDeleteBudget, runDeleteTrip };

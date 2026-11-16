@@ -213,7 +213,7 @@ let job = null;
 // 화면에 안 보이게 도는 작업(목록 갱신·환원 점검 등). 사람이 시킨 작업이 오면 양보한다 — 전엔 "작업창의 [취소]를 누르라"고 했는데 숨은 작업이라 누를 곳이 없었음
 // 끊어도 되돌릴 게 없는 작업(그룹웨어에 아무것도 안 만듦): 사람 확인을 기다리던 중이어도 새 작업이 오면 취소하고 넘어감
 const PREEMPTIBLE_JOBS = new Set(['fare', 'login', 'receipts', 'po-read', 'url-read']);
-const BACKGROUND_JOBS = new Set(['gw-list', 'gw-profile', 'refund-check', 'purchase-list', 'report-load']);
+const BACKGROUND_JOBS = new Set(['gw-list', 'gw-profile', 'refund-check', 'purchase-list', 'report-load', 'settle-approvals']);
 // 시작 요청은 하나씩 차례로: 앞 작업이 멈추길 기다리는 사이 두 번째 요청이 오면 둘 다 새 작업을 만들어 같은 창을 동시에 만졌음 (자가 테스트 2026-10-28).
 // 차례로 처리하면 뒤 요청은 앞 요청이 시작한 작업을 보고 판단한다 (교통비 조회는 마지막 것이 이김)
 let startChain = Promise.resolve();
@@ -288,7 +288,7 @@ async function reportJob(j, kind, detail) {
 }
 
 /** 결재 문서를 그룹웨어에 입력하는 작업이 성공했을 때도 알림 (사용자 요청 2026-11-11). 글 한 줄만 — 실패 때와 달리 작업 기록·화면 캡처·HTML 은 보내지 않는다 */
-const DONE_REPORT = { apply: '출장 신청', report: '출장 보고·정산', purchase: '구매의뢰', visitor: '방문 신청' };
+const DONE_REPORT = { apply: '출장 신청', report: '출장 보고·정산', purchase: '구매의뢰', visitor: '방문 신청', settle: '지출결의' };
 const doneText = (j, cfg, version, now = Date.now()) => {
   const sec = Math.max(0, Math.round((now - j.startedAt) / 1000)), stuck = [...j.reported].filter(k => k.startsWith('stuck:')).length;
   return `✅ 작업 완료 · ${DONE_REPORT[j.kind]} (${j.title})\n`
@@ -726,6 +726,8 @@ async function route(p, body = {}) {
     case '/api/job/fare': return startJob('fare', env => runner.runFare({ ...env, force: Boolean(body.force) }, body), body.title);
     case '/api/job/apply': runner.planApply(body.data, cfg); return startJob('apply', env => runner.runApply(env, body.data, { save: false }), body.title);     // 보관·상신은 사람이
     case '/api/job/report': { const rep = R.parseReport(body.data); assertFilesExist(rep.expenses.flatMap(e => e.proofs || []), '증빙'); } return startJob('report', env => runner.runReport(env, body.data), body.title);
+    case '/api/job/settle-approvals': return startJob('settle-approvals', env => runner.runSettleApprovals(env, { from: String(body.from || ''), to: String(body.to || '') }), body.title);   // 지출결의할 수 있는 승인 품의 목록
+    case '/api/job/settle': { const s = R.parseSettle(body.data); assertFilesExist(s.lines.flatMap(l => l.proofs || []), '영수증'); return startJob('settle', env => runner.runSettle(env, body.data), body.title); }   // 전송은 사람이
     case '/api/job/cancel': if (job) job.cancel(); return { ok: true };
     case '/api/job': return job ? job.snapshot(Number(body.since || 0)) : { state: 'none' };
     case '/api/job/answer': if (job && (!body.id || body.id === job.id)) { job.answer(body.value); if (gwShown) hideGw(); } return { ok: true };   // 다른 작업의 질문에 답이 가지 않게. [계속]이면 사람이 보던 작업 창을 다시 숨김 (띄워 둔 채 두면 자꾸 만져서 꼬임 — 2026-11-03). 다시 필요하면 작업이 직접 띄움

@@ -988,3 +988,29 @@ test('영수증 없는 경비는 정산에서 빠짐 — 자차 유류대만 예
   assert.deepEqual(settleLines(R.parseReport({ ...base, expenses: exp }), {}).map(l => l.amount), [9000, 0]);   // 교통편 모름도 자차 아님
   assert.deepEqual(settleLines(R.parseReport({ ...base, transport: { mode: 'car' }, expenses: [{ item: 'domestic_transport', amount: 75814, memo: '출장 유류비 및 통행료 (왕복)' }] }), {}), []);   // 예전 초안 줄(통행료 포함)은 영수증 없이 안 들어감
 });
+
+test('지출결의 parseSettle — 개인카드(외상+과세), 공급가액=총액·부가세0, 0 유효, 필수칸·자금과목 (가이드 06)', () => {
+  const base = { pui: { ym: '2026-10', day: '15', seq: '3' }, purpose: '10월 사무용품 구매', fund: '일반경비',
+    expenses: [{ amount: 33000, memo: '10/2 사무용품', file: '/tmp/a.jpg' }] };
+  const s = R.parseSettle(base);
+  assert.deepEqual(s.pui, { ym: '2026-10', day: '15', seq: '3' });
+  assert.equal(s.purpose, '10월 사무용품 구매'); assert.equal(s.fund, '일반경비');
+  const l = s.lines[0];
+  assert.equal(l.pay, 'personalCard'); assert.equal(l.label, '');   // 예산과목 비움 → settleTransfer 가 품의 과목으로
+  assert.equal(l.amount, 33000); assert.equal(l.memo, '10/2 사무용품'); assert.equal(l.fund, '일반경비');
+  assert.deepEqual(l.proofs, ['/tmp/a.jpg']); assert.match(l.planDate, /^\d{4}-\d{2}-\d{2}$/);   // 자금계획일 자동 (정기자금일)
+  // 개인카드 = 공급가액 총액·부가세 0 (법인카드와 달리 /11 안 함)
+  assert.equal(R.supplyAmount(33000, 'personalCard'), 33000); assert.equal(R.vatAmount(33000, 'personalCard'), 0);
+  // 0원 줄 유효 (빈 칸만 미입력), 줄별 자금과목·자금계획일
+  const z = R.parseSettle({ ...base, expenses: [{ amount: 0, memo: '0원 줄' }, { amount: 5000, memo: 'x', fund: '제조경비', planDate: '2026-10-20' }] });
+  assert.deepEqual(z.lines.map(l => l.amount), [0, 5000]);
+  assert.equal(z.lines[1].fund, '제조경비'); assert.equal(z.lines[1].planDate, '2026-10-20');
+  // 검증
+  assert.throws(() => R.parseSettle({ ...base, pui: {} }), /품의/);
+  assert.throws(() => R.parseSettle({ ...base, purpose: '  ' }), /집행용도/);
+  assert.throws(() => R.parseSettle({ ...base, expenses: [{ amount: 1000, memo: '' }] }), /세부내역/);
+  assert.throws(() => R.parseSettle({ ...base, fund: '교통비' }), /자금과목/);
+  assert.throws(() => R.parseSettle({ ...base, expenses: [{ amount: 1000, memo: 'm', fund: '교통비' }] }), /자금과목/);
+  assert.throws(() => R.parseSettle({ ...base, expenses: [] }), /한 줄 이상/);
+  assert.throws(() => R.parseSettle({ ...base, expenses: [{ amount: 0, memo: 'a' }, { amount: 0, memo: 'b' }] }), /0원/);   // 전부 0원
+});

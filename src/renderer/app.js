@@ -44,9 +44,10 @@ if(window.api.onDevStale) window.api.onDevStale(() => { if($('#devStale')) retur
 $$('nav button').forEach(b => b.onclick = () => {
   keepReport();
   $$('nav button').forEach(x => x.classList.toggle('on', x===b || (b.dataset.tab==='trips' && x.dataset.tab==='apply')));   // '출장' 메뉴 = 출장 신청 + 출장 보고
-  ['apply','trips','purchase','visitor','settings'].forEach(t => $('#tab-'+t).classList.toggle('hidden', t!==b.dataset.tab));
+  ['apply','trips','purchase','visitor','settle','settings'].forEach(t => $('#tab-'+t).classList.toggle('hidden', t!==b.dataset.tab));
   if(b.dataset.tab==='purchase') initPurchase();
   if(b.dataset.tab==='visitor') initVisitor();
+  if(b.dataset.tab==='settle') initSettle();
   if(b.dataset.tab==='trips'){ $('#tripList').classList.remove('hidden'); $('#reportView').classList.add('hidden'); loadTrips(); autoGwCheck(true); }   // 탭에 들어올 때마다 그룹웨어에서 다시 읽기 (저장된 목록은 먼저 보여줌)
   if(b.dataset.tab==='settings'){ ['#s_msg', '#s_ai_msg', '#s_rate_msg'].forEach(id => $(id).textContent = ''); rpc('/api/meta').then(m => { META = m; renderSettings(); }); }   // 저장된 값으로 다시 그림, '저장됨' 같은 알림은 지움
   if(b.dataset.tab==='apply') rpc('/api/meta').then(m => { META = m; syncApplyDefaults(); applyCarRule(); });          // 쓰던 신청서는 그대로, 설정에서 온 값만 맞춤
@@ -1302,6 +1303,77 @@ async function initVisitor(){
   if(!$('#vs_host').value) $('#vs_host').value = c.name || '';
   vsCheckUrgent();
 }
+/* ---------- 지출결의 (개인카드·개인지출, 가이드 06) ---------- */
+let stInited = false, stApprovals = [];
+const stFund = () => radio('st_fund') || '일반경비';
+function addStRow(e = {}){
+  const tr = document.createElement('tr');
+  tr.innerHTML = `<td><input class="amt" inputmode="numeric" placeholder="0"></td>
+    <td><input class="memo" placeholder="예: 10/2 사무용품 구매"></td>
+    <td><select class="fund"><option>일반경비</option><option>제조경비</option></select></td>
+    <td><input class="plan" type="date" title="비우면 다음 정기자금일(10·20·25일)로 넣어요"></td>
+    <td><button class="btn small add" type="button">+ 영수증</button><div class="files"></div></td>
+    <td><button class="del" type="button" title="줄 삭제">✕</button></td>`;
+  const amt = tr.querySelector('.amt');
+  amt.oninput = () => { amt.value = amt.value ? num(amt.value).toLocaleString('ko-KR') : ''; };
+  tr.querySelector('.fund').value = e.fund || stFund();
+  let file = e.file || '';
+  const drawFile = () => {
+    const box = tr.querySelector('.files'), add = tr.querySelector('.add'); box.innerHTML = '';
+    if(file){
+      const chip = document.createElement('div'); chip.className = 'chip';
+      const nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = (/\.pdf$/i.test(file) ? '📄 ' : '🖼️ ') + file.split(/[\\/]/).pop(); nm.title = file + ' (눌러서 열기)'; nm.onclick = () => rpc('/api/open', {path: file});
+      const x = document.createElement('button'); x.className = 'x'; x.type = 'button'; x.textContent = '✕'; x.title = '빼기'; x.onclick = () => { file = ''; drawFile(); };
+      chip.append(nm, x); box.appendChild(chip); add.textContent = '영수증 바꾸기';
+    } else add.textContent = '+ 영수증';
+    tr.dataset.file = file;
+  };
+  tr.querySelector('.add').onclick = async () => { const {paths} = await rpc('/api/pick-proofs', {}); if(paths && paths[0]){ file = paths[0]; drawFile(); } };
+  tr.querySelector('.del').onclick = () => tr.remove();
+  if(e.amount != null && e.amount !== '') amt.value = num(e.amount).toLocaleString('ko-KR');
+  if(e.memo) tr.querySelector('.memo').value = e.memo;
+  if(e.planDate) tr.querySelector('.plan').value = e.planDate;
+  drawFile();
+  $('#st_exp tbody').appendChild(tr);
+}
+// 완전히 빈 줄만 뺀다 — 0원은 사용자가 넣은 값이라 그대로 (금액 있고 세부내역 없으면 아래에서 막아 알림)
+const readStExp = () => [...$('#st_exp tbody').querySelectorAll('tr')].map(tr => ({
+  amount: num(tr.querySelector('.amt').value), memo: tr.querySelector('.memo').value.trim(),
+  fund: tr.querySelector('.fund').value, planDate: tr.querySelector('.plan').value || '', file: tr.dataset.file || '',
+})).filter(e => e.amount || e.memo || e.file);
+function loadStApprovals(){
+  runJob('승인 품의 불러오기', '/api/job/settle-approvals', {}, r => {
+    stApprovals = r.rows || [];
+    const sel = $('#st_pui'), keep = sel.value;
+    sel.innerHTML = '<option value="">품의를 고르세요</option>' + stApprovals.map(x =>
+      `<option value="${x.ym}|${x.day}|${x.seq}">${escH(`${x.ym}-${String(x.day).padStart(2, '0')} 순번 ${x.seq} · ${x.memo || '(적요 없음)'} · ${x.total}원`)}</option>`).join('');
+    if(keep) sel.value = keep;
+    $('#st_err').textContent = stApprovals.length ? '' : '최근 3개월에 지출결의할 수 있는 승인완료 지출 품의가 없어요.';
+  }, {quiet: true, userAction: true});
+}
+function initSettle(){
+  if(stInited) return; stInited = true;
+  if(!$('#st_exp tbody').children.length) addStRow();
+  $('#btnStAdd').onclick = () => addStRow();
+  $('#btnStLoad').onclick = loadStApprovals;
+  $('#btnNewSettle').onclick = () => { if(!confirm('입력 중인 지출결의 내용을 모두 비울까요?')) return; $('#st_purpose').value = ''; $('#st_exp tbody').innerHTML = ''; addStRow(); $('#st_err').textContent = ''; };
+  $('#btnSettle').onclick = submitSettle;
+}
+function submitSettle(){
+  const err = $('#st_err'); err.textContent = '';
+  const pui = $('#st_pui').value;
+  if(!pui){ err.textContent = '정산할 승인 품의를 골라 주세요.'; return; }
+  const purpose = $('#st_purpose').value.trim();
+  if(!purpose){ err.textContent = '집행용도(적요)를 적어 주세요.'; return; }
+  const expenses = readStExp();
+  if(!expenses.length){ err.textContent = '지출 줄을 한 줄 이상 넣어 주세요.'; return; }
+  if(expenses.some(e => !e.memo)){ err.textContent = '모든 줄에 비용 세부내역(거래처비고)을 적어 주세요.'; return; }
+  if(!expenses.some(e => e.amount > 0)){ err.textContent = '지출 금액을 한 줄 이상 넣어 주세요 (지금은 전부 0원이에요).'; return; }
+  if(expenses.some(e => e.amount > 0 && !e.file) && !confirmNoProof('영수증')) return;
+  const [ym, day, seq] = pui.split('|');
+  const data = { pui: {ym, day, seq}, purpose, fund: stFund(), expenses };
+  runJob('지출결의서 작성', '/api/job/settle', {data}, () => { $('#st_err').textContent = '지출결의서 채주·환원까지 채웠어요. 결의서전송 창에서 확인하고 직접 [전송]하세요.'; }, {userAction: true});
+}
 /* 방문 시간: 시작·끝 시각 칸 두 개 ↔ 엔진·본문은 "14:00~16:00" 한 줄. 끝을 안 골랐으면 빈 값(=빠진 것) */
 const vsTimeOf = () => $('#vs_t1').value && $('#vs_t2').value ? `${$('#vs_t1').value}~${$('#vs_t2').value}` : '';
 function vsSetTime(s){   // "14:00~16:00", "14~16", "9:30-11" (AI·예전 초안) → 두 칸. 못 읽으면 비움
@@ -1495,7 +1567,7 @@ function watchJob(title, onDone, {quiet = false, onEnd = null, id = 0} = {}){   
     const q = s.question;
     $('#jobShow').textContent = '작업 중인 창 열기';
     $('#jobShow').classList.toggle('hidden', !(q || s.state === 'error'));   // 사람이 손봐야 할 때(질문·실패)만 작업 창을 보여 준다
-    const what = {apply: '와니가 작성 중', report: '와니가 작성 중', fare: '와니가 교통비 조회 중', 'trip-delete': '와니가 삭제 중', 'gw-delete': '와니가 삭제 중', 'gw-list': '그룹웨어 로그인·품의 상태를 확인 중이에요', 'gw-profile': '그룹웨어에서 내 정보를 불러오는 중이에요', 'report-load': '그룹웨어에서 보고서를 불러오는 중이에요', 'po-read': '와니가 발주서 읽는 중', 'url-read': '와니가 제품 페이지 읽는 중', purchase: '와니가 작성 중', 'purchase-list': '구매의뢰 목록을 읽는 중이에요', visitor: '와니가 작성 중', 'visitor-list': '방문 신청 목록을 읽는 중이에요', 'refund-check': '정산 환원을 확인하는 중이에요', receipts: '와니가 영수증 읽는 중', login: '그룹웨어 로그인 상태를 확인 중이에요'}[s.kind] || '와니가 처리 중';
+    const what = {apply: '와니가 작성 중', report: '와니가 작성 중', fare: '와니가 교통비 조회 중', 'trip-delete': '와니가 삭제 중', 'gw-delete': '와니가 삭제 중', 'gw-list': '그룹웨어 로그인·품의 상태를 확인 중이에요', 'gw-profile': '그룹웨어에서 내 정보를 불러오는 중이에요', 'report-load': '그룹웨어에서 보고서를 불러오는 중이에요', 'po-read': '와니가 발주서 읽는 중', 'url-read': '와니가 제품 페이지 읽는 중', purchase: '와니가 작성 중', 'purchase-list': '구매의뢰 목록을 읽는 중이에요', visitor: '와니가 작성 중', 'visitor-list': '방문 신청 목록을 읽는 중이에요', settle: '와니가 지출결의서 채우는 중', 'settle-approvals': '승인 품의를 불러오는 중이에요', 'refund-check': '정산 환원을 확인하는 중이에요', receipts: '와니가 영수증 읽는 중', login: '그룹웨어 로그인 상태를 확인 중이에요'}[s.kind] || '와니가 처리 중';
     $('#dimWhat').textContent = what; $('.wani .pen').textContent = /삭제/.test(what) ? '🧹' : /조회|확인/.test(what) ? '🔍' : '✍️';
     const textQ = q && (q.type === 'text' || q.type === 'choice');
     $('#jobAsk').style.display = q && !textQ ? 'block' : 'none';

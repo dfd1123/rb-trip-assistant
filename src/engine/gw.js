@@ -1270,6 +1270,7 @@ class Amaranth {
     const budgetsAll = await p.eval(() => { const g = grid('결제수단'); return rows(g).map((_, i) => rowVals(g, i) || {}); });
     const rowIdx = [], budgets = budgetsAll.filter((v, i) => v['예산과목'] && rowIdx.push(i));   // rowIdx[계획 번호] = 화면 행 번호 (예산과목 없는 줄이 앞에 있으면 어긋났음)
     if (!budgets.length) throw new Error('결의서전송 창의 예산내역이 비어 있어요. 집행용도를 넣고 Enter 두 번 눌러 예산내역이 내려온 뒤 다시 해 주세요.');   // 비어 있으면 채주 없이 "환원할 금액 없음" 으로 넘어가 빈 결의를 전송하려 했음
+    if (budgets.length === 1) lines.forEach(l => { if (!l.label) l.label = budgets[0]['예산과목']; });   // 지출결의(일반): 과목이 하나면 라벨 없는 줄을 그 과목으로. 과목 여러 개면 라벨 없는 줄은 planPayees 에서 left 로 빠져 안내된다
     const failed = [];   // 저장 확인이 안 된 채주 줄
     const { plan, left } = planPayees(budgets, lines);   // 같은 예산과목 영수증 여러 장 = 그 예산 줄 아래 채주 여러 줄 (식대 4일치 등)
     for (const pb of plan) pb.index = rowIdx[pb.index];

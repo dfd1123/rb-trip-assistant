@@ -278,8 +278,9 @@ function parseReport(data) {
 
 // ---------- 결의서전송(지출결의) 규칙 ----------
 const FUNDS = ['일반경비', '제조경비'];
-/** 결제수단별 예산 줄 결제수단·과세구분: 개인경비 = 외상+기타, 법인카드 = 신용카드+과세 (사용자 설명, 2026-10-16 재확인) */
-const PAY_MODES = { personal: { method: '외상', tax: '기타' }, card: { method: '신용카드', tax: '과세' } };
+/** 예산 줄 결제수단·과세구분. 출장 개인경비 = 외상+기타, 법인카드 = 신용카드+과세 (2026-10-16).
+ *  개인카드 지출결의(가이드 06)는 외상+'과세' — 출장 개인경비(기타)와 다르다 */
+const PAY_MODES = { personal: { method: '외상', tax: '기타' }, personalCard: { method: '외상', tax: '과세' }, card: { method: '신용카드', tax: '과세' } };
 const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 // 공휴일 (주말 아닌 날만 의미 있음). ponytail: 2026~2027 목록만 — 해가 바뀌면 여기에 추가 (음력 명절·대체공휴일·선거일은 해마다 다름)
 const HOLIDAYS = new Set([
@@ -388,6 +389,31 @@ function mergeMealRows(rows) {
     const memo = [day, ppl ? `${ppl}인` : '', kinds.length ? kinds.join('·') : '식대', `${parts.length}건`].filter(Boolean).join(' ');
     return { ...r, memo, vendor: [...new Set(parts.map(p => p.vendor).filter(Boolean))].join(', '), dup: parts.length };
   });
+}
+
+/** 지출결의(개인카드/개인지출만, 가이드 06). 승인 품의 하나로 지출결의서 채주를 만든다.
+ *  label 은 비워 둔다 — 예산과목이 하나면 settleTransfer 가 그 과목으로 채운다 */
+function parseSettle(data) {
+  const p = data.pui || {};
+  const ym = String(p.ym || '').trim(), day = String(p.day || '').trim(), seq = String(p.seq || '').trim();
+  if (!/^\d{4}-\d{2}$/.test(ym) || !/^\d+$/.test(day) || !/^\d+$/.test(seq)) throw new InputError('정산할 승인 품의를 골라 주세요.');
+  const purpose = String(data.purpose || '').trim();
+  if (!purpose) throw new InputError('집행용도(적요)를 적어 주세요.');
+  const fund0 = String(data.fund || '일반경비').trim();
+  if (!FUNDS.includes(fund0)) throw new InputError('자금과목은 일반경비·제조경비 중 하나예요.');
+  const lines = (Array.isArray(data.expenses) ? data.expenses : []).map((e, i) => {
+    const w = `expenses[${i}]`;
+    const amt = amount(e.amount === '' || e.amount == null ? 0 : e.amount, w);   // 0 은 유효 (빈 칸만 미입력)
+    const memo = String(e.memo || '').trim();
+    if (!memo) throw new InputError(`${w}: 비용 세부내역(거래처비고)을 적어 주세요.`);
+    const fund = String(e.fund || fund0).trim();
+    if (!FUNDS.includes(fund)) throw new InputError(`${w}: 자금과목은 일반경비·제조경비 중 하나예요.`);
+    const planDate = e.planDate ? date(e.planDate, `${w}.planDate`) : fundPlanDate('personalCard');
+    return { label: '', pay: 'personalCard', amount: amt, memo, fund, planDate, proofs: [e.file].filter(Boolean).map(String) };
+  });
+  if (!lines.length) throw new InputError('지출 줄을 한 줄 이상 넣어 주세요.');
+  if (!lines.some(l => l.amount > 0)) throw new InputError('지출 금액이 모두 0원이에요. 금액을 넣어 주세요.');
+  return { pui: { ym, day, seq }, purpose, fund: fund0, lines };
 }
 
 /** 신청 교통비 = 네이버 지도 왕복 + 여유분(자차·대중교통, 기본 2만원). 보고서 정산은 실제 금액으로 */
@@ -612,7 +638,7 @@ module.exports = {
   NO_VAT, RECEIPT_KINDS, NO_VAT_KINDS, placeTokens, AMBIGUOUS_PLACES,
   APPLY_FORM, REPORT_FORM, PURCHASE_FORM, parseTripPeriod, PURCHASE_PURPOSES, PURCHASE_PROJECTS, PURCHASE_RECIPIENTS, PROJECT_DETAIL_REQUIRED, purchaseTitle, parsePurchase, BUDGET_ITEMS, TRANSPORT_MODES, CORPORATE_CARS, APPLY_CATEGORIES, REPORT_CATEGORIES,
   InputError, ro, applyTitle, reportTitle, budgetMemo, parseCarText, parseTransitText, roundTrip,
-  parseApply, parseReport, parseExpenses, transportExpense, fuelOnlyExpense, applyPrompt, reportPrompt, extractYaml,
+  parseApply, parseReport, parseSettle, parseExpenses, transportExpense, fuelOnlyExpense, applyPrompt, reportPrompt, extractYaml,
   OVERSEAS_GRADES, OVERSEAS_RATES, OVERSEAS_RATES_EXEC, overseasGuess, overseasExpenses,
   FUNDS, PAY_MODES, vehicleItem, fundPlanDate, supplyAmount, vatAmount, noVatOf, capToBudget, planPayees, mergeMealRows, capMealRows,
 };

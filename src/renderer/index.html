@@ -347,6 +347,7 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
     <button data-tab="apply" class="on">출장</button>
     <button data-tab="trips" class="hidden">출장 보고</button>
     <button data-tab="purchase">구매 의뢰</button>
+    <button data-tab="settle">지출결의</button>
     <button data-tab="visitor">방문 신청</button>
     <button data-tab="settings">설정</button>
   </nav>
@@ -680,6 +681,30 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
 <div class="card">
   <div class="h2row"><div><h2 style="margin:0">신청한 구매의뢰</h2><p class="sub" style="margin:2px 0 0">그룹웨어에 올라간 구매의뢰서와 결재 상태예요 (최근 3개월). 아직 상신 안 한 건 '상신 전'으로 보여요.</p></div><button class="btn small" id="btnPuList">↻ 새로고침</button></div>
   <div id="puList" class="list"><p class="sub">아직 안 읽었어요.</p></div>
+</div>
+</div>
+</section>
+<section id="tab-settle" class="hidden">
+<div id="stNew">
+<div class="card quick hero">
+  <div class="h2row"><h2><span class="spark">✦</span> 개인카드·개인지출 지출결의서</h2><span class="inline" style="gap:6px"><button class="btn small" id="btnNewSettle" title="입력 중인 내용을 모두 비움">새로 작성</button></span></div>
+  <p class="sub">승인된 품의를 고르고 개인카드·개인지출 영수증을 줄로 넣으면, 품의서승인 → 결의서전송 창에서 지출결의서·채주(영수증마다)·환원까지 채워요. <b>[전송]은 직접</b> 확인하고 누르세요. (세금계산서·법인카드는 아직 준비 중)</p>
+</div>
+<div class="card pu-form">
+  <div class="h2row"><h2>승인 품의 고르기</h2><button class="btn small" id="btnStLoad" title="그룹웨어에서 승인완료·지출 품의를 불러와요">↻ 승인 품의 불러오기</button></div>
+  <div class="row"><label>품의</label><select id="st_pui" style="flex:1"><option value="">[승인 품의 불러오기]를 누르세요</option></select></div>
+  <div class="row"><label>집행용도(적요)</label><input id="st_purpose" placeholder="사용에 따른 적요 (예: 10월 사무용품 구매)"></div>
+  <div class="row"><label>기본 자금과목</label><div class="seg" id="st_fund_seg"><label title="계정과목 '판관'"><input type="radio" name="st_fund" value="일반경비" checked>일반경비</label><label title="계정과목 '제조'"><input type="radio" name="st_fund" value="제조경비">제조경비</label></div></div>
+</div>
+<div class="card">
+  <div class="h2row"><h2>지출 줄</h2><button class="btn small" id="btnStAdd" title="지출 줄을 하나 더 추가">+ 줄 추가</button></div>
+  <table class="exp" id="st_exp"><thead><tr><th style="width:120px">금액(총액)</th><th>비용 세부내역 (거래처비고)</th><th style="width:110px">자금과목</th><th style="width:150px">자금계획일</th><th style="width:130px">영수증</th><th style="width:34px"></th></tr></thead><tbody></tbody></table>
+  <p class="sub" style="margin-top:8px">개인카드·개인지출은 공급가액에 <b>총액</b>, 부가세는 0원으로 들어가요. 자금계획일을 비우면 다음 정기자금일(10·20·25일)로 넣어요.</p>
+</div>
+<div class="card ready">
+  <div class="err" id="st_err"></div>
+  <button class="btn primary" id="btnSettle" style="width:100%">그룹웨어에 지출결의서 채우기</button>
+  <p class="sub" style="margin-top:8px">품의서승인에서 고른 품의를 체크 → 결의서전송 창에서 지출결의서·채주(영수증마다)·환원까지 채우고 멈춰요. <b>[전송]은 직접</b> 확인하고 누르세요. 결재상신은 결의서입력 화면에서 직접 하세요.</p>
 </div>
 </div>
 </section>
