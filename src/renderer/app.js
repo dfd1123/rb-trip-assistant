@@ -1807,8 +1807,11 @@ function watchJob(title, onDone, {quiet = false, onEnd = null, id = 0} = {}){   
     if(s.id && s.id !== watchedJobId) return;   // 다른 작업의 상태
     if(s.logs && s.logs.length){ $('#jobLog').textContent += s.logs.join('\n') + '\n'; $('#jobLog').scrollTop = 1e9; jobSince = s.next; if(!quiet) $('#dimStep').textContent = s.logs[s.logs.length - 1].replace(/^[⚠✔—]\s*/, ''); }
     const q = s.question;
-    $('#jobShow').textContent = '작업 중인 창 열기';
-    $('#jobShow').classList.toggle('hidden', !(q || s.state === 'error'));   // 사람이 손봐야 할 때(질문·실패)만 작업 창을 보여 준다
+    // 도는 중: [👀 작업 보기] = 보기 전용 창 (누를 수 없음, 사람을 부르면 풀림). 질문·실패: 손볼 수 있는 창
+    const watch = !q && s.state === 'running' && !quiet;
+    $('#jobShow').textContent = watch ? (s.shown ? '작업 보기 닫기' : '👀 작업 보기') : '작업 중인 창 열기';
+    $('#jobShow').dataset.hide = watch && s.shown ? '1' : '';
+    $('#jobShow').classList.toggle('hidden', !(q || s.state === 'error' || watch));
     const what = {apply: '와니가 작성 중', report: '와니가 작성 중', fare: '와니가 교통비 조회 중', 'trip-delete': '와니가 삭제 중', 'gw-delete': '와니가 삭제 중', 'gw-list': '그룹웨어 로그인·품의 상태를 확인 중이에요', 'gw-profile': '그룹웨어에서 내 정보를 불러오는 중이에요', 'report-load': '그룹웨어에서 보고서를 불러오는 중이에요', 'po-read': '와니가 발주서 읽는 중', 'url-read': '와니가 제품 페이지 읽는 중', purchase: '와니가 작성 중', 'purchase-list': '구매의뢰 목록을 읽는 중이에요', visitor: '와니가 작성 중', 'visitor-list': '방문 신청 목록을 읽는 중이에요', settle: '와니가 지출 결의서 채우는 중', 'settle-approvals': '품의 목록을 불러오는 중이에요', pui: '와니가 지출 품의 올리는 중', 'pui-draft': '비슷한 이전 품의를 찾아 칸을 채우는 중이에요', 'pui-items': '예산과목 목록을 불러오는 중이에요', 'refund-check': '정산 환원을 확인하는 중이에요', receipts: '와니가 영수증 읽는 중', login: '그룹웨어 로그인 상태를 확인 중이에요'}[s.kind] || '와니가 처리 중';
     $('#dimWhat').textContent = what; $('.wani .pen').textContent = /삭제/.test(what) ? '🧹' : /조회|확인/.test(what) ? '🔍' : '✍️';
     const textQ = q && (q.type === 'text' || q.type === 'choice');
@@ -1860,7 +1863,7 @@ $('#jobClose').onclick = async () => {   // 닫기 = 진행 중이던 작업 취
   if(cur && (cur.state === 'running' || cur.state === 'waiting') && !confirm('진행 중인 작업을 취소할까요?\n만들던 그룹웨어 품의도 지워요. (작업은 두고 패널만 치우려면 [취소]를 누르세요)')) return;
   rpc('/api/job/cancel'); $('#jobPanel').style.display = 'none'; $('#dim').classList.remove('on'); };
 $('#jobCancel').onclick = () => rpc('/api/job/cancel');
-$('#jobShow').onclick = () => rpc('/api/gw/show');
+$('#jobShow').onclick = () => rpc($('#jobShow').dataset.hide ? '/api/gw/hide' : '/api/gw/show');
 function alertErr(m){ $('#jobPanel').style.display='block'; $('#jobTitle').textContent='오류'; $('#jobLog').textContent = m; $('#jobAsk').style.display='none'; }
 
 /* ---------- 그룹웨어 로그인 ---------- */

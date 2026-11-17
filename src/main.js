@@ -102,10 +102,13 @@ function gwWindow(show = false) {
   }));
   gwWin.webContents.on('did-create-window', w => {
     gwPopups.add(w); w.on('closed', () => gwPopups.delete(w)); keepDrawn(w);
-    if (gwShown) { unpark(w); w.focus(); } else park(w);   // 직접 보는 중에 연 팝업(문서번호 클릭 등)은 보이게, 작업 중 연 건 숨김
+    w.on('page-title-updated', e => { if (w._locked) e.preventDefault(); });
+    lockGw(w);
+    if (gwShown) { unpark(w); if (!w._locked) w.focus(); } else park(w);   // 직접 보는 중에 연 팝업(문서번호 클릭 등)은 보이게, 작업 중 연 건 숨김
     w.on('close', e => { if (!quitting && jobBusy()) { e.preventDefault(); park(w); } });   // 작업 중 닫으면 숨기기만
   });
   gwWin.on('close', e => { if (!quitting) { e.preventDefault(); gwShown = false; park(gwWin); } });   // 닫기 = 숨기기 (로그인·작업 상태 유지)
+  gwWin.on('page-title-updated', e => { if (gwWin._locked) e.preventDefault(); });
   keepDrawn(gwWin);
   park(gwWin);
   if (show) showGw();
@@ -113,16 +116,30 @@ function gwWindow(show = false) {
 }
 function showGw() {
   if (!gwWin || gwWin.isDestroyed()) gwWindow(false);
-  gwShown = true; unpark(gwWin);
+  gwShown = true; syncGwLock(); unpark(gwWin);
   const pops = [...gwPopups].filter(w => !w.isDestroyed());
   for (const w of pops) unpark(w);
-  (pops.pop() || gwWin).focus();
+  if (!gwLocked()) (pops.pop() || gwWin).focus();
 }
 function hideGw() {
   gwShown = false;
   for (const w of gwPopups) park(w);
   park(gwWin);
+  syncGwLock();
 }
+// [작업 보기]: 작업이 도는 동안 띄운 창은 보기 전용 — 사람 클릭·키가 작업 입력과 섞이지 않게. 사람을 부르면(waiting)·끝나면 풀림.
+// 앱의 입력은 sendInputEvent 로 페이지에 바로 들어가서 잠금과 상관없음. 숨긴 창은 건드리지 않음 (뒤 작업 그대로)
+const LOCK_TITLE = '아마란스 — 보기 전용 (와니가 입력 중 · 문제가 생기면 풀려요)';
+const gwLocked = () => Boolean(gwShown && job && job.state === 'running');
+function lockGw(w) {
+  if (!w || w.isDestroyed()) return;
+  const on = gwLocked();
+  if (Boolean(w._locked) === on) return;
+  w._locked = on;
+  w.setIgnoreMouseEvents(on); w.setFocusable(!on);
+  w.setTitle(on ? LOCK_TITLE : w.webContents.getTitle());
+}
+function syncGwLock() { lockGw(gwWin); gwPopups.forEach(lockGw); }
 
 /** 사람이 직접 쓰는 그룹웨어 창. 앱이 뒤에서 작업하는 창(gwWin)과는 따로 열리고 로그인 세션(persist:gw)만 같이 쓴다.
  *  문서번호 클릭 같은 팝업은 평소처럼 보이고, 닫으면 진짜 닫힌다 */
@@ -181,6 +198,8 @@ function showNaver() { if (naverWin && !naverWin.isDestroyed()) { unpark(naverWi
 class Cancelled extends Error { constructor() { super('취소했어요.'); } }
 class Job {
   constructor(kind, title) { this.id = ++Job.seq; this.startedAt = Date.now(); this.reported = new Set(); this.kind = kind; this.title = title || kind; this.logs = []; this.state = 'running'; this.result = null; this.error = ''; this.question = null; this._resolve = null; this._reject = null; this.cancelled = false; }
+  get state() { return this._state; }
+  set state(v) { this._state = v; queueMicrotask(syncGwLock); }   // 띄워 둔 그룹웨어 창 잠금: running 이면 보기 전용, 사람을 부르거나 끝나면 풀림 (새 작업은 job 에 들어간 뒤 반영)
   info(msg) {
     if (this.cancelled) throw new Cancelled();
     this.logs.push(...String(msg).split('\n'));
@@ -755,7 +774,7 @@ async function route(p, body = {}) {
     case '/api/job/pui': { const pq = R.parsePui(body.data); assertFilesExist([...pq.files, ...pq.proofs], '청구서 및 견적서'); return startJob('pui', env => runner.runPui(env, body.data), body.title); }   // 결재선·상신은 사람이   // 지출 결의할 수 있는 승인 품의 목록
     case '/api/job/settle': { const s = R.parseSettle(body.data); assertFilesExist(s.lines.flatMap(l => l.proofs || []), '영수증'); return startJob('settle', env => runner.runSettle(env, body.data), body.title); }   // 전송은 사람이
     case '/api/job/cancel': if (job) job.cancel(); return { ok: true };
-    case '/api/job': return job ? job.snapshot(Number(body.since || 0)) : { state: 'none' };
+    case '/api/job': return job ? { ...job.snapshot(Number(body.since || 0)), shown: gwShown } : { state: 'none' };
     case '/api/job/answer': if (job && (!body.id || body.id === job.id)) { job.answer(body.value); if (gwShown) hideGw(); } return { ok: true };   // 다른 작업의 질문에 답이 가지 않게. [계속]이면 사람이 보던 작업 창을 다시 숨김 (띄워 둔 채 두면 자꾸 만져서 꼬임 — 2026-11-03). 다시 필요하면 작업이 직접 띄움
     default: throw new Error(`알 수 없는 요청: ${p}`);
   }
