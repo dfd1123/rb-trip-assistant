@@ -47,7 +47,7 @@ async function trySearch(p, origin, dest, out = {}, { ui, debugDir, only = [0, 1
       // 자동완성에 장소·주소가 없으면 못 찾은 것. (예전엔 ↓+Enter 로 아무거나 골랐는데, 최근 경로가 잡혀 엉뚱한 곳으로 길찾기함)
       if (!hits.length) { out.failed = k; await dump(p, debugDir, k === 0 ? 'no-place-origin' : 'no-place'); return false; }
       // 출발지는 첫 항목. 도착지는 이름이 딱 맞는 것 → 하나뿐이면 그것 → 여럿이면 사람이 고름 (예: 삼성전자 구미 1사업장 / 2사업장)
-      let pick = k === 0 ? hits[0] : hits.find(h => norm(h.place.name) === norm(value)) || (hits.length === 1 ? hits[0] : null);
+      let pick = k === 0 ? hits[0] : hits.find(h => squash(h.place.name) === squash(value)) || (hits.length === 1 ? hits[0] : null);
       if (!pick) {
         const idx = ui && ui.askChoice ? await ui.askChoice(whichPlace(value), hits.map(h => `${h.place.name}${h.place.address ? ` — ${h.place.address}` : ''}`)) : 0;
         if (idx === '' || idx == null || !hits[Number(idx)]) return false;   // 다른 이름으로 다시 찾기
@@ -67,7 +67,7 @@ async function trySearch(p, origin, dest, out = {}, { ui, debugDir, only = [0, 1
       await sleep(900);
     }
     // 입력칸에 고른 장소가 그대로 들어갔는지 (이전 경로가 남아 있으면 엉뚱한 곳으로 조회됨). 고르면 화면이 새로 그려지니 값이 찰 때까지 기다림
-    const same = (a, b) => a && b && norm(a) === norm(b);   // 글자 일부 포함으로 하면 '사천' ↔ '사천해변'도 맞다고 봄 → 꼭 같아야
+    const same = (a, b) => a && b && squash(a) === squash(b);   // 글자 일부 포함으로 하면 '사천' ↔ '사천해변'도 맞다고 봄 → 꼭 같아야
     const vals = (await p.waitFor(() => { const v = all('input.input_search, input[id^=input_search]').filter(vis).slice(0, 2).map(i => i.value.trim()); return v.length === 2 && v.every(Boolean) ? v : null; }, [], { timeout: 8000 }).catch(() => null)) || [];
     const want = [names[0] || origin, names[1] || (out.place && out.place.name) || dest];   // 좌표로 넣은 칸은 그 장소 이름
     if (vals.length === 2 && (!(same(vals[0], want[0]) || same(vals[0], origin)) || !(same(vals[1], want[1]) || same(vals[1], dest)))) { await dump(p, debugDir, 'mismatch'); return false; }
@@ -78,7 +78,7 @@ async function trySearch(p, origin, dest, out = {}, { ui, debugDir, only = [0, 1
     return true;
   } catch (e) { return false; }
 }
-const norm = s => String(s || '').replace(/[\s​ ]/g, '');
+const squash = s => String(s || '').replace(/[\s​ ]/g, '');
 
 const KM_PER_L = 8;   // 회사 기준: 자차 유류대는 연비 8km/L 로 조회한 네이버 지도 캡처가 증빙
 // 내 차 (설정): 네이버 차종/연료 설정 팝업의 칸 id. 전기·수소는 단위가 km/L 가 아니라 연비는 네이버 기본값 그대로
@@ -155,7 +155,7 @@ async function resolveDest(dest, destPlace, { places, ui, log }) {
   let list;
   try { list = await places(dest); } catch (e) { log(`(지역 검색 안 됨: ${String(e.message).slice(0, 100)} — 지도 창에서 글자로 찾아요)`); return null; }
   if (!list || !list.length) return null;
-  const exact = list.find(x => norm(x.name) === norm(dest));
+  const exact = list.find(x => squash(x.name) === squash(dest));
   if (exact) return exact;
   if (list.length === 1 || !ui.askChoice) return list[0];
   const idx = await ui.askChoice(whichPlace(dest), list.map(x => `${x.name}${x.address ? ` — ${x.address}` : ''}`));

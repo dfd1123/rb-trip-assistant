@@ -329,12 +329,11 @@ async function readReceipts(env, ai, paths, period) {
     } catch (e) { env.log(`${++i}/${paths.length} ${name}: 실패 (${e.message})`); out.push({ path: p, error: e.message }); }
   };
   for (let k = 0; k < paths.length; k += 3) await Promise.all(paths.slice(k, k + 3).map(one));   // 3개씩 동시에
-  // 파일 순서대로 펼침 — 표에는 영수증마다 한 줄 (한 파일에 영수증 여러 장이면 증빙은 첫 줄에만). 같은 날 식대 묶기는 채주내역 넣을 때 (runner)
-  const seen = new Set();
-  const proofOf = p => (seen.has(p) ? [] : (seen.add(p), [p]));
+  // 파일 순서대로 펼침 — 표에는 영수증마다 한 줄. 한 파일에 영수증 여러 장(모아찍기·하이패스 여러 건)이면 그 줄들 모두 같은 파일이 증빙
+  // (첫 줄에만 붙이면 나머지는 '영수증 없는 줄'로 정산에서 빠졌음 — rules.claimable). 같은 날 식대 묶기는 채주내역 넣을 때 (runner)
   const flat = paths.map(p => out.find(o => o.path === p)).flatMap(o => o.rows && o.rows.length
-    ? o.rows.map(r => ({ ...r, path: o.path, proofs: proofOf(o.path) }))
-    : [{ path: o.path, item: '', amount: 0, failed: o.error || '영수증을 못 찾음', proofs: proofOf(o.path) }]);
+    ? o.rows.map(r => ({ ...r, path: o.path, proofs: [o.path] }))
+    : [{ path: o.path, item: '', amount: 0, failed: o.error || '영수증을 못 찾음', proofs: [o.path] }]);
   // 표는 날짜·시각 순 (시각 없으면 끼니 순서, 그래도 없으면 읽은 순서). 못 읽은 줄은 맨 뒤
   const MEAL_ORDER = { 조식: '08:00', 중식: '12:00', 석식: '18:00' };
   const key = r => r.failed ? '9' : `${r.date || '9'} ${r.time || MEAL_ORDER[r.meal] || '23:59'}`;

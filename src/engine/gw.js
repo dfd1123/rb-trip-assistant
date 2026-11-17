@@ -20,7 +20,7 @@ const CONFIRM_OK = `() => { const m = x => vis(x) && /하시겠습니까|습니�
 const G_PAYEE = '거래처코드';   // 채주내역 그리드 (첫 열)
 const p_wait = async (p, cond, ms) => { const end = Date.now() + ms; while (Date.now() < end) { if (await cond()) return true; await sleep(500); } return false; };
 const popupsOf = new WeakMap();   // 그룹웨어 창 → 그 창에서 열린 작성 팝업들
-const norm = s => String(s || '').replace(/\s/g, '');
+const squash = s => String(s || '').replace(/\s/g, '');
 const amountOf = s => Number(String(s || '').replace(/[^\d]/g, '')) || 0;
 
 class Amaranth {
@@ -449,7 +449,7 @@ class Amaranth {
         if (ri < 0) throw new Error('행을 찾지 못함');
         await this.editCell('품의구분', ri, '적요', memo);
         const got = String(((await this.rowVals('품의구분', seq ? await rowOfSeq() : row)) || {})['적요'] || '');
-        if (!norm(got).includes(norm(memo))) throw new Error(`적요 칸이 '${got || '빈칸'}'`);
+        if (!squash(got).includes(squash(memo))) throw new Error(`적요 칸이 '${got || '빈칸'}'`);
       } catch (e) { await ui.assist(`품의 적요 입력 실패(${e.message}). 품의 행 적요에 '${memo}'를 넣어 주세요.`); }
     }
 
@@ -464,17 +464,17 @@ class Amaranth {
         if (stopNet) { try { const net = await stopNet(); require('fs').mkdirSync(this.debugDir, { recursive: true }); require('fs').writeFileSync(diagFile, JSON.stringify(net.filter(r => !/static|langPack|event0/.test(r.url)), null, 1)); } catch (e) { /* 진단 */ } }
         await sleep(400);
         const got = String(((await this.rowVals('예산과목', i)) || {})['부서'] || '');
-        if (!norm(got).includes(norm(dept))) throw new Error(`부서 칸이 '${got || '빈칸'}'입니다`);
+        if (!squash(got).includes(squash(dept))) throw new Error(`부서 칸이 '${got || '빈칸'}'입니다`);
       } catch (e) { await this.debugDump('dept', '사업코드도움'); await ui.assist(`부서 선택 실패(${e.message}). ${i + 1}번째 줄 부서를 '${dept}'로 지정해 주세요.`); }
       try {
         const itemRe = '(예산과목|예산|과목).*(코드)?도움$';
         await this.openCodeHelp('예산과목', i, '예산과목', itemRe);
         if (ex.code) await this.pickInCodeHelp(itemRe, ex.code, ex.code);
-        else await this.pickInCodeHelpBy(itemRe, ex.label, { re: norm(ex.label).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), label: ex.label, what: '예산과목' });   // 코드를 모르면 이름으로 (여럿이면 사람이 고름)
+        else await this.pickInCodeHelpBy(itemRe, ex.label, { re: squash(ex.label).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), label: ex.label, what: '예산과목' });   // 코드를 모르면 이름으로 (여럿이면 사람이 고름)
         await sleep(400);
         const got = String(((await this.rowVals('예산과목', i)) || {})['예산과목'] || '');
-        const want = [ex.code, ex.label && ex.label.split('_').pop()].filter(Boolean).map(norm);   // 빈 글자는 아무 칸에나 '포함'돼 버려 확인이 안 됐음
-        if (!want.some(w => norm(got).includes(w))) throw new Error(`예산과목 칸이 '${got || '빈칸'}'입니다`);
+        const want = [ex.code, ex.label && ex.label.split('_').pop()].filter(Boolean).map(squash);   // 빈 글자는 아무 칸에나 '포함'돼 버려 확인이 안 됐음
+        if (!want.some(w => squash(got).includes(w))) throw new Error(`예산과목 칸이 '${got || '빈칸'}'입니다`);
       } catch (e) { await this.debugDump('budget-item', '(예산과목|예산|과목).*(코드)?도움$'); await ui.assist(`예산과목 선택 실패(${e.message}). ${i + 1}번째 줄 예산과목을 ${[ex.code, ex.label].filter(Boolean).join(' ')}로 지정해 주세요.`); }
       try {
         await this.editCell('예산과목', i, '품의금액', String(ex.amount));
@@ -869,7 +869,6 @@ class Amaranth {
     const html = await this.apiDocHtml(docId, formId);
     return this.page.eval((html) => {
       const doc = new DOMParser().parseFromString(html, 'text/html');
-      const norm = s => (s || '').replace(/[\s\u200b\u00a0]/g, '');
       const cells = Array.from(doc.querySelectorAll('td,th'));
       const label = (...ls) => cells.find(td => ls.some(l => norm(td.textContent) === norm(l)));
       const next = td => { let s = td && td.nextElementSibling; while (s && !/^(TD|TH)$/.test(s.tagName)) s = s.nextElementSibling; if (s) return s; const tr = td && td.parentElement, n = tr && tr.nextElementSibling; return n ? n.querySelector('td,th') : null; };
@@ -1101,7 +1100,7 @@ class Amaranth {
   /** 그리드 칸 드롭다운에서 고르기 (항목 글자 "3.외상" 의 번호는 무시하고 비교) */
   async pickDropdown(gridHdr, row, col, want) {
     const p = this.page;
-    if (norm(((await this.rowVals(gridHdr, row)) || {})[col] || '').includes(norm(want))) return;   // 이미 그 값이면 건드리지 않음
+    if (squash(((await this.rowVals(gridHdr, row)) || {})[col] || '').includes(squash(want))) return;   // 이미 그 값이면 건드리지 않음
     await p.dblclick(await this.cellPoint(gridHdr, row, col));
     await sleep(500);
     // 목록 항목: "3.외상" 처럼 번호가 붙은 글자. 클래스(.rg-dropdown-item 등)에 기대지 않고 글자로 찾는다 — 가장 안쪽 요소
@@ -1112,10 +1111,10 @@ class Amaranth {
       const arrow = await p.eval((h, r, c) => { const g = grid(h); const el = g && cell(g, r, c); if (!el) return null; const b = el.getBoundingClientRect(); return { x: Math.round(b.right - 12), y: Math.round(b.top + b.height / 2) }; }, gridHdr, row, col);
       if (arrow) { await p.click(arrow); opt = await p.waitFor(findOpt, [want], { timeout: 3000 }); }
     }
-    if (!opt) { await this.debugDump(`dropdown-${norm(col)}`, '결의서전송'); throw new Error(`'${want}' 항목이 안 보임`); }
+    if (!opt) { await this.debugDump(`dropdown-${squash(col)}`, '결의서전송'); throw new Error(`'${want}' 항목이 안 보임`); }
     await p.click(opt); await sleep(400);
     const got = String(((await this.rowVals(gridHdr, row)) || {})[col] || '');
-    if (!norm(got).includes(norm(want))) throw new Error(`${col} 칸이 '${got || '빈칸'}'`);
+    if (!squash(got).includes(squash(want))) throw new Error(`${col} 칸이 '${got || '빈칸'}'`);
   }
 
   /** 전송된 결의면 { ok, resNo } (환원이 빠졌으면 [환원]만 다시). 아니면 null — 아무것도 안 함 */
@@ -1425,7 +1424,7 @@ class Amaranth {
       if (v.pt) { this.log(`  (${col}: 스크롤바를 끌어 이동)`); return v.pt; }
     }
     this.log(`  (${col}: ${tried.join('·') || '방법 없음'} 모두 실패)`);
-    await this.debugDump(`reveal-${norm(col)}`, '결의서전송');
+    await this.debugDump(`reveal-${squash(col)}`, '결의서전송');
     throw new Error(`${col} 칸을 화면에 못 띄움`);
   }
 
@@ -1517,7 +1516,7 @@ class Amaranth {
   /** 지금 고른 예산 줄의 채주 중 계획(lines)에 없는 줄 삭제: 체크 → [채주내역 삭제] → 확인. 다시 돌릴 때 전에 넣은 값이 남아 한도를 넘지 않게 */
   async deleteStalePayees(payee, lines) {
     const p = this.page, G = '거래처코드';
-    const same = (v, l) => norm(v['거래처명'] || '').includes(norm(payee)) && amountOf(v['공급가액']) === l.supply && norm(v['거래처비고'] || '') === norm(l.memo || '');
+    const same = (v, l) => squash(v['거래처명'] || '').includes(squash(payee)) && amountOf(v['공급가액']) === l.supply && squash(v['거래처비고'] || '') === squash(l.memo || '');
     const stale = (await p.eval(() => { const g = grid('거래처코드'); return g ? rows(g).map((_, i) => rowVals(g, i) || {}) : []; }))
       .map((v, i) => ({ v, i })).filter(({ v }) => String(v['거래처명'] || '').trim() && !lines.some(l => same(v, l)));
     if (!stale.length) return;
@@ -1614,7 +1613,7 @@ class Amaranth {
     if (r2 >= 0) k = r2;
     if (proofs.length) { if (r2 >= 0) await this.attachPayeeProof(k, proofs); else this.log(`  채주 ${n}: 저장된 줄을 못 찾아 증빙은 안 붙였어요 (다른 채주 줄에 붙을 수 있어서)`); }
     const v = (await this.rowVals(G, k)) || {};
-    const ok = amountOf(v['공급가액']) === supply && norm(v['거래처명'] || '').includes(norm(payee));
+    const ok = amountOf(v['공급가액']) === supply && squash(v['거래처명'] || '').includes(squash(payee));
     this.log(`  채주 ${n} 확인: 거래처명 '${v['거래처명'] || ''}', 공급가액 '${v['공급가액'] || ''}', 거래처비고 '${v['거래처비고'] || ''}', 자금과목 '${v['자금과목'] || ''}', 자금계획일 '${v['자금계획일'] || '(안 보임)'}'`);
     if (v['자금계획일'] && v['자금계획일'] !== planDate) await ui.assist(`채주 ${n}번째 줄 자금계획일이 ${v['자금계획일']}이에요. ${planDate}로 고쳐 주세요.`);
     return ok;
@@ -1788,7 +1787,7 @@ class Amaranth {
     const missing = [];
     for (const name of names) {
       await this.dismissTempDraft(pp, 0);   // 늦게 뜬 임시 저장 창이 입력칸을 덮지 않게
-      if (norm((await row()) || '').includes(norm(name))) continue;
+      if (squash((await row()) || '').includes(squash(name))) continue;
       let ok = false;
       for (let attempt = 0; attempt < 2 && !ok; attempt++) try {   // 도중에 임시 저장 창이 덮었으면 닫고 한 번 더
         if (attempt) { await pp.key('Escape').catch(() => {}); await this.dismissTempDraft(pp, 0); }
@@ -1800,7 +1799,7 @@ class Amaranth {
           const el = c[0] && (c[0].closest('li, [role=option]') || c[0]); return el ? center(el) : null; }, name);
         if (pt) await pp.click(pt); else await pp.key('Enter');
         await sleep(1000);
-        ok = norm((await row()) || '').includes(norm(name));
+        ok = squash((await row()) || '').includes(squash(name));
       } catch (e) { /* 다음 시도 */ }
       if (!ok) missing.push(name);
     }

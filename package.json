@@ -10,7 +10,7 @@
   "scripts": {
     "start": "node scripts/brand-dev-electron.js && electron .",
     "postinstall": "node scripts/brand-dev-electron.js",
-    "test": "node --test test/rules.test.js",
+    "test": "node --test test/rules.test.js test/minify.test.js",
     "e2e": "electron test/e2e.js",
     "e2e:settle": "electron test/e2e-settle.js",
     "e2e:purchase": "electron test/e2e-purchase.js",
