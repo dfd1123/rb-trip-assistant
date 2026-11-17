@@ -193,7 +193,9 @@ function settleLines(rep, cfg, log = () => {}) {
   capped.filter(e => e.capped).forEach(e => log(`${e.memo}: ${e.paid.toLocaleString('ko-KR')}원 → 식대 규정 한도 ${e.amount.toLocaleString('ko-KR')}원으로 조정`));
   const merged = R.mergeMealRows(capped).sort((a, b) => (a.date || '').localeCompare(b.date || ''));   // 품의 한도는 앞 날짜부터 채움 (뒤 날짜가 깎이거나 빠짐)
   merged.filter(e => e.dup).forEach(e => log(`${e.date} 식대 ${e.dup}건 → 채주 한 줄로 묶음 (${e.amount.toLocaleString('ko-KR')}원, 증빙 ${e.proofs.length}개)`));
-  return merged.map(e => ({ item: e.item, kind: e.kind || '', dup: e.dup || 0, label: e.label, pay: e.pay, noVat: e.noVat, amount: e.amount, date: e.date, supply: R.supplyAmount(e.amount, e.pay, e.noVat), vat: R.vatAmount(e.amount, e.pay, e.noVat), memo: e.memo, planDate: R.fundPlanDate(e.pay, { usedOn: e.date || usedOn }) /* 법인카드: 그 영수증을 쓴 달 기준 (10/30~11/2 출장의 11/1 영수증 = 12/23) */, proofs: e.proofs || [] }));
+  // 모아찍기(한 사진에 영수증 여러 장): 같은 파일은 처음 쓰는 채주 줄에만 — 채주 첨부가 결재문서로 그대로 올라가서 줄마다 붙이면 여러 장이 됨
+  const seen = new Set();
+  return merged.map(e => ({ ...e, proofs: (e.proofs || []).filter(p => !seen.has(p) && seen.add(p)) })).map(e => ({ item: e.item, kind: e.kind || '', dup: e.dup || 0, label: e.label, pay: e.pay, noVat: e.noVat, amount: e.amount, date: e.date, supply: R.supplyAmount(e.amount, e.pay, e.noVat), vat: R.vatAmount(e.amount, e.pay, e.noVat), memo: e.memo, planDate: R.fundPlanDate(e.pay, { usedOn: e.date || usedOn }) /* 법인카드: 그 영수증을 쓴 달 기준 (10/30~11/2 출장의 11/1 영수증 = 12/23) */, proofs: e.proofs || [] }));
 }
 
 /** 출장보고서(정산). 새 품의를 만들지 않고, 승인된 신청 품의로 지출 결의를 한다 (사용자가 알려 준 회사 절차):
