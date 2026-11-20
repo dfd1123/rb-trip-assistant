@@ -44,6 +44,7 @@ const TRANSPORT_MODES = {
 };
 const CORPORATE_CARS = ['스타렉스', '스포티지(2550)', '스포티지(5717)', '스포티지(5718)', '그랜져', '캐스퍼', 'QM6', 'K5'];
 const APPLY_CATEGORIES = ['일반', '연구과제'];
+const PROJECT_ITEM = '선급과제비(연구활동비)';   // 연구과제 출장 예산과목 (사업 = 그 과제)
 const REPORT_CATEGORIES = ['로봇', '천문', '생산', '기타', '정부과제'];
 
 class InputError extends Error {}
@@ -333,7 +334,9 @@ function planPayees(budgets, lines) {
   // 주유·통행료는 품의에 잡힌 줄로: 차량유지비 줄이 없으면 국내교통비 줄, 국내교통비 줄이 없으면 차량유지비 줄 (예전 법인차량 품의는 국내교통비로 잡혀 있음). 택시·대중교통은 차량유지비로 안 감
   const has = lab => rows.some(r => r.lab === n(lab));
   const [TR, VH] = [BUDGET_ITEMS.domestic_transport[1], BUDGET_ITEMS.vehicle[1]];
-  const labOf = l => n(l.label) === n(VH) && !has(VH) && has(TR) ? n(TR)
+  // 연구과제 출장 품의는 줄이 다 선급과제비(연구활동비) → 영수증 과목(교통·숙박·식대)과 상관없이 그 줄들로 (경영지원부 2026-11-20)
+  const labOf = l => !has(l.label) && has(PROJECT_ITEM) ? n(PROJECT_ITEM)
+    : n(l.label) === n(VH) && !has(VH) && has(TR) ? n(TR)
     : n(l.label) === n(TR) && !has(TR) && has(VH) && CAR_KINDS.includes(l.kind) ? n(VH) : n(l.label);
   const items = lines.map(l => ({ src: l, left: l.amount, last: null, row: null, lab: labOf(l), md: lineMd(l) })).filter(m => rows.some(r => r.lab === m.lab));
   const put = (r, m) => { const amount = Math.min(m.left, r.room); if (amount <= 0) return; m.left -= amount; r.room -= amount;
@@ -710,5 +713,5 @@ module.exports = {
   InputError, ro, applyTitle, reportTitle, budgetMemo, parseCarText, parseTransitText, roundTrip,
   parseApply, parseReport, parseSettle, PUI_FORM, parsePui, AI_CONSENT, capTotal, dueRepeat, puiTitle, parseExpenses, transportExpense, fuelOnlyExpense, applyPrompt, reportPrompt, extractYaml,
   OVERSEAS_GRADES, OVERSEAS_RATES, OVERSEAS_RATES_EXEC, overseasGuess, overseasExpenses,
-  FUNDS, PAY_MODES, vehicleItem, fundPlanDate, supplyAmount, vatAmount, noVatOf, capToBudget, planPayees, mergeMealRows, capMealRows,
+  FUNDS, PAY_MODES, PROJECT_ITEM, vehicleItem, fundPlanDate, supplyAmount, vatAmount, noVatOf, capToBudget, planPayees, mergeMealRows, capMealRows,
 };

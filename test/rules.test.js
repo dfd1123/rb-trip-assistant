@@ -1078,3 +1078,12 @@ test('그룹웨어 신청 품의 들여오기: 품의 연결(gwApply)이 남아�
   assert.deepEqual([b.created, b.report, b.resolutionNo, b.apply.destination, b.apply.start], ['old', { x: 1 }, 'R1', '당진', '2026-11-18']);
   assert.ok(b.gwApply && b.gwApply.seq === '3');
 });
+
+test('연구과제 출장 품의(줄이 다 선급과제비(연구활동비)): 교통·식대 영수증도 그 줄들로 들어감 (경영지원부 2026-11-20)', () => {
+  const P = R.PROJECT_ITEM;
+  const budgets = [{ 예산과목: P, 예산과목비고: '출장 대중교통비 (왕복)', 품의금액: '64,400' }, { 예산과목: P, 예산과목비고: '출장 식대 (점심 1회)', 품의금액: '15,000' }];
+  const L = (label, amount, memo) => ({ label: `여비교통비(판)_${label}`, pay: 'personal', amount, supply: amount, memo, proofs: ['x.png'] });
+  const { plan, left } = R.planPayees(budgets, [L('국내교통비', 40000, 'KTX'), L('식대', 12000, '11/20 1인 중식')]);
+  assert.equal(left.length, 0, '못 넣은 영수증이 없어야 함');
+  assert.equal(plan.reduce((a, pb) => a + pb.lines.reduce((x, l) => x + l.amount, 0), 0), 52000);
+});

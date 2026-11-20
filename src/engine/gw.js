@@ -11,7 +11,7 @@ const BUDGET_PATH = '/#/HP/NPC1023/NCA0018';
 const APPROVE_PATH = '/#/HP/NPC1025/NCA0019';
 const COMPOSE_PATH = '/#/UB/UB/UBA0000?specialLnb=Y&moduleCode=UB&menuCode=UBA&pageCode=UBA6000';   // 전자결재 › 결재작성 (전체 양식)
 const RESOLUTION_PATH = '/#/HP/NPC1030/NCA0020';   // 결의서입력: 전송된 결의 → [결재상신]   // 품의서승인(복수): 승인된 품의 → [결의서전송/취소]
-const { capToBudget, planPayees, PAY_MODES, InputError } = require('./rules');
+const { capToBudget, planPayees, PAY_MODES, InputError, PROJECT_ITEM } = require('./rules');
 // 확인창(OBTConfirm·'…?' 창) 안의 [확인]/[예] 위치. 없으면 null. 화면 전체에서 '마지막 확인'을 고르면 결의서전송 창 맨 아래 [확인]이 눌려 창이 닫힌다
 // (실제 덤프로 확인: 확인창 버튼이 DOM 에서 창 버튼보다 앞에 있음 — 2026-10-22)
 const CONFIRM_OK = `() => { const m = x => vis(x) && /하시겠습니까|습니까\\s*\\?|\\?\\s*(취소|확인|예|아니오)/.test(x.innerText || '') && !/OBTDialog_bottomButton/.test(x.className);
@@ -381,8 +381,10 @@ class Amaranth {
 
   // ---------- 품의서입력(복수) ----------
   /** 품의 1건 + 예산 라인 입력. 그 품의의 top grid 행 번호를 돌려준다. */
-  async enterBudget(dept, expenses, { memo = '', kind = '지출' } = {}) {
+  /** project: 연구과제 출장의 과제명 → 사업=그 과제, 예산과목=선급과제비(연구활동비) (경영지원부 2026-11-20). 과제는 참여연구원으로 등록돼야 사업코드도움에 나옴 */
+  async enterBudget(dept, expenses, { memo = '', kind = '지출', project = '', projectCode = '' } = {}) {
     const p = this.page, ui = this.ui;
+    if (project) expenses = expenses.map(ex => ({ ...ex, code: projectCode, label: PROJECT_ITEM }));
     this.log('품의서입력(복수) 화면을 엽니다.');
     await p.goto(this.baseUrl + BUDGET_PATH);
     await sleep(800);
@@ -460,12 +462,18 @@ class Amaranth {
         const diagFile = this.debugDir && require('path').join(this.debugDir, 'net-dept-codehelp.json');
         const stopNet = diagFile && i === 0 && !require('fs').existsSync(diagFile) ? await p.netLogStart().catch(() => null) : null;
         await this.openCodeHelp('예산과목', i, '부서', '^사업코드도움$');
-        await this.pickInCodeHelp('^사업코드도움$', dept, dept);
+        if (project) await this.pickInCodeHelpBy('^사업코드도움$', project, { re: squash(project).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), label: `과제 '${project}'`, remember: `사업:${project}`, what: '과제' });   // 이름이 비슷한 과제가 여럿이면 사람이 고르고, 다음 줄부터는 같은 걸로
+        else await this.pickInCodeHelp('^사업코드도움$', dept, dept);
         if (stopNet) { try { const net = await stopNet(); require('fs').mkdirSync(this.debugDir, { recursive: true }); require('fs').writeFileSync(diagFile, JSON.stringify(net.filter(r => !/static|langPack|event0/.test(r.url)), null, 1)); } catch (e) { /* 진단 */ } }
         await sleep(400);
         const got = String(((await this.rowVals('예산과목', i)) || {})['부서'] || '');
-        if (!squash(got).includes(squash(dept))) throw new Error(`부서 칸이 '${got || '빈칸'}'입니다`);
-      } catch (e) { await this.debugDump('dept', '사업코드도움'); await ui.assist(`부서 선택 실패(${e.message}). ${i + 1}번째 줄 부서를 '${dept}'로 지정해 주세요.`); }
+        const want = project ? (this.picks && this.picks[`사업:${project}`]) || project : dept;
+        if (!squash(got).includes(squash(want))) throw new Error(`부서 칸이 '${got || '빈칸'}'입니다`);
+      } catch (e) {
+        await this.debugDump('dept', '사업코드도움');
+        await ui.assist(project ? `과제 '${project}'를 사업코드도움에서 못 골랐어요(${e.message}). 그 과제에 참여연구원으로 등록돼 있어야 목록에 나와요. ${i + 1}번째 줄 부서(사업)를 그 과제로 지정해 주세요.`
+          : `부서 선택 실패(${e.message}). ${i + 1}번째 줄 부서를 '${dept}'로 지정해 주세요.`);
+      }
       try {
         const itemRe = '(예산과목|예산|과목).*(코드)?도움$';
         await this.openCodeHelp('예산과목', i, '예산과목', itemRe);

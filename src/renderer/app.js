@@ -536,10 +536,17 @@ $('#btnApply').onclick = async () => {
   if(need.length){ markNeed(need); $('#a_err').textContent = `${need.join(', ')}을(를) 넣어 주세요.`; return; }
   const noAmt = [...$$('#a_exp tbody tr')].filter(tr => !tr.querySelector('.amt').value.trim());   // 빈 칸 ≠ 0원
   if(noAmt.length){ noAmt.forEach(tr => tr.querySelector('.amt').classList.add('need')); $('#a_err').textContent = `금액이 빈 경비 ${noAmt.length}줄이 있어요. 금액을 넣거나 그 줄을 지워 주세요 (0원이면 0).`; return; }
+  // 연구과제: 사업=그 과제로 품의 → 그 과제 참여연구원이어야 사업코드도움에 나오고 결재가 남 (경영지원부 2026-11-20)
+  if(data.category === '연구과제' && !(await confirmSubmit({ title: '잠깐! 과제의 참여연구원이 맞으시죠?', yes: '네, 맞아요',
+    html: `<div class="cf-title">${escH(data.project)}</div>
+      <p>연구과제 출장은 품의의 <b>사업을 이 과제</b>로, 예산과목을 <b>선급과제비(연구활동비)</b>로 올려요.</p>
+      <p>이 과제에 <b>참여연구원으로 등록</b>돼 있어야 해요. 아니면 경영지원부에 먼저 확인해 주세요.</p>`,
+    note: '참여연구원이 아니면 [취소] 후 출장구분을 \'일반\'으로 바꿔 주세요.' }))) return;
   let plan; try { plan = await rpc('/api/plan', data); } catch(e){ $('#a_err').textContent = e.message; return; }
   // 보낼 내용 확인
   const t = data.transport, fare = t.mode === 'corporate' ? 0 : Number(t.total || 0), margin = t.mode !== 'corporate' && fare ? (META.config.rates.fareMargin || 0) : 0;
   const rows = [...(fare ? [{ item: '교통비', amount: fare + margin, memo: margin ? `왕복 ${won(fare)} + 여유 ${won(margin)}` : '왕복' }] : []), ...plan.expenses.map(e => ({ item: itemName(e.item), amount: e.amount, memo: e.memo }))];
+  if(data.category === '연구과제') rows.forEach(r => { r.memo = `${r.item}${r.memo ? ' · ' + r.memo : ''}`; r.item = '선급과제비(연구활동비)'; });   // 엔진과 같게: 과제 출장은 예산과목이 하나
   const sum = rows.reduce((a, r) => a + r.amount, 0);
   const ok = await confirmSubmit({ title: '출장신청, 이대로 올릴까요?', html: `
     <div class="cf-title">${escH(plan.title)}</div>
@@ -1005,6 +1012,8 @@ function fillDepts(c){   // 고를 게 두 개 이상이면 선택 상자, 아�
   $('#s_dept').classList.toggle('hidden', !many); $('#s_dept_text').classList.toggle('hidden', many);
   $('#s_dept').innerHTML = '';
   list.forEach(n => { const o = document.createElement('option'); o.value = o.textContent = n; $('#s_dept').appendChild(o); });
+  // 연구과제 과제명 후보 = 사업코드도움 목록 (참여연구원으로 등록된 과제만 나옴). 품의 입력 때 이 이름으로 사업을 고름
+  $('#a_project_list').innerHTML = list.filter(n => n !== c.budgetDept).map(n => `<option value="${escH(n)}">`).join('');
   $('#s_dept').value = c.budgetDept || list[0] || '';
   $('#s_dept_text').value = c.budgetDept || '';
 }

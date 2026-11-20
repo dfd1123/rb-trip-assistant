@@ -140,7 +140,10 @@ async function runApply(env, data, { save = true } = {}) {
   const gw = new Amaranth({ win: env.gwWindow(), baseUrl: cfg.baseUrl, ui, log, debugDir: env.debugDir, creds: env.creds });
   try {
     await gw.ensureLogin();
-    await gw.enterBudget(cfg.budgetDept, expenses, { memo: R.budgetMemo(title) });
+    const project = a.category === '연구과제' ? a.project : '';   // 연구과제: 사업=과제, 예산과목=선급과제비(연구활동비) — 코드는 그룹웨어 예산과목 API 목록에서 (2026: 1260003)
+    const projectItem = project ? (await budgetItems(env, gw)).find(x => x.name === R.PROJECT_ITEM) : null;
+    if (project) log(projectItem ? `연구과제 예산과목: ${projectItem.code} ${projectItem.name}` : `(예산과목 목록에 ${R.PROJECT_ITEM}이 없어 이름으로 찾아요)`);
+    await gw.enterBudget(cfg.budgetDept, expenses, { memo: R.budgetMemo(title), project, projectCode: projectItem ? projectItem.code : '' });
     if (gw.lastBudget) { rec.gwApply = gw.lastBudget; store.save(id, rec); }   // 그룹웨어 품의와 연결 (목록·삭제용)
     const popup = await gw.openApproval(R.APPLY_FORM, title);
     await gw.fillAndKeep(popup, { title, probe: '출장일', payload: applyPayload(a), attachments: a.overseas && a.overseas.rateShot ? [a.overseas.rateShot] : [], save });   // 해외: 수출입은행 환율 조회 결과 이미지 첨부 필수

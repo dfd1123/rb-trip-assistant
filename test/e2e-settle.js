@@ -206,6 +206,11 @@ app.whenReady().then(async () => {
       await runner.runReport(env, report([]));
       const s10 = mock.getSettle(), rs = s10.approve[0].resolutions;
       assert.equal(rs.find(r => r.결의구분 === '환원').금액, 238000, '쓴 돈이 없으면 전액 환원');
+      // 채주가 없으면 [전송]이 막힘 → 첫 예산 줄에 본인 0원 채주, 그 줄은 개인경비라 외상·기타 (2026-11-20 정효빈)
+      const ex10 = rs.find(r => r.결의구분 === '지출결의서');
+      assert.ok(ex10 && ex10.결의번호, '전송까지 돼야 함');
+      assert.deepEqual([ex10.budgets[0].결제수단, ex10.budgets[0].과세구분], ['외상', '기타']);
+      assert.deepEqual(ex10.budgets[0].payees.map(p => [p.공급가액, p.거래처비고]), [['0', '경비 없음 (전액 환원)']]);
       assert.equal((s10.alertTexts || []).length, 0, '오류 창: ' + (s10.alertTexts || []).join(' / '));
       console.log('E2E 정산 결재 중 신청·전액 환원 OK');
     }
