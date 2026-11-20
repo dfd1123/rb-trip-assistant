@@ -1063,3 +1063,17 @@ test('지출 결의 parseSettle — 개인카드(외상+과세), 공급가액=�
   assert.throws(() => R.parseSettle({ ...base, expenses: [] }), /한 줄 이상/);
   assert.throws(() => R.parseSettle({ ...base, expenses: [{ amount: 0, memo: 'a' }, { amount: 0, memo: 'b' }] }), /0원/);   // 전부 0원
 });
+
+test('그룹웨어 신청 품의 들여오기: 품의 연결(gwApply)이 남아야 보고서 정산이 됨', () => {
+  const row = { key: '2026-11|17|3', ym: '2026-11', day: 17, seq: 3 };
+  const opt = { id: 't1', reason: '현대제철 4족로봇 보행환경 테스트', pday: '2026-11-17', now: 'N' };
+  // 처음 들여옴, 본문 못 읽음 → 품의일로 기간
+  const a = R.adoptRecord({}, row, null, opt);
+  assert.deepEqual(a.gwApply, { key: '2026-11|17|3', ym: '2026-11', day: '17', seq: '3' });   // runReport 가 보는 ym·seq
+  assert.deepEqual([a.apply.start, a.apply.end, a.created, a.status], ['2026-11-17', '2026-11-17', 'N', '그룹웨어']);
+  // 다시 들여옴: 전 기록(보고서 초안·결의번호)과 전에 읽은 본문은 그대로, 새로 읽은 칸만 바뀜
+  const old = { ...a, created: 'old', report: { x: 1 }, resolutionNo: 'R1', apply: { ...a.apply, destination: '당진' } };
+  const b = R.adoptRecord(old, row, { start: '2026-11-18', end: '2026-11-19', destination: '' }, opt);
+  assert.deepEqual([b.created, b.report, b.resolutionNo, b.apply.destination, b.apply.start], ['old', { x: 1 }, 'R1', '당진', '2026-11-18']);
+  assert.ok(b.gwApply && b.gwApply.seq === '3');
+});

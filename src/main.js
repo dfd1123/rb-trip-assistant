@@ -731,14 +731,8 @@ async function route(p, body = {}) {
       const prev = store.list().find(t => t.gwApply && t.gwApply.key === r.key);   // 이미 들여온 기록이면 그 자리에 덮어쓴다 (본문 다시 읽기)
       const id = prev ? prev.id : store.newId((f && f.start) || pday, reason);
       const old = prev ? store.load(id) : {};
-      const keep = prev ? (({ report, gwReport, reportStatus, resolutionNo }) => ({ report, gwReport, reportStatus, resolutionNo }))(old) : {};   // 작성 중이던 보고서·보고 품의 연결·전송한 결의번호는 유지
-      const pa = old.apply || {};   // 본문을 이번에 못 읽었거나 빈 칸이면 전에 읽어 둔 값을 그대로 (다시 읽다 실패하면 출장지·기간이 지워졌음 — UI 테스트로 발견 2026-10-23)
-      const or = (v, p) => (v !== '' && v != null && !(Array.isArray(v) && !v.length)) ? v : p;
-      store.save(id, { ...old, ...keep, id, created: old.created || new Date().toISOString(), title: R.applyTitle(reason), status: '그룹웨어',   // 전에 둔 기록(환원 확인·교통비 조회 등)은 그대로 두고 신청 내용만 다시 읽음 gwApply: { key: r.key, ym: r.ym, day: String(r.day), seq: String(r.seq) },
-        apply: { reason, destination: or(f && f.destination, pa.destination || ''), start: or(f && f.start, pa.start || pday), end: or(f && f.end, pa.end || pday), start_time: or(f && f.start_time, pa.start_time || ''), end_time: or(f && f.end_time, pa.end_time || ''),
-          category: or(f && f.category, pa.category || '일반'), project: or(f && f.project, pa.project || ''), transport: f && f.transport ? { mode: f.transport, to: '', from: '', total: null } : (pa.transport || { mode: '', to: '', from: '', total: null }),   // 본문을 못 읽으면 교통편 모름 (보고서에서 자차·대중교통 둘 다 안내)
-          companions: or(f && f.companions, pa.companions || []), companion_purpose: or(f && f.companion_purpose, pa.companion_purpose || ''), purpose: or(f && f.purpose, pa.purpose || ''), expenses: pa.expenses || [] } });
-      return { id, filled: !!f || !!pa.destination, note };   // 전에 읽어 둔 값이 있으면 '못 읽었다' 알림은 안 띄움
+      store.save(id, R.adoptRecord(old, r, f, { id, reason, pday }));
+      return { id, filled: !!f || !!(old.apply || {}).destination, note };   // 전에 읽어 둔 값이 있으면 '못 읽었다' 알림은 안 띄움
     }
     case '/api/job/gw-delete': return startJob('gw-delete', env => runner.runDeleteBudget(env, body.keys), body.title);
     case '/api/job/login': return startJob('login', env => runner.runLogin(env), body.title);

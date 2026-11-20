@@ -548,6 +548,18 @@ function extractYaml(text) {
   return data;
 }
 
+/** 신청 품의(row) → 이 PC 출장 기록. old(전 기록)는 그대로 두고, 본문(f)을 못 읽은 칸은 전 값을 쓴다.
+ *  gwApply 가 없으면 보고서 정산이 '신청 품의를 몰라요'로 멈춘다 */
+function adoptRecord(old, row, f, { id, reason, pday, now = new Date().toISOString() }) {
+  const pa = old.apply || {};
+  const or = (v, p) => (v !== '' && v != null && !(Array.isArray(v) && !v.length)) ? v : p;
+  return { ...old, id, created: old.created || now, title: applyTitle(reason), status: '그룹웨어',
+    gwApply: { key: row.key, ym: row.ym, day: String(row.day), seq: String(row.seq) },
+    apply: { reason, destination: or(f && f.destination, pa.destination || ''), start: or(f && f.start, pa.start || pday), end: or(f && f.end, pa.end || pday), start_time: or(f && f.start_time, pa.start_time || ''), end_time: or(f && f.end_time, pa.end_time || ''),
+      category: or(f && f.category, pa.category || '일반'), project: or(f && f.project, pa.project || ''), transport: f && f.transport ? { mode: f.transport, to: '', from: '', total: null } : (pa.transport || { mode: '', to: '', from: '', total: null }),   // 본문을 못 읽으면 교통편 모름 (보고서에서 자차·대중교통 둘 다 안내)
+      companions: or(f && f.companions, pa.companions || []), companion_purpose: or(f && f.companion_purpose, pa.companion_purpose || ''), purpose: or(f && f.purpose, pa.purpose || ''), expenses: pa.expenses || [] } };
+}
+
 /** 결재 문서 '출장일' 칸 글자 → {start, end, start_time, end_time}. 사람이 쓴 여러 꼴을 받는다:
  *  "2026.10.19 09:00 - 2026.10.20 18:00", "2026-10-19 ~ 2026-10-20", "2026년 10월 19일 ~ 20일", "10/19~10/20", "10월 19일(월) 9시 ~ 10월 20일".
  *  연도가 없으면 base(품의일 'YYYY-MM-DD')의 해 (품의일보다 두 달 넘게 앞서면 다음 해). 못 읽으면 빈 값 — 품의일로 지어내지 않는다 */
@@ -693,7 +705,7 @@ module.exports = {
   claimable,
   VISITOR_FORM, VISITOR_RECIPIENTS, VISITOR_AREAS, VISITOR_SHOOTS, VISITOR_LINES, visitorTitle, visitorUrgent, parseVisitor,
   NO_VAT, RECEIPT_KINDS, NO_VAT_KINDS, placeTokens, AMBIGUOUS_PLACES,
-  APPLY_FORM, REPORT_FORM, PURCHASE_FORM, parseTripPeriod, PURCHASE_PURPOSES, PURCHASE_PROJECTS, PURCHASE_RECIPIENTS, PROJECT_DETAIL_REQUIRED, purchaseTitle, parsePurchase, BUDGET_ITEMS, TRANSPORT_MODES, CORPORATE_CARS, APPLY_CATEGORIES, REPORT_CATEGORIES,
+  APPLY_FORM, REPORT_FORM, PURCHASE_FORM, parseTripPeriod, adoptRecord,PURCHASE_PURPOSES, PURCHASE_PROJECTS, PURCHASE_RECIPIENTS, PROJECT_DETAIL_REQUIRED, purchaseTitle, parsePurchase, BUDGET_ITEMS, TRANSPORT_MODES, CORPORATE_CARS, APPLY_CATEGORIES, REPORT_CATEGORIES,
   InputError, ro, applyTitle, reportTitle, budgetMemo, parseCarText, parseTransitText, roundTrip,
   parseApply, parseReport, parseSettle, PUI_FORM, parsePui, AI_CONSENT, capTotal, dueRepeat, puiTitle, parseExpenses, transportExpense, fuelOnlyExpense, applyPrompt, reportPrompt, extractYaml,
   OVERSEAS_GRADES, OVERSEAS_RATES, OVERSEAS_RATES_EXEC, overseasGuess, overseasExpenses,

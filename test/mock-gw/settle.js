@@ -102,7 +102,7 @@
       <div class="tbar"><b>결의내역</b><button data-b="삭제">삭제</button><button data-b="전송">전송</button><button data-b="전송취소">전송취소</button><button data-b="환원">환원</button><button data-b="환원취소">환원취소</button><button>예금주 조회</button></div>
       ${grid('res', RESC, resRows(D.ap), { check: D.resCheck, focus: D.resFocus })}
       <div class="tbar"><b>예산내역</b></div>${grid('bud', BUDC, buds, { focus: isExp ? D.budFocus : -1 })}
-      <div class="tbar"><b>채주내역</b><button>전자(세금)계산서발행내역</button><button data-b="채주내역 삭제">채주내역 삭제</button></div>${grid('pay', PAYC, pays, { check: D.payCheck, vw: T.payViewport || 0, sx: D.paySx || 0, vr: T.payRows || 0, vy: D.payVy || 0 })}
+      <div class="tbar"><b>채주내역</b><button>전자(세금)계산서발행내역</button><button data-b="채주내역 삭제">채주내역 삭제</button></div>${grid('pay', PAYC, pays, { check: D.payCheck, vw: T.payViewport || 0, sx: D.paySx || 0, vr: T.payRows || 0, vy: D.payVy || 0, focus: D.payFocus ? D.payFocus.i : -1 })}
       <div class="OBTDialog_bottomButton___NF_C"><button id="sClose">확인</button></div></div>`;
     $('#sClose').onclick = () => { d.remove(); D = null; T.closed = (T.closed || 0) + 1; save(); };   // 맨 아래 [확인] = 창 닫기 (앱이 누르면 안 됨)
     d.querySelectorAll('[data-b]').forEach(b => b.onclick = () => button(b.dataset.b));
@@ -165,7 +165,9 @@
     const list = payOf(curRes(), bi);
     if (!list[i]) list[i] = {};
     const hits = T.vendors.filter(v => v[1].replace(/\s/g, '').includes(q.replace(/\s/g, '')) || (v[2] || '').includes(q));
-    const set = v => { Object.assign(list[i], { 거래처코드: v[0], 거래처명: v[1] }); save(); drawTransfer(); };
+    const set = v => { Object.assign(list[i], { 거래처코드: v[0], 거래처명: v[1] });
+      if (T.payShift && T.payRows && (D.payVy || 0) + 1 <= i) D.payVy = (D.payVy || 0) + 1;   // 실제: 코드도움 뒤 그리드가 세로로 한 줄 밀림 → 같은 줄이 화면 행 번호가 바뀜 (2026-11-19 job-log)
+      save(); drawTransfer(); };
     if (hits.length === 1) return set(hits[0]);
     if (!hits.length) return alertBox('거래처가 없습니다.');
     codeHelp('거래처코드도움', hits.map(v => [v[0], v[1], v[2] || '']), it => set(hits.find(v => v[0] === it[0])), q);   // 실제처럼 대표자명도 검색됨
@@ -203,11 +205,14 @@
   // 실제처럼: resLazy 면 화면을 막 열었을 땐 목록이 안 불려 옴([조회]를 눌러야 나옴), resPreChecked 면 첫 줄이 체크돼 '보이지만' 선택으론 안 잡힘 (풀었다 다시 체크해야 됨 — 2026-10-28)
   let RL = { check: new Set(), vis: new Set(), loaded: true };
   function resolutionPage() {
-    $('#app').innerHTML = css + `<div class="s-root"><h3>결의서입력</h3><div style="display:none"><button id="tutorial-conditionPanel-search" class="OBTConditionPanel_searchButton">조회</button></div><button id="tutorial-conditionPanel-search" class="OBTConditionPanel_searchButton">조회</button>${grid('rl', RLC, [...(RL.loaded ? T.resList : T.resStale ? T.resList.slice(0, -1) : []), { 결의연월: today().slice(0, 7), 결의일: String(Number(today().slice(8))) }], { check: RL.vis })}</div>
+    $('#app').innerHTML = css + `<div class="s-root"><h3>결의서입력</h3><div><span>결의일</span> <span><input type="text" id="rlYm" value="${RL.ym || today().slice(0, 7)}"> <input type="text" id="rlDay" value="${RL.day || String(Number(today().slice(8)))}"></span></div><div style="display:none"><button id="tutorial-conditionPanel-search" class="OBTConditionPanel_searchButton">조회</button></div><button id="tutorial-conditionPanel-search" class="OBTConditionPanel_searchButton">조회</button>${grid('rl', RLC, [...(RL.shown = (RL.loaded ? T.resList : T.resStale ? T.resList.slice(0, -1) : []).filter(r => r.결의연월 === (RL.ym || today().slice(0, 7)) && r.결의일 === (RL.day || String(Number(today().slice(8)))))), { 결의연월: RL.ym || today().slice(0, 7), 결의일: RL.day || String(Number(today().slice(8))) }], { check: RL.vis })}</div>
       <div class="sbar"><button id="sAppr">결재상신</button></div>`;
-    document.querySelectorAll('#tutorial-conditionPanel-search')[1].onclick = () => { RL.loaded = true; resolutionPage(); };   // 실제처럼 앞의 것은 숨은 이전 화면의 [조회]
+    document.querySelectorAll('#tutorial-conditionPanel-search')[1].onclick = () => { RL.loaded = true; resolutionPage(); };
+    // 실제처럼 결의일(연월·일) 하루치만 보임 — 기본은 오늘 (2026-11-20: 11일 결의를 20일 목록에서 찾다 못 찾음)
+    $('#rlYm').onkeydown = e => { if (e.key === 'Enter') { const v = e.target.value.replace(/\D/g, ''); if (v.length >= 6) RL.ym = `${v.slice(0, 4)}-${v.slice(4, 6)}`; } };
+    $('#rlDay').onkeydown = e => { if (e.key === 'Enter') { const v = Number(e.target.value.replace(/\D/g, '')); if (v) RL.day = String(v); } };   // 실제처럼 앞의 것은 숨은 이전 화면의 [조회]
     $('#sAppr').onclick = () => {
-      const rows = [...RL.check].map(i => T.resList[i]).filter(Boolean);
+      const rows = [...RL.check].map(i => RL.shown[i]).filter(Boolean);
       if (!rows.length) return alertBox('결의서를 선택해 주세요.');
       confirmBox('선택한 결의서 중 결재진행/결재완료/임시보관상태인 결의서와 반제결의서는 제외하고 결재상신을 진행하시겠습니까?', () => {
         const ok = rows.filter(r => r.결재상태 === '상신대기');

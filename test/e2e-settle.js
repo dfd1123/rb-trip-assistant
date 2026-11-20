@@ -151,7 +151,7 @@ app.whenReady().then(async () => {
     }
     if (run(7)) {
       // ---- 7) 앱이 만든 품의(날짜 없는 예산 줄 하나씩): 3일 식대(같은 날 묶음) · 택시 2번 같은 금액 · 숙박 2장 · 식대 한도 초과 ----
-      const st7 = STATE({ ...(process.env.E2E_VIEWPORT ? { payViewport: Number(process.env.E2E_VIEWPORT) } : {}), ...(process.env.E2E_ROWS ? { payRows: Number(process.env.E2E_ROWS) } : {}) }); st7.approve[0].budgets = [
+      const st7 = STATE({ ...(process.env.E2E_VIEWPORT ? { payViewport: Number(process.env.E2E_VIEWPORT) } : {}), payRows: Number(process.env.E2E_ROWS || 3), payShift: true }); /* 채주내역 3줄만 보이고, 코드도움 뒤 한 줄 밀림 (실제 2026-11-19) */ st7.approve[0].budgets = [
         { 부서: '매니퓰레이터 사업부', 예산과목: '여비교통비(판)_국내교통비', 예산과목비고: '출장 대중교통비 (왕복)', 품의금액: '50,000' },
         { 부서: '매니퓰레이터 사업부', 예산과목: '여비교통비(판)_국내숙박비', 예산과목비고: '출장 숙박비 (2박 × 70,000원)', 품의금액: '140,000' },
         { 부서: '매니퓰레이터 사업부', 예산과목: '여비교통비(판)_식대', 예산과목비고: '출장 식대 (아침 2회, 점심 3회, 저녁 2회)', 품의금액: '60,000' }];
@@ -256,7 +256,7 @@ app.whenReady().then(async () => {
       const s13 = mock.getSettle(), e13 = s13.approve[0].resolutions.find(r => r.결의구분 === '지출결의서');
       assert.ok(e13 && e13.결의번호 && e13.결의번호 !== old.결의번호, '새 결의 전송');
       assert.deepEqual(s13.approvalFor, [e13.결의번호], '새 결의(상신대기)로 결재상신해야 함 — 지난 결의가 아님');
-      assert.ok(ui.logs.some(m => /\[조회\]를 다시/.test(m)), '묵은 목록이면 [조회]를 눌러야 함');
+      // [조회]는 결의일을 그 결의 날짜로 맞추며 처음부터 누름 (묵은 목록이 남지 않음)
       assert.equal((s13.alertTexts || []).length, 0, '오류 창: ' + (s13.alertTexts || []).join(' / '));
       console.log('E2E 정산 묵은 결의서입력 목록 (지난 결의와 섞임) OK');
 
@@ -270,6 +270,19 @@ app.whenReady().then(async () => {
       assert.ok(ui.logs.some(m => /이미 결재상신돼/.test(m) && /개발 3팀-26-11-0002/.test(m)), '사람에게 문서번호와 함께 알려야 함: ' + JSON.stringify(ui.logs.slice(-3)));
       assert.deepEqual(mock.getSettle().approvalFor, [e13.결의번호], '결재상신을 또 하면 안 됨');
       console.log('E2E 정산 이미 상신된 결의 (오류 아님) OK');
+
+      // ---- 14b) 정효빈 2026-11-20: 지난날(결의일 ≠ 오늘) 결재완료된 결의에 [예](다시 넣기) → 그룹웨어가 전송취소를 막음.
+      //      알림을 읽고 그대로 둬야 하고(사람에게 [전송취소] 시키지 않음), 결의서입력은 그 결의일로 조회해 '이미 결재'로 끝나야 함
+      const yd = new Date(Date.now() - 864e5 + 9 * 3600e3).toISOString().slice(0, 10);
+      const sb = mock.getSettle(), eb = sb.approve[0].resolutions.find(r => r.결의구분 === '지출결의서'), rb = sb.resList.find(r => r.결의번호 === eb.결의번호);
+      const noB = yd.replace(/-/g, '') + eb.결의번호.slice(8);
+      Object.assign(eb, { 결의일자: yd, 결의번호: noB }); Object.assign(rb, { 결의번호: noB, 결의연월: yd.slice(0, 7), 결의일: String(Number(yd.slice(8))), 결재상태: '결재완료' });
+      mock.setSettle(sb); ui.logs.length = 0; ui.redo = true;
+      const rB = await runner.runReport(env, report(exp1));
+      assert.equal(rB.submitted, true, '지난날 결재완료 결의면 submitted: ' + JSON.stringify(ui.logs.slice(-4)));
+      assert.ok(ui.logs.some(m => /다시 넣을 수 없어요/.test(m)), '전송취소가 막히면 그대로 둬야 함: ' + JSON.stringify(ui.logs.slice(-4)));
+      assert.deepEqual(mock.getSettle().approvalFor, sb.approvalFor, '결재상신을 또 하면 안 됨: ' + JSON.stringify([mock.getSettle().approvalFor, sb.approvalFor, ui.logs.slice(-5)]));
+      console.log('E2E 정산 지난날 결재완료 결의 다시 넣기 (전송취소 막힘·결의일 조회) OK');
     }
 
     if (run(15)) {

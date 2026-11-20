@@ -944,12 +944,12 @@ class Amaranth {
 
   /** key 품의 행이 화면에 보이게 스크롤하고 화면상 행 번호를 돌려준다 */
   /** 품의(key)의 예산 줄(아래 그리드)을 읽는다 → [{label, amount, memo}]. 상신 전 보고 품의에서 경비를 되살릴 때 쓴다 */
-  /** 품의서입력 화면 위 조건의 품의일을 ym(YYYY-MM)·day 로 바꾸고 조회 (화면은 기본으로 오늘 날짜 품의만 보여 준다) */
-  async setBudgetDate(ym, day) {
+  /** 화면 위 조건의 날짜(label: 품의서입력 '품의일' · 결의서입력 '결의일')를 ym(YYYY-MM)·day 로 바꾸고 조회 (두 화면 다 기본으로 오늘 하루치만 보여 준다) */
+  async setBudgetDate(ym, day, label = '품의일') {
     const p = this.page;
-    const box = () => p.eval(() => { const lb = all('*').find(e => ownText(e) && vis(e) && norm(e.textContent) === '품의일'); if (!lb) return null;
+    const box = () => p.eval(l => { const lb = all('*').find(e => ownText(e) && vis(e) && norm(e.textContent) === l); if (!lb) return null;
       let c = lb; for (let i = 0; c && i < 6 && all('input', c).filter(vis).length < 2; i++) c = c.parentElement;
-      const ins = c ? all('input', c).filter(vis) : []; return ins.length >= 2 ? [center(ins[0]), center(ins[1]), ins[0].value, ins[1].value] : null; });
+      const ins = c ? all('input', c).filter(vis) : []; return ins.length >= 2 ? [center(ins[0]), center(ins[1]), ins[0].value, ins[1].value] : null; }, label);
     const b = await box(); if (!b) return false;
     if (b[2] !== ym) { await p.click(b[0]); await p.selectAll(); await p.type(ym.replace('-', '')); await p.key('Enter'); await sleep(400); }
     if (String(Number(b[3])) !== String(Number(day))) { await p.click(b[1]); await p.selectAll(); await p.type(String(Number(day))); await p.key('Enter'); await sleep(300); }
@@ -1168,6 +1168,10 @@ class Amaranth {
         let k = await ri();
         this.log(`[전송취소] 결의 ${sent['결의번호']}`);
         await this.pressResButton(k, '전송취소');
+        // 이미 결재가 올라간(결재진행·결재완료) 결의는 그룹웨어가 막는다 ("결재완료된 결의서가 존재합니다.") → 알림 닫고 그대로 둔다. 사람에게 [전송취소]를 시켜도 똑같이 막힘 (2026-11-20 정효빈)
+        const why = await this.closeErrorDialog();
+        if (why && /결재|상신/.test(why)) { this.log(`이 결의는 이미 결재가 올라가 다시 넣을 수 없어요 (그룹웨어: ${why}). 그대로 둬요.`); throw Object.assign(new Error(why), { keep: true }); }
+        if (why) throw new Error(why);
         const cancelled = await p_wait(this.page, async () => { const r = await readRes(); return r.some(v => /지출결의서/.test(v['결의구분'] || '') && !v['결의번호']) && !r.some(v => v['결의번호'] === sent['결의번호']); }, 8000);
         if (!cancelled) throw new Error('전송취소가 안 됐어요 (결의번호가 그대로)');
         k = (await readRes()).findIndex(v => /지출결의서/.test(v['결의구분'] || '') && !v['결의번호']);
@@ -1179,9 +1183,11 @@ class Amaranth {
         this.log('✔ 전송취소·삭제 — 채주를 새로 넣어요.');
         return null;
       } catch (e) {
-        await this.debugDump('settle-retransfer', '결의서전송');
-        await ui.assist(`전송취소·삭제를 못 했어요(${e.message}). [작업 중인 창 열기]에서 결의내역의 지출결의서 줄을 골라 [전송취소] → [삭제]한 뒤 [계속]을 눌러 주세요.`);
-        if (!(await readRes()).some(v => v['결의번호'] && /지출결의서/.test(v['결의구분'] || ''))) return null;
+        if (!e.keep) {   // keep: 결재가 올라간 결의 → 아래 '그대로 두기'로
+          await this.debugDump('settle-retransfer', '결의서전송');
+          await ui.assist(`전송취소·삭제를 못 했어요(${e.message}). [작업 중인 창 열기]에서 결의내역의 지출결의서 줄을 골라 [전송취소] → [삭제]한 뒤 [계속]을 눌러 주세요.`);
+          if (!(await readRes()).some(v => v['결의번호'] && /지출결의서/.test(v['결의구분'] || ''))) return null;
+        }
       }
     }
     this.log(`이미 전송된 결의(${sent['결의번호']})가 있어 결의서전송은 건너뛰어요.`);
@@ -1569,19 +1575,24 @@ class Amaranth {
     let k = await this.payeeRow({ blank: true });
     if (k < 0) { await ui.assist(`채주내역에서 빈 줄을 못 찾았어요. 빈 줄이 보이게 스크롤한 뒤 [계속]을 눌러 주세요.`); k = await this.payeeRow({ blank: true }); if (k < 0) return false; }
     const before = await this.rowCount(G);
+    // 입력 중인 줄 = 채주 그리드의 포커스 줄. 화면 행 번호(k)는 그리드가 세로로 밀리면(코드도움·입력 뒤 그 줄을 다 보이게 스크롤) 다른 줄을 가리킨다
+    // (2026-11-19: 4번째 채주를 넣는 중 한 줄 밀려 거래처명을 다른 줄에서 읽고 '안 채워짐', 공급가액 칸도 못 찾음)
+    const here = async () => { const f = await p.eval(() => { const g = grid('거래처코드'); return g ? rows(g).findIndex(tr => /rg-focused-row/.test(tr.className)) : -1; }).catch(() => -1); if (f >= 0) k = f; return k; };
+    const filled = () => p.waitFor((r, nm) => { const g = grid('거래처코드'); if (!g) return false; const f = rows(g).findIndex(tr => /rg-focused-row/.test(tr.className));
+      const v = rowVals(g, f >= 0 ? f : r); return v && norm(v['거래처명'] || '').includes(norm(nm)); }, [k, payee], { timeout: 5000 });
     try {
       await p.dblclick(await this.revealCell(G, k, '거래처코드'));
       await p.selectAll(); await p.type(payee); await p.key('Enter');
       await sleep(600);
       // 같은 글자가 둘 이상(대표자명이 같은 거래처 등)이면 거래처코드도움 창이 뜬다 → '이름(임직원)' 줄을 고른다. 창이 늦게 떠도 3초까지 본다 (전엔 한 번만 보고 '거래처명이 안 채워짐'으로 멈췄음)
-      const st = await p.waitFor((r, nm) => { if (dialog('거래처코드도움')) return 'help'; const g = grid('거래처코드'); const v = g && rowVals(g, r); return v && norm(v['거래처명'] || '').includes(norm(nm)) ? 'ok' : null; }, [k, payee], { timeout: 3000 });
+      const st = await p.waitFor((r, nm) => { if (dialog('거래처코드도움')) return 'help'; const g = grid('거래처코드'); if (!g) return null; const f = rows(g).findIndex(tr => /rg-focused-row/.test(tr.className));
+        const v = rowVals(g, f >= 0 ? f : r); return v && norm(v['거래처명'] || '').includes(norm(nm)) ? 'ok' : null; }, [k, payee], { timeout: 3000 });
       if (st === 'help') {
         // 같은 이름이 여럿(CFO·임직원_개발2팀·카드[5302] 등) → 사람에게 모달로 고르게 하고, 이 작업(결재건) 동안은 그걸로 (사용자 요청 2026-10-22)
         this.log(`  거래처 '${payee}' 검색 결과가 여러 건 → 코드도움에서 선택`);
         await this.pickInCodeHelp('^거래처코드도움$', payee, { label: `'${payee}'`, remember: `거래처:${payee}` });
       }
-      const ok = await p.waitFor((r, nm) => { const g = grid('거래처코드'); const v = g && rowVals(g, r); return v && norm(v['거래처명'] || '').includes(norm(nm)); }, [k, payee], { timeout: 5000 });
-      if (!ok) throw new Error(`거래처명이 안 채워짐`);
+      if (!(await filled())) throw new Error(`거래처명이 안 채워짐`);
     } catch (e) {
       if (/창이 닫혔/.test(e.message)) throw e;
       await this.debugDump('settle-payee', '거래처|결의서전송');
@@ -1589,7 +1600,7 @@ class Amaranth {
     }
     const put = async (col, text, enter = true, keys = false) => {
       if (!(await p.eval(() => !!grid('거래처코드')).catch(() => false))) throw new Error(`${col} 넣기 전에 결의서전송 창이 닫혔어요. 그룹웨어에서 확인한 뒤 다시 해 주세요.`);   // 창 없이 계속 누르면 뒤 화면을 건드림
-      try { await p.dblclick(await this.revealCell(G, k, col)); await p.selectAll();
+      try { await here(); await p.dblclick(await this.revealCell(G, k, col)); await p.selectAll();
         if (keys) { await p.press('Backspace', 10); await p.typeKeys(text); } else await p.type(text);   // 날짜 칸은 키를 하나씩 눌러야 받는다
         if (enter) await p.key('Enter'); await sleep(400); }
       catch (e) { if (/창이 닫혔/.test(e.message)) throw e; await ui.assist(`채주 ${n}번째 줄 ${col} 입력 실패(${e.message}). '${text}'를 넣어 주세요.`); }
@@ -1600,6 +1611,7 @@ class Amaranth {
     await put('자금과목', fund);
     await put('자금계획일', planDate.replace(/-/g, ''), true, true);   // 숫자만 키로 하나씩(20261020)
     // 줄 저장: 품의 예산 줄처럼 마지막 칸까지 Enter 로 넘어가 새 빈 줄이 생겨야 저장된다 (값만 넣으면 화면에만 있고 [환원] 때 사라짐)
+    await here();
     const nextBlank = () => p.eval(r => { const g = grid('거래처코드'); const v = g && rowVals(g, r + 1); return !!v && !String(v['거래처명'] || '').trim(); }, k);
     for (let i = 0; i < 3 && !(await nextBlank()) && (await this.rowCount(G)) <= before; i++) {
       const pop = await p.eval(() => all('[class*=Dialog], .dialog_data').filter(vis).length);
@@ -1631,6 +1643,8 @@ class Amaranth {
     if (await this.isLoginPage()) { await this.ensureLogin(); await p.goto(this.baseUrl + RESOLUTION_PATH); }
     await p.waitFor(() => !!grid('결의구분'), [], { timeout: 30000, message: '결의서입력 화면이 열리지 않았어요.' });
     await sleep(1500);
+    // 결의서입력은 결의일 하루치(기본 오늘)만 보여 준다 → 그 결의 날짜로 바꿔 조회 (11일 결의를 다음 날 다시 돌리면 목록에 없어 멈췄음 — 2026-11-20 정효빈)
+    if (!(await this.setBudgetDate(ym, day, '결의일'))) this.log('(결의일 칸을 못 찾아 날짜는 그대로 둬요)');
     // 결의서입력 목록의 순번은 결의번호 끝자리와 다를 수 있다 (순번 23 ↔ 20261022-00024 — 2026-10-22). 날짜·지출결의서·집행용도·금액이 같은 줄 중 '상신대기'만 고른다 (여럿이면 순번이 맞는 것, 없으면 마지막 것).
     // 상신대기가 없으면 '못 찾음'으로 보고 [조회]를 다시 누른다: 막 연 화면은 전에 불러온 목록을 보여 줄 때가 있어, 같은 날 같은 금액의 지난 결의(결재진행)를 새 결의로 잘못 집었음 (전상민 2026-11-06)
     const sent = this.lastSent && this.lastSent.no === resNo ? this.lastSent : null;
