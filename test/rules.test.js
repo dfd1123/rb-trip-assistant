@@ -321,8 +321,9 @@ test('품의가 통째로 0원(동행자 일괄 품의)이면 본인 0원 채주
   const l = plan[0].lines[0];
   assert.deepEqual([l.pay, l.amount, l.supply], ['personal', 0, 0]);
   assert.match(l.planDate, /^\d{4}-\d{2}-\d{2}$/);
-  // 품의에 돈이 있는 줄이 하나라도 있으면 그대로 (쓴 돈이 없으면 환원으로 돌려줌)
-  assert.equal(R.planPayees([...zero, { 예산과목: '여비교통비(판)_식대', 품의금액: '30,000', 미지출액: '30,000' }], []).plan.every(pb => !pb.lines.length), true);
+  // 품의에 돈이 있어도 쓴 돈이 없으면(전액 환원) 똑같이 0원 채주 — 환원 줄만으로는 [전송]이 막힘 (2026-11-20 정효빈)
+  const full = R.planPayees([{ 예산과목: '여비교통비(판)_식대', 품의금액: '15,000', 미지출액: '15,000' }], []).plan;
+  assert.deepEqual(full[0].lines.map(l => [l.amount, l.memo]), [[0, '경비 없음 (전액 환원)']]);
 });
 
 test('같은 과목 예산 줄이 여러 개(비고에 날짜 없음): 영수증은 한 번만, 앞 줄부터 채우고 넘치면 다음 줄로', () => {
