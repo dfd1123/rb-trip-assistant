@@ -301,6 +301,22 @@ app.whenReady().then(async () => {
       assert.deepEqual(s15.approvalFor, [e15.결의번호], '결의서입력에서 결재상신까지');
       console.log('E2E 지출 결의 (전송 → 결의서입력 → 결재상신) OK');
     }
+    if (run(16)) {
+      // ---- 16) 사람이 [환원취소]를 대신하고 창을 닫은 채 [계속] → 앱이 창을 다시 열어 이어 감 (2026-11-20) ----
+      const st16 = STATE({ failUnrefund: 1 }); st16.approve[0].resolutions = [{ 순번: '2', 결의일자: today(), 결의구분: '환원', 집행용도: '', 금액: 125800, 결의번호: '' }];
+      mock.setSettle(st16);
+      const assist0 = ui.assist; let helped = 0;
+      ui.assist = async m => { if (helped++ || !/환원취소/.test(m)) return assist0.call(ui, m);
+        await gwWindow().webContents.executeJavaScript(`(async () => { const w = ms => new Promise(r => setTimeout(r, ms)); document.querySelector('.OBTAlert_root .o')?.click(); await w(200);
+          document.querySelector('td.rg-data-cell[data-g=res][data-r="0"]').click(); await w(200); document.querySelector('[data-b=환원취소]').click(); await w(200); document.querySelector('#sClose').click(); })()`); };
+      try { await runner.runReport(env, report(exp1)); } finally { ui.assist = assist0; }
+      const s16 = mock.getSettle(), r16 = s16.approve[0].resolutions;
+      assert.equal(helped, 1, '사람 도움은 [환원취소] 한 번만');
+      assert.ok(r16.find(r => r.결의구분 === '지출결의서')?.결의번호, '창을 다시 열어 [전송]까지');
+      assert.equal(r16.filter(r => r.결의구분 === '환원').length, 1, '환원 하나');
+      assert.equal(s16.closed, 1, '닫은 건 사람 한 번뿐');
+      console.log('E2E 정산 사람이 창 닫은 뒤 다시 열기 OK');
+    }
 
   } catch (e) {
     code = 1; console.error('E2E 정산 실패:', e.stack || e);

@@ -51,6 +51,25 @@ app.whenReady().then(async () => {
     assert.equal(store.purchases().length, 1);
     console.log('E2E 구매의뢰 작성 창 OK');
 
+    // ---- 조직개편으로 연구지원팀이 없으면 연구기획운영팀 ----
+    const closeAll = () => { for (const w of BrowserWindow.getAllWindows()) if (w !== gw && !w.isDestroyed()) w.destroy(); };
+    const chipsNow = () => BrowserWindow.getAllWindows().find(w => !w.isDestroyed() && /compose\.html/.test(w.webContents.getURL())).webContents.executeJavaScript('window.__chips || []');
+    closeAll(); process.env.MOCK_NO_ORG = '연구지원팀';
+    await runner.runPurchase(env, data);
+    assert.deepEqual(await chipsNow(), ['구매팀', '경영지원부(전자결재용)', '연구기획운영팀', '개발 2팀'], '연구지원팀 없으면 연구기획운영팀');
+    console.log('E2E 수신및참조 대체 부서 OK');
+
+    // ---- 둘 다 없어 도움 요청 → 사람이 작성 창에서 직접 [상신] (창 닫힘) → [계속]: 실패가 아니라 멈춤 ----
+    closeAll(); process.env.MOCK_NO_ORG = '연구지원팀,연구기획운영팀';
+    const assist0 = ui.assist; let asked = ''; const before = Date.now();
+    ui.assist = async m => { asked = m; const w = BrowserWindow.getAllWindows().find(x => !x.isDestroyed() && /compose\.html/.test(x.webContents.getURL()));
+      await new Promise(r => { w.once('closed', r); w.close(); }); };   // 사람이 [상신] → 그룹웨어가 작성 창을 닫음 → [계속]
+    try { await runner.runPurchase(env, data); } finally { ui.assist = assist0; delete process.env.MOCK_NO_ORG; }
+    assert.ok(/연구지원팀 또는 연구기획운영팀/.test(asked), asked);
+    assert.ok(ui.logs.some(m => /작성 창이 닫혀 여기서 멈춰요/.test(m)));
+    assert.ok(Date.parse(store.purchases()[0].created) >= before, '창이 닫혀도 기록은 남김');
+    console.log('E2E 도움 중 작성 창 닫힘 OK');
+
     // ---- 외부 방문객 출입 신청서: 같은 결재작성 → 양식 이름 정확히 같은 줄('방문자 신청' 아님) → 제목·본문·수신및참조(경영지원부) ----
     for (const w of BrowserWindow.getAllWindows()) if (w !== gw && !w.isDestroyed()) w.destroy();
     const vdate = (() => { const d = new Date(); d.setDate(d.getDate() + 14); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })();

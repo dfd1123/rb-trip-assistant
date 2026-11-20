@@ -6,7 +6,7 @@ const yaml = require('js-yaml');
 const APPLY_FORM = '출장신청 및 출장경비 사전품의';
 const PURCHASE_FORM = '구매의뢰서';   // 결재작성 › 전체 양식 (품의 입력 없이 바로 전자결재)
 const PURCHASE_PURPOSES = ['생산 운영', '신규 프로젝트', '고객 요청 대응', '품질 개선 / 불량 대응', '설비 유지보수 / 수리', '기타'];
-const PURCHASE_RECIPIENTS = ['구매팀', '경영지원부(전자결재용)', '연구지원팀'];   // 구매의뢰서 수신및참조 기본
+const PURCHASE_RECIPIENTS = ['구매팀', '경영지원부(전자결재용)', ['연구지원팀', '연구기획운영팀']];   // 구매의뢰서 수신및참조 기본. 배열 = 앞 이름이 조직도에 없으면 다음 (2026-11 조직개편)
 const PROJECT_DETAIL_REQUIRED = ['정부과제', '기타'];   // 세부 프로젝트명 필수 (다른 프로젝트는 선택). 제목엔 세부 이름이 들어감
 const PURCHASE_PROJECTS = ['협동로봇', '천문', '2족보행', '4족보행', '양팔로봇', '관리', 'S사이족보행', '모바일로봇', 'KAI', '정부과제', '기타'];
 const VISITOR_FORM = '외부 방문객 내부 공간 출입 승인 요청의 건';   // 결재작성 › 전체 양식 (예전 '방문자 신청' 양식은 안 씀). 유형 A·B·C 모두 이 양식
@@ -156,8 +156,7 @@ function parseApply(data) {
   const start = date(req(dates, 'start', 'dates'), '시작일'), end = date(req(dates, 'end', 'dates'), '종료일');
   if (end < start) throw new InputError('종료일이 시작일보다 빠릅니다.');
   const hm = (v, k) => { const t = String(v || '').trim(); const h = /^(\d{1,2}):(\d{2})$/.exec(t); if (t && !(h && +h[1] < 24 && +h[2] < 60)) throw new InputError(`${k}은 HH:MM 형식입니다: ${t}`); return t ? t.padStart(5, '0') : ''; };   // 24:00·99:99 는 안 받음
-  const startTime = hm(dates.start_time, '출발 시각'), endTime = hm(dates.end_time, '복귀 시각');
-  if (!startTime || !endTime) throw new InputError('출발 시각과 복귀 시각은 필수예요. 식대 계산에 쓰여요.');
+  const startTime = hm(dates.start_time, '출발 시각') || DEFAULT_TIMES.start, endTime = hm(dates.end_time, '복귀 시각') || DEFAULT_TIMES.end;   // 날짜만 알면 9시 출발·18시 복귀로
   if (start === end && startTime && endTime && endTime < startTime) throw new InputError('복귀 시각이 출발 시각보다 빠릅니다.');
   const reason = String(req(data, 'reason', where)).trim();
   const expenses = parseExpenses(data.expenses, 'expenses', reason);
@@ -559,10 +558,15 @@ function adoptRecord(old, row, f, { id, reason, pday, now = new Date().toISOStri
   const or = (v, p) => (v !== '' && v != null && !(Array.isArray(v) && !v.length)) ? v : p;
   return { ...old, id, created: old.created || now, title: applyTitle(reason), status: '그룹웨어',
     gwApply: { key: row.key, ym: row.ym, day: String(row.day), seq: String(row.seq) },
-    apply: { reason, destination: or(f && f.destination, pa.destination || ''), start: or(f && f.start, pa.start || pday), end: or(f && f.end, pa.end || pday), start_time: or(f && f.start_time, pa.start_time || ''), end_time: or(f && f.end_time, pa.end_time || ''),
+    apply: { reason, destination: or(f && f.destination, pa.destination || ''), start: or(f && f.start, pa.start || pday), end: or(f && f.end, pa.end || pday), start_time: or(f && f.start_time, pa.start_time || DEFAULT_TIMES.start), end_time: or(f && f.end_time, pa.end_time || DEFAULT_TIMES.end),
       category: or(f && f.category, pa.category || '일반'), project: or(f && f.project, pa.project || ''), transport: f && f.transport ? { mode: f.transport, to: '', from: '', total: null } : (pa.transport || { mode: '', to: '', from: '', total: null }),   // 본문을 못 읽으면 교통편 모름 (보고서에서 자차·대중교통 둘 다 안내)
       companions: or(f && f.companions, pa.companions || []), companion_purpose: or(f && f.companion_purpose, pa.companion_purpose || ''), purpose: or(f && f.purpose, pa.purpose || ''), expenses: pa.expenses || [] } };
 }
+
+/** 출장 시각을 모를 때 (날짜만 앎): 9시 출발·18시 복귀 (사용자 요청 2026-11-20) */
+const DEFAULT_TIMES = { start: '09:00', end: '18:00' };
+/** dates {start, end, start_time, end_time} 의 빈 시각을 기본값으로 (날짜가 있을 때만) */
+const withDefaultTimes = d => ({ ...d, start_time: d.start_time || (d.start ? DEFAULT_TIMES.start : ''), end_time: d.end_time || (d.end || d.start ? DEFAULT_TIMES.end : '') });
 
 /** 결재 문서 '출장일' 칸 글자 → {start, end, start_time, end_time}. 사람이 쓴 여러 꼴을 받는다:
  *  "2026.10.19 09:00 - 2026.10.20 18:00", "2026-10-19 ~ 2026-10-20", "2026년 10월 19일 ~ 20일", "10/19~10/20", "10월 19일(월) 9시 ~ 10월 20일".
@@ -709,7 +713,7 @@ module.exports = {
   claimable,
   VISITOR_FORM, VISITOR_RECIPIENTS, VISITOR_AREAS, VISITOR_SHOOTS, VISITOR_LINES, visitorTitle, visitorUrgent, parseVisitor,
   NO_VAT, RECEIPT_KINDS, NO_VAT_KINDS, placeTokens, AMBIGUOUS_PLACES,
-  APPLY_FORM, REPORT_FORM, PURCHASE_FORM, parseTripPeriod, adoptRecord,PURCHASE_PURPOSES, PURCHASE_PROJECTS, PURCHASE_RECIPIENTS, PROJECT_DETAIL_REQUIRED, purchaseTitle, parsePurchase, BUDGET_ITEMS, TRANSPORT_MODES, CORPORATE_CARS, APPLY_CATEGORIES, REPORT_CATEGORIES,
+  APPLY_FORM, REPORT_FORM, PURCHASE_FORM, parseTripPeriod, adoptRecord, DEFAULT_TIMES, withDefaultTimes,PURCHASE_PURPOSES, PURCHASE_PROJECTS, PURCHASE_RECIPIENTS, PROJECT_DETAIL_REQUIRED, purchaseTitle, parsePurchase, BUDGET_ITEMS, TRANSPORT_MODES, CORPORATE_CARS, APPLY_CATEGORIES, REPORT_CATEGORIES,
   InputError, ro, applyTitle, reportTitle, budgetMemo, parseCarText, parseTransitText, roundTrip,
   parseApply, parseReport, parseSettle, PUI_FORM, parsePui, AI_CONSENT, capTotal, dueRepeat, puiTitle, parseExpenses, transportExpense, fuelOnlyExpense, applyPrompt, reportPrompt, extractYaml,
   OVERSEAS_GRADES, OVERSEAS_RATES, OVERSEAS_RATES_EXEC, overseasGuess, overseasExpenses,

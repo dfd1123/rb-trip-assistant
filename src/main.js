@@ -11,7 +11,9 @@ if (process.platform === 'linux' && process.env.APPIMAGE) {
 }
 // 윈도우: 작업 창은 화면 밖(-32000)에 두는데, 크로미움이 이걸 '가려진 창'으로 보고 페이지를 hidden 으로 바꿔 그리기를 멈춘다
 // → 네이버 자동완성 목록이 안 뜨고 capturePage 가 'Current display surface not available for capture' 로 실패. 가림 계산을 끈다
-if (process.platform === 'win32') { app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion'); app.commandLine.appendSwitch('disable-backgrounding-occluded-windows'); }
+// PaintHolding: 새로 그릴 때까지 클릭을 버림 → 숨긴 창은 늦게 그려 리눅스에서 드롭다운이 안 열림. disable-features 는 마지막 값만 먹어 한 번에
+if (process.platform === 'win32') app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
+app.commandLine.appendSwitch('disable-features', ['PaintHolding', ...(process.platform === 'win32' ? ['CalculateNativeWinOcclusion'] : [])].join(','));
 const path = require('path');
 let R = require('./engine/rules');
 let runner = require('./engine/runner');
@@ -104,7 +106,7 @@ function gwWindow(show = false) {
     gwPopups.add(w); w.on('closed', () => gwPopups.delete(w)); keepDrawn(w);
     w.on('page-title-updated', e => { if (w._locked) e.preventDefault(); });
     lockGw(w);
-    if (gwShown) { unpark(w); if (!w._locked) w.focus(); } else park(w);   // 직접 보는 중에 연 팝업(문서번호 클릭 등)은 보이게, 작업 중 연 건 숨김
+    if (gwShown) { unpark(w); w.focus(); } else park(w);   // 직접 보는 중에 연 팝업(문서번호 클릭 등)은 보이게, 작업 중 연 건 숨김
     w.on('close', e => { if (!quitting && jobBusy()) { e.preventDefault(); park(w); } });   // 작업 중 닫으면 숨기기만
   });
   gwWin.on('close', e => { if (!quitting) { e.preventDefault(); gwShown = false; park(gwWin); } });   // 닫기 = 숨기기 (로그인·작업 상태 유지)
@@ -119,7 +121,7 @@ function showGw() {
   gwShown = true; syncGwLock(); unpark(gwWin);
   const pops = [...gwPopups].filter(w => !w.isDestroyed());
   for (const w of pops) unpark(w);
-  if (!gwLocked()) (pops.pop() || gwWin).focus();
+  (pops.pop() || gwWin).focus();
 }
 function hideGw() {
   gwShown = false;
@@ -136,7 +138,8 @@ function lockGw(w) {
   const on = gwLocked();
   if (Boolean(w._locked) === on) return;
   w._locked = on;
-  w.setIgnoreMouseEvents(on); w.setFocusable(!on);
+  // 마우스만 막음 — 포커스까지 막으면 리눅스에서 그리드 드롭다운·행 저장이 실패 (2026-11-20)
+  w.setIgnoreMouseEvents(on);
   w.setTitle(on ? LOCK_TITLE : w.webContents.getTitle());
 }
 function syncGwLock() { lockGw(gwWin); gwPopups.forEach(lockGw); }
@@ -452,6 +455,7 @@ async function quick(memo) {
     } catch (e) { note = `AI 작성 실패로 템플릿을 썼어요: ${e.message}`; }
   }
   let meals = null;
+  data.dates = R.withDefaultTimes(data.dates);   // 날짜만 말했으면 9시 출발·18시 복귀 (화면에도 그 시각으로)
   if (data.dates.start && data.reason) {
     meals = Q.computeExpenses({ start: data.dates.start, end: data.dates.end || data.dates.start, startTime: data.dates.start_time, endTime: data.dates.end_time, reason: data.reason, rates: cfg.rates, rank: cfg.rank });
     data.expenses = meals.expenses;
@@ -475,8 +479,6 @@ async function quick(memo) {
   const missing = [];
   if (!data.transport.mode) missing.push('교통편');
   if (!data.dates.start) missing.push('날짜');
-  if (!data.dates.start_time) missing.push('출발 시각');
-  if (!data.dates.end_time) missing.push('복귀 시각');
   if (!data.destination) missing.push('출장지');
   if (source === 'template' && base.missing.includes('사유')) missing.push('사유');
   const t = data.transport;
@@ -559,7 +561,7 @@ async function route(p, body = {}) {
       return R.overseasExpenses({ start: body.start, end: body.end || body.start, name: cfg.name || '출장자', people: 1, rank: cfg.rank, grade: body.grade, rate: Number(body.rate) || 0,
         airfare: n(body.airfare), lodging: n(body.lodging), uberUsd: n(body.uber), roaming: n(body.roaming), insurance: n(body.insurance) });
     }
-    case '/api/expenses': { const r = Q.computeExpenses({ start: body.start, end: body.end || body.start, startTime: body.start_time, endTime: body.end_time, reason: body.reason || '', rates: cfg.rates, rank: cfg.rank }); return { expenses: r.expenses, summary: r.summary, timed: r.timed }; }
+    case '/api/expenses': { const r = Q.computeExpenses({ start: body.start, end: body.end || body.start, startTime: body.start_time || R.DEFAULT_TIMES.start, endTime: body.end_time || R.DEFAULT_TIMES.end, reason: body.reason || '', rates: cfg.rates, rank: cfg.rank }); return { expenses: r.expenses, summary: r.summary, timed: r.timed }; }
     case '/api/repeat': { const a = store.load(body.id).apply;   // keep: 반려돼서 고쳐 올릴 땐 날짜·시각 그대로
       const dates = body.keep ? { start: a.start, end: a.end, start_time: a.start_time, end_time: a.end_time } : { start: '', end: '' };
       return { data: { ...a, dates, transport: { ...a.transport, total: null, screenshot: '' } } }; }

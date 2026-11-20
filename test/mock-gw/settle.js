@@ -38,7 +38,7 @@
         + `</div></div>${opts.vr && rows.length > opts.vr ? `<div class="rg-vscrollbar" style="position:relative;width:14px;height:60px;background:#eee"><div class="rg-scrolltrack" style="position:absolute;inset:0"></div><div class="rg-scrollthumb" style="position:absolute;left:0;width:14px;height:20px;top:${Math.round(40 * (opts.vy || 0) / Math.max(1, rows.length - opts.vr))}px;background:#999"></div></div>` : ''}<div class="rg-hscrollbar" style="height:14px;position:relative;background:#eee;width:${opts.vw}px"><div class="rg-scrolltrack" style="position:absolute;inset:0"></div><div class="rg-scrollthumb" style="position:absolute;top:0;height:14px;width:${tw}px;left:${tl}px;background:#999"></div></div></div>`;
     }
     return `<div class="rg-root" id="${gid}"><table class="rg-header"><tr><td class="rg-head-cell rg-checkbar-head"></td>${cols.map(c => `<td class="rg-header-cell"><span class="rg-header-renderer">${c}</span></td>`).join('')}</tr></table>
-      <table class="rg-body">${(opts.vr ? rows.map((r, i) => [r, i]).slice(opts.vy || 0, (opts.vy || 0) + opts.vr) : rows.map((r, i) => [r, i])).map(([r, i]) => `<tr class="rg-data-row${opts.focus === i ? ' rg-focused-row' : ''}${ck.has(i) ? ' rg-checked-row' : ''}" data-g="${gid}" data-r="${i}"><td class="rg-checkbar-cell" data-g="${gid}" data-i="${i}"><input type="checkbox" class="rg-checkbox" style="display:none"><span class="rg-checkbar-${ck.has(i) ? 'checked' : 'unchecked'}" style="display:inline-block;width:12px;height:12px;border:1px solid #888${ck.has(i) ? ';background:#36c' : ''}"></span></td>${cols.map(c => `<td class="rg-data-cell" data-g="${gid}" data-r="${i}" data-c="${c}"><div class="rg-renderer">${esc(r[c] ?? '')}</div></td>`).join('')}</tr>`).join('')}</table></div>`;
+      <table class="rg-body">${(opts.vr ? rows.map((r, i) => [r, i]).slice(opts.vy || 0, (opts.vy || 0) + opts.vr) : rows.map((r, i) => [r, i])).map(([r, i]) => `<tr class="rg-data-row${opts.focus === i ? ' rg-focused-row' : ''}${ck.has(i) ? ' rg-checked-row' : ''}" data-g="${gid}" data-r="${i}"><td class="rg-checkbar-cell${opts.noCheck && opts.noCheck(r) ? ' rg-checkbar-disabled' : ''}" data-g="${gid}" data-i="${i}"><input type="checkbox" class="rg-checkbox" style="display:none"><span class="rg-checkbar-${ck.has(i) ? 'checked' : 'unchecked'}${opts.noCheck && opts.noCheck(r) ? ' disabled' : ''}" style="display:inline-block;width:12px;height:12px;border:1px solid #888${ck.has(i) ? ';background:#36c' : ''}"></span></td>${cols.map(c => `<td class="rg-data-cell" data-g="${gid}" data-r="${i}" data-c="${c}"><div class="rg-renderer">${esc(r[c] ?? '')}</div></td>`).join('')}</tr>`).join('')}</table></div>`;
   }
   function confirmBox(msg, onOk) {
     const d = document.createElement('div'); d.className = 'OBTConfirm_root'; d.setAttribute('data-orbit-component', 'OBTConfirm');
@@ -100,7 +100,7 @@
     const pays = isExp && buds.length ? [...plist.map(p => ({ ...p, 첨부파일: p.files && p.files.length ? String(p.group) : '' })), ...(!plist.length || plist[plist.length - 1].saved ? [{}] : [])] : [];
     d.innerHTML = css + `<div class="s-root"><h2>결의서전송/취소</h2>
       <div class="tbar"><b>결의내역</b><button data-b="삭제">삭제</button><button data-b="전송">전송</button><button data-b="전송취소">전송취소</button><button data-b="환원">환원</button><button data-b="환원취소">환원취소</button><button>예금주 조회</button></div>
-      ${grid('res', RESC, resRows(D.ap), { check: D.resCheck, focus: D.resFocus })}
+      ${grid('res', RESC, resRows(D.ap), { check: D.resCheck, focus: D.resFocus, noCheck: r => r.결의구분 === '환원' })}
       <div class="tbar"><b>예산내역</b></div>${grid('bud', BUDC, buds, { focus: isExp ? D.budFocus : -1 })}
       <div class="tbar"><b>채주내역</b><button>전자(세금)계산서발행내역</button><button data-b="채주내역 삭제">채주내역 삭제</button></div>${grid('pay', PAYC, pays, { check: D.payCheck, vw: T.payViewport || 0, sx: D.paySx || 0, vr: T.payRows || 0, vy: D.payVy || 0, focus: D.payFocus ? D.payFocus.i : -1 })}
       <div class="OBTDialog_bottomButton___NF_C"><button id="sClose">확인</button></div></div>`;
@@ -115,7 +115,7 @@
       return confirmBox(`현재 체크된 데이터 ${checked.length}건 존재합니다.<br>체크된 데이터 모두 삭제하시겠습니까?`, () => {
         if (checked.some(r => r.결의번호)) return alertBox('전송된 결의서는 삭제할 수 없습니다.');
         ap.resolutions = ap.resolutions.filter(r => !checked.includes(r));
-        if (checked.some(r => r.결의구분 === '지출결의서')) ap.resolutions = ap.resolutions.filter(r => r.결의구분 !== '환원' || r.결의번호);   // 지출결의서를 지우면 같이 만든 환원도 사라짐
+        // 실제: 지출결의서를 지워도 환원 줄은 남는다 (2026-10-22 job.log, 2026-11-20 화면)
         D.resCheck.clear(); D.resFocus = ap.resolutions.findIndex(r => r.결의구분 === '지출결의서'); save(); drawTransfer(); });
     }
     if (name === '전송') {
@@ -143,6 +143,9 @@
       save(); return drawTransfer();
     }
     if (name === '환원취소') {
+      // 실제: 환원 줄은 체크 불가, 포커스 줄에 먹음. 다른 줄이 체크돼 있으면 실패 (2026-10-22 덤프)
+      if (checked.length) return alertBox('환원 줄을 선택해 주세요.');
+      if (T.failUnrefund) { T.failUnrefund--; return alertBox('환원취소 중 오류가 발생하였습니다.'); }   // 테스트: 사람 도움 경로
       const r = ap.resolutions[D.resFocus]; if (!r || r.결의구분 !== '환원') return alertBox('환원 줄을 선택해 주세요.');
       ap.resolutions.splice(D.resFocus, 1); D.resFocus = ap.resolutions.findIndex(x => x.결의구분 === '지출결의서'); save(); return drawTransfer();
     }
@@ -233,6 +236,7 @@
     if (!T) return;
     const cb = e.target.closest('td.rg-checkbar-cell');
     if (cb) {
+      if (cb.classList.contains('rg-checkbar-disabled')) return;   // 실제: 체크가 막힌 줄(환원)은 눌러도 안 바뀜
       const g = cb.dataset.g, i = +cb.dataset.i, set = g === 'appr' ? A.check : g === 'rl' ? RL.check : g === 'res' ? D.resCheck : g === 'pay' ? D.payCheck : null;
       if (g === 'rl') { RL.vis.has(i) ? RL.vis.delete(i) : RL.vis.add(i); RL.vis.has(i) ? RL.check.add(i) : RL.check.delete(i); return resolutionPage(); }
       if (set) { set.has(i) ? set.delete(i) : set.add(i); if (g === 'appr') approvePage(); else if (g === 'rl') resolutionPage(); else drawTransfer(); }

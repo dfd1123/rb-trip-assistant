@@ -97,9 +97,22 @@ const rowVals = (g, row) => { const r = rows(g)[row]; if (!r) return null; const
 class Page {
   constructor(win) { this.win = win; this.wc = win.webContents; }
 
+  /** 리눅스는 숨긴 창에 OS 포커스를 안 줘 document.hasFocus() false → RealGrid 드롭다운·편집기가 안 열림. CDP 로 포커스된 척.
+   *  페이지를 옮기면 풀리고 껐다 켜야 다시 먹는다 — 포커스가 있을 땐 안 건드림 (끄면 blur 로 열린 드롭다운이 닫힘) */
+  async emulateFocus() {
+    const dbg = this.wc.debugger;
+    try {
+      if (await this.wc.executeJavaScript('document.hasFocus()', true)) return;
+      if (!dbg.isAttached()) dbg.attach('1.3');
+      await dbg.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: false });
+      await dbg.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true });
+    } catch (e) { /* 개발자 도구가 디버거를 쥐고 있으면 wc.focus() 만 */ }
+  }
+
   /** fn: 페이지에서 실행할 함수 소스(문자열). PRELUDE 헬퍼 사용 가능. */
   async eval(fn, ...args) {
     const code = `(() => { ${PRELUDE}\n return (${fn})(...${JSON.stringify(args)}); })()`;
+    if (this.wc.isDestroyed()) throw new Error('작업 창이 닫혔어요');   // 닫힌 창의 executeJavaScript 는 끝나지 않고 매달림
     return this.wc.executeJavaScript(code, true);
   }
 
@@ -130,7 +143,7 @@ class Page {
 
   /** 끌기 (스크롤바 손잡이 등): 누른 채 여러 번 나눠 움직이고 놓는다 */
   async drag(from, to, steps = 8) {
-    this.wc.focus();
+    await this.emulateFocus(); this.wc.focus();
     this.wc.sendInputEvent({ type: 'mouseMove', x: from.x, y: from.y });
     this.wc.sendInputEvent({ type: 'mouseDown', x: from.x, y: from.y, button: 'left', clickCount: 1 });
     for (let i = 1; i <= steps; i++) {
@@ -144,7 +157,7 @@ class Page {
   async click(pt, { count = 1 } = {}) {
     if (!pt) throw new Error('클릭할 위치를 찾지 못했습니다.');
     const { x, y } = pt;
-    this.wc.focus();   // 숨긴 창은 포커스 이벤트가 안 와 RealGrid 편집기·코드도움이 안 열린다 (document.hasFocus() false)
+    await this.emulateFocus(); this.wc.focus();   // 숨긴 창은 포커스 이벤트가 안 와 RealGrid 편집기·코드도움이 안 열린다 (document.hasFocus() false)
     this.wc.sendInputEvent({ type: 'mouseMove', x, y });
     for (let i = 1; i <= count; i++) {
       this.wc.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: i });
@@ -176,17 +189,17 @@ class Page {
   }
 
   async key(keyCode, modifiers = []) {
-    this.wc.focus();
+    await this.emulateFocus(); this.wc.focus();
     this.wc.sendInputEvent({ type: 'keyDown', keyCode, modifiers });
     if (keyCode === 'Enter') this.wc.sendInputEvent({ type: 'char', keyCode: '\r', modifiers });
     this.wc.sendInputEvent({ type: 'keyUp', keyCode, modifiers });
     await sleep(80);
   }
   async press(keyCode, times = 1) { for (let i = 0; i < times; i++) { await this.key(keyCode); await sleep(150); } }
-  async selectAll() { this.wc.focus(); this.wc.selectAll(); await sleep(120); }   // 단축키(Cmd+A)는 메뉴 없는 창에서 안 먹음
+  async selectAll() { await this.emulateFocus(); this.wc.focus(); this.wc.selectAll(); await sleep(120); }   // 단축키(Cmd+A)는 메뉴 없는 창에서 안 먹음
   async type(text) { await this.wc.insertText(String(text)); await sleep(100); }
   /** 키를 하나씩 눌러 입력 (붙여넣기를 안 받는 날짜 칸 등). 숫자·영문용 */
-  async typeKeys(text) { this.wc.focus(); for (const ch of String(text)) { for (const type of ['keyDown', 'char', 'keyUp']) this.wc.sendInputEvent({ type, keyCode: ch }); await sleep(40); } await sleep(100); }
+  async typeKeys(text) { await this.emulateFocus(); this.wc.focus(); for (const ch of String(text)) { for (const type of ['keyDown', 'char', 'keyUp']) this.wc.sendInputEvent({ type, keyCode: ch }); await sleep(40); } await sleep(100); }
 
   /** 모든 프레임(iframe 포함) */
   frames() { return this.wc.mainFrame.framesInSubtree; }
@@ -218,6 +231,7 @@ class Page {
 
   /** XHR/fetch 요청·응답 기록 시작. 돌려주는 함수를 부르면 기록을 끝내고 목록을 준다 (그룹웨어 API 파악용 진단) */
   async netLogStart() {
+    await this.emulateFocus();   // 먼저 붙여 둬야 기록을 끝낼 때 디버거를 떼지 않는다 (떼면 포커스 흉내도 꺼짐)
     const dbg = this.wc.debugger;
     const attached = dbg.isAttached();
     if (!attached) dbg.attach('1.3');
@@ -245,6 +259,7 @@ class Page {
 
   /** <input type=file> 에 파일 넣기 (CDP) */
   async setFiles(selector, files) {
+    await this.emulateFocus();
     const dbg = this.wc.debugger;
     const attached = dbg.isAttached();
     if (!attached) dbg.attach('1.3');

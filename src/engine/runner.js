@@ -163,7 +163,7 @@ function reportDraft(store, cfg, id) {
   return {
     trip_id: id, reason: a.reason, name: cfg.name, companions: a.companions,   // 출장구분(category)은 넣지 않음 — 사람이 고름 (기본값 로봇을 모르고 올렸음, 사용자 요청 2026-11-10)
     project: a.project || '', destination: a.destination, visit_org: a.destination.replace(/\s*\([^)]*\)\s*$/, ''),   // 방문기관 = 출장지에서 (주소) 뺀 이름
-    period: `${a.start.replace(/-/g, '.')}${a.start_time ? ' ' + a.start_time : ''} - ${a.end.replace(/-/g, '.')}${a.end_time ? ' ' + a.end_time : ''}`,
+    period: `${a.start.replace(/-/g, '.')} ${a.start_time || R.DEFAULT_TIMES.start} - ${a.end.replace(/-/g, '.')} ${a.end_time || R.DEFAULT_TIMES.end}`,
     purpose: a.purpose, report: '',
     schedule: days.map(date => ({ date, place: a.destination, detail: '' })),
     transport: a.transport ? { mode: a.transport.mode, from: a.transport.from || '', to: a.transport.to || '', place: a.transport.place || (r.fare && r.fare.place && r.fare.place.lng ? r.fare.place : null) } : null,
@@ -301,15 +301,21 @@ async function runBudgetItems(env) {
 }
 
 /** 회사 예산과목 목록 [{code, name, path}] — 그룹웨어 API 로 (못 받으면 지난번 목록) */
-async function budgetItems(env, gw) {
+/** 코드도움 API 에 넣을 {user, gisu}. 못 읽으면 throw */
+async function apiArgs(env, gw) {
   const year = String(new Date().getFullYear()), cfg = env.store.config();
+  const user = cfg.gwUser || await gw.apiUser();
+  if (!user) throw new Error('사용자 정보(회계단위·부서·사원 코드)를 못 읽었어요');
+  let gisu = cfg.gisuOf && cfg.gisuOf.year === year ? cfg.gisuOf.gisu : '';   // 기수는 해마다 바뀜 → 그해 처음 한 번만 화면에서 읽음
+  if (!gisu) { gisu = await gw.readGisu(); if (gisu) env.store.saveConfig({ gisuOf: { year, gisu } }); }
+  if (!gisu) throw new Error('품의서입력 화면에서 회계 기수를 못 읽었어요');   // 기수 없이 부르면 빈 목록이 옴
+  return { user, gisu };
+}
+async function budgetItems(env, gw) {
+  const cfg = env.store.config();
   let items = [];
   try {
-    const user = cfg.gwUser || await gw.apiUser();
-    if (!user) throw new Error('사용자 정보(회계단위·부서·사원 코드)를 못 읽었어요');
-    let gisu = cfg.gisuOf && cfg.gisuOf.year === year ? cfg.gisuOf.gisu : '';   // 기수는 해마다 바뀜 → 그해 처음 한 번만 화면에서 읽음
-    if (!gisu) { gisu = await gw.readGisu(); if (gisu) env.store.saveConfig({ gisuOf: { year, gisu } }); }
-    if (!gisu) throw new Error('품의서입력 화면에서 회계 기수를 못 읽었어요');   // 기수 없이 부르면 빈 목록이 옴
+    const { user, gisu } = await apiArgs(env, gw);
     items = await gw.apiBudgetItems(user, gisu);
   } catch (e) { env.log(`(예산과목 목록을 못 읽었어요: ${e.message})`); }
   if (items.length) env.store.saveConfig({ budgetItems: items });
@@ -430,13 +436,14 @@ async function runProfile(env, { force = false } = {}) {
   await gw.ensureLogin();
   log('그룹웨어에서 내 정보를 읽어요.');
   const me = await gw.readProfile();
+  if (me.coCd && me.deptCd && me.empCd) store.saveConfig({ gwUser: { coCd: me.coCd, deptCd: me.deptCd, empCd: me.empCd } });   // 다른 계정이면 코드도움 API 를 그 사람으로
   let depts = [];
-  try { depts = await gw.budgetDeptList(); } catch (e) { log(`(사업코드 목록을 못 읽었어요: ${e.message})`); }
+  try { const { user, gisu } = await apiArgs(env, gw); depts = await gw.budgetDeptList(user, gisu); } catch (e) { log(`(사업코드 목록을 못 읽었어요: ${e.message})`); }
+  if (!depts.length) depts = cfg.budgetDepts || [];   // 못 읽으면 지난번 목록 (내 부서 하나로 덮어쓰지 않음)
   if (me.deptName && !depts.includes(me.deptName)) depts.unshift(me.deptName);
   const patch = { budgetDepts: depts, profileOf: env.store.config().lastLoginId || env.store.config().gwId || '' };   // 어느 계정의 정보인지 (다른 계정으로 로그인하면 다시 불러옴)
   if (me.empName && (force || !cfg.name)) patch.name = me.empName;
   if (me.deptName && (force || !cfg.budgetDept)) patch.budgetDept = me.deptName;
-  if (me.coCd && me.deptCd && me.empCd) patch.gwUser = { coCd: me.coCd, deptCd: me.deptCd, empCd: me.empCd };
   store.saveConfig(patch);
   await budgetItems(env, gw);
   log(`이름 ${patch.name || cfg.name || '-'} · 예산 부서 ${patch.budgetDept || cfg.budgetDept || '-'} · 고를 수 있는 부서 ${depts.length}개`);
@@ -481,6 +488,7 @@ async function runListBudget(env, { from = '', to = '' } = {}) {
       await gw.ensureLogin(); user = await readUser(); if (!user) throw e;
       rows = (await gw.apiBudgetRows(user, { months, days: [...days] })).filter(inRange);
     }
+    try { await gw.apiAttachSent(user, rows, from, to); } catch (e) { env.log(`(결의 금액을 못 읽었어요: ${String(e.message).slice(0, 100)})`); }   // 못 읽어도 목록은 그대로
     const docs = await attachApprovalDocs(gw, rows, env.log, { from, to });
     env.log(`API 로 품의 ${rows.length}건 읽음 (${((Date.now() - t0) / 1000).toFixed(1)}초, 삭제 가능 ${rows.filter(r => !r.locked).length}건)`);
     // 개발 중에만 (env.dev): 배포본에도 debugDir 은 있어 진단이 실제 승인 화면의 품의를 체크하고 [결의서전송/취소]를 눌렀음 (2026-11-10)

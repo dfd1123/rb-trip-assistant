@@ -40,7 +40,15 @@ test('신청서 검증과 기본 적요', () => {
   assert.deepEqual(a.transport.check, ['자차']);
   assert.throws(() => R.parseApply({ ...a, dates: { start: '2026-10-22', end: '2026-10-20' } }), R.InputError);
   assert.throws(() => R.parseApply({ reason: 'x', destination: 'y', dates: { start: '2026-10-20', end: '2026-10-20', start_time: '09:00', end_time: '18:00' }, transport: { mode: 'car' }, purpose: 'p' }), /도착지/);
-  assert.throws(() => R.parseApply({ reason: 'x', destination: 'y', dates: { start: '2026-10-20', end: '2026-10-20' }, transport: { mode: 'car', to: 'z' }, purpose: 'p' }), /시각은 필수/);
+  {   // 시각을 안 넣으면 9시 출발·18시 복귀 (사용자 요청 2026-11-20)
+    const t = R.parseApply({ reason: 'x', destination: 'y', dates: { start: '2026-10-20', end: '2026-10-21' }, transport: { mode: 'car', to: 'z' }, purpose: 'p' });
+    assert.deepEqual([t.start_time, t.end_time, t.period], ['09:00', '18:00', '2026.10.20 - 2026.10.21']);
+    assert.equal(R.parseApply({ reason: 'x', destination: 'y', dates: { start: '2026-10-20', end: '2026-10-20', end_time: '15:00' }, transport: { mode: 'car', to: 'z' }, purpose: 'p' }).end_time, '15:00');
+    assert.deepEqual(R.withDefaultTimes({ start: '2026-10-20', end: '', start_time: '', end_time: '' }), { start: '2026-10-20', end: '', start_time: '09:00', end_time: '18:00' });
+    assert.deepEqual(R.withDefaultTimes({ start: '', end: '' }), { start: '', end: '', start_time: '', end_time: '' });   // 날짜 모르면 시각도 안 지어냄
+    const ad = R.adoptRecord({}, { key: 'k', ym: '2026-10', day: 1, seq: 1 }, { start: '2026-10-20', end: '2026-10-20', start_time: '', end_time: '' }, { id: 'i', reason: 'r', pday: '2026-10-01' }).apply;
+    assert.deepEqual([ad.start_time, ad.end_time], ['09:00', '18:00']);   // 그룹웨어 신청서에 시각이 없던 출장의 보고서도
+  }
   assert.throws(() => R.parseApply({ reason: 'x', destination: 'y', dates: { start: '2026-10-20', end: '2026-10-20', start_time: '09:00', end_time: '18:00' }, transport: { mode: 'car', to: 'z' }, purpose: 'p',
     expenses: [{ item: 'domestic_transport', amount: 1 }] }), /국내교통비/);
 });
@@ -479,7 +487,7 @@ test('구매의뢰서: 제품 페이지 링크면 사유 칸에 링크·캡처·
   assert.ok(f.html.includes('href="https://shop.example/x"') && f.html.includes('src="data:image/png;base64,AAA"') && f.html.includes('사유 &lt;한 줄&gt;<br />둘째 줄'));
   assert.throws(() => R.parsePurchase({ ...base, file: '', link: { url: 'javascript:alert(1)' } }), /발주서 파일이나 제품 페이지/);
   assert.equal(purchasePayload(R.parsePurchase(base)).fields.find(x => x.label === '구매 상세 사유').text, base.reason);
-  assert.deepEqual(R.PURCHASE_RECIPIENTS, ['구매팀', '경영지원부(전자결재용)', '연구지원팀']);
+  assert.deepEqual(R.PURCHASE_RECIPIENTS, ['구매팀', '경영지원부(전자결재용)', ['연구지원팀', '연구기획운영팀']]);
 });
 
 test('구매의뢰서 거래처 담당자 칸: 거래처명 / 담당자명, 하나만 있으면 그것만', () => {

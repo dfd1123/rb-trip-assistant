@@ -227,8 +227,8 @@ function applyData(){
 function fillApply(d){
   $('#a_reason').value = d.reason||''; $('#a_destination').value = d.destination||'';
   const dt = d.dates || {start: d.start, end: d.end, start_time: d.start_time, end_time: d.end_time};
-  $('#a_start').value = dt.start||''; $('#a_end').value = dt.end||''; $('#a_start_time').value = dt.start_time||''; $('#a_end_time').value = dt.end_time||'';
-  setRadio('a_category', d.category||'일반'); $('#a_project').value = d.project||'';
+  $('#a_start').value = dt.start||''; $('#a_end').value = dt.end||''; $('#a_start_time').value = dt.start_time||''; $('#a_end_time').value = dt.end_time||''; defaultTimes();
+  $$('input[name=a_category]').forEach(x => x.checked = x.value === d.category); $('#a_project').value = d.project||'';   // 출장구분 기본값 없음 — 보낼 때 물어봄 (일반이 기본으로 남아 과제 출장도 여비교통비로 올라갔음)
   const t = d.transport||{}; $$('input[name=a_mode]').forEach(x => x.checked = false); if(t.mode) setRadio('a_mode', t.mode);   // 교통편은 정해졌을 때만 (안 정했으면 비워 둠)
   $('#a_to').value = t.to||''; $('#a_from').value = t.from || (META && META.config && META.config.defaultOrigin) || '';   // 출발지도 이 신청 것만 ([다시 신청]한 출장의 출발지가 다음 신청에 남았음)
   placeGeo = t.place && t.place.lng ? t.place : null;
@@ -455,6 +455,9 @@ function showMealPlan(m){
 }
 // 날짜·시각이 바뀌면 숙박비·식대를 규정대로 바로 다시 계산 (입력 중엔 잠깐 기다렸다가)
 let recalcTimer = null;
+/** 날짜만 넣고 시각을 비우면 9시 출발·18시 복귀 (엔진 rules.DEFAULT_TIMES 와 같게). 사람이 고치면 그대로 */
+function defaultTimes(){ if($('#a_start').value && !$('#a_start_time').value) $('#a_start_time').value = '09:00'; if(($('#a_end').value || $('#a_start').value) && !$('#a_end_time').value) $('#a_end_time').value = '18:00'; }
+['#a_start','#a_end'].forEach(id => $(id).addEventListener('change', defaultTimes));
 ['#a_start','#a_end','#a_start_time','#a_end_time'].forEach(id => ['input', 'change'].forEach(ev => $(id).addEventListener(ev, () => { clearTimeout(recalcTimer); recalcTimer = setTimeout(recalcExpenses, 300); })));
 $('#btnRecalc').onclick = recalcExpenses;
 function markNeed(missing){
@@ -518,24 +521,64 @@ function confirmSubmit({ title, html, note, yes = '보내기 ✦' }){
 const itemName = k => (META.items[k] || k).replace('여비교통비(판)_', '');
 const MODE_KO = { car: '🚗 자차', transit: '🚆 대중교통', corporate: '🚐 법인차량', overseas: '✈️ 해외' };
 
+/** 보내기 전에 묻기: ① 출장 구분(일반·연구과제 + 과제명) ② 동행자(없음 / 이름·동행목적). 고른 값은 폼에도 넣는다. 취소 = null */
+function askTripMeta(d){
+  return new Promise(res => {
+    const m = $('#preModal'); let cat = d.category || '', step = 1, comp = d.companions.length ? 'with' : '';
+    $('#pm_project_q').value = ''; fillProjects(META.config, d.project || ''); $('#pm_companions').value = d.companions.join(', '); $('#pm_companion_purpose').value = d.companion_purpose || '';
+    const draw = () => {
+      $('#pm_title').textContent = step === 1 ? '출장 구분을 골라 주세요' : '동행자가 있나요?';
+      $('#pm_cat').classList.toggle('hidden', step !== 1); $('#pm_comp').classList.toggle('hidden', step !== 2);
+      $$('#pm_cat [data-cat]').forEach(b => b.classList.toggle('sel', b.dataset.cat === cat));
+      $('#pm_proj_row').classList.toggle('hidden', cat !== '연구과제');
+      $('#pmAlone').classList.toggle('sel', comp === 'alone'); $('#pmWith').classList.toggle('sel', comp === 'with');
+      $('#pm_comp_rows').classList.toggle('hidden', comp !== 'with');
+      $('#pmOk').textContent = step === 1 ? '다음' : '확인'; $('#pm_err').textContent = '';
+    };
+    $$('#pm_cat [data-cat]').forEach(b => b.onclick = () => { cat = b.dataset.cat; draw(); if(cat !== '연구과제') return; $('#pm_project_q').focus();
+      ensureProjects(() => fillProjects(META.config)); });
+    $('#pmAlone').onclick = () => { comp = 'alone'; draw(); };
+    $('#pmWith').onclick = () => { comp = 'with'; draw(); $('#pm_companions').focus(); };
+    const close = v => { m.classList.toggle('on', false); document.removeEventListener('keydown', key); res(v); };
+    const key = e => { if(e.key === 'Escape') close(null); else if(e.key === 'Enter' && !e.isComposing) $('#pmOk').click(); };
+    $('#pmOk').onclick = () => {
+      if(step === 1){
+        if(!cat) return ($('#pm_err').textContent = '일반·연구과제 중 하나를 골라 주세요.');
+        if(cat === '연구과제' && !$('#pm_project').value && projHits().length === 1) $('#pm_project').value = projHits()[0];   // 검색해서 하나만 남으면 Enter 로 바로
+        if(cat === '연구과제' && !$('#pm_project').value.trim()) return ($('#pm_err').textContent = '목록에서 과제를 골라 주세요.');
+        step = 2; return draw();
+      }
+      if(!comp) return ($('#pm_err').textContent = '없음·있음 중 하나를 골라 주세요.');
+      const names = comp === 'with' ? list($('#pm_companions').value) : [];
+      if(comp === 'with' && !names.length) return ($('#pm_err').textContent = '동행자 이름을 넣어 주세요.');
+      if(names.length && !$('#pm_companion_purpose').value.trim()) return ($('#pm_err').textContent = '동행목적을 넣어 주세요.');
+      const v = { category: cat, project: cat === '연구과제' ? $('#pm_project').value.trim() : '', companions: names, companion_purpose: names.length ? $('#pm_companion_purpose').value.trim() : '' };
+      setRadio('a_category', v.category); $('#a_project').value = v.project; $('#a_companions').value = names.join(', '); $('#a_companion_purpose').value = v.companion_purpose; refreshApply();
+      close(v);
+    };
+    $('#pmCancel').onclick = $('#pmX').onclick = () => close(null);
+    document.addEventListener('keydown', key);
+    draw(); m.classList.toggle('on', true);
+  });
+}
+
 $('#btnApply').onclick = async () => {
   $('#a_err').textContent = '';
-  const data = applyData();
+  let data = applyData();
   const need = [];
   if(!data.reason) need.push('사유');
   if(!data.destination) need.push('출장지');   // 빈 채로 보내면 엔진이 "'destination' 값이 필요합니다" 라고만 해서 어디를 고칠지 몰랐음
   if(!data.purpose) need.push('출장목적');
   if(!data.dates.start || !$('#a_end').value) need.push('날짜');
-  if(!data.dates.start_time) need.push('출발 시각');
-  if(!data.dates.end_time) need.push('복귀 시각');
   if(data.scope === '해외'){ if(!data.grade) need.push('국가 등급'); if(!(data.rate > 0) || !data.rate_shot) need.push('환율'); if(!data.expenses.some(e => e.item === 'airfare')) need.push('항공권'); }   // 조회 결과 이미지 첨부 필수 (사전품의 작성 기준)
   else if(!data.transport.mode) need.push('교통편');
   else if(data.transport.mode !== 'corporate' && data.transport.total === undefined) need.push('교통비');   // 0원은 허용 (비운 것만 막음)
-  if(data.category === '연구과제' && !data.project) need.push('과제명');
-  if(data.companions.length && !data.companion_purpose.trim()) need.push('동행목적');
   if(need.length){ markNeed(need); $('#a_err').textContent = `${need.join(', ')}을(를) 넣어 주세요.`; return; }
   const noAmt = [...$$('#a_exp tbody tr')].filter(tr => !tr.querySelector('.amt').value.trim());   // 빈 칸 ≠ 0원
   if(noAmt.length){ noAmt.forEach(tr => tr.querySelector('.amt').classList.add('need')); $('#a_err').textContent = `금액이 빈 경비 ${noAmt.length}줄이 있어요. 금액을 넣거나 그 줄을 지워 주세요 (0원이면 0).`; return; }
+  // 출장 구분(기본값 없음)·동행자는 보낼 때 묻는다 — 다른 빈 칸을 먼저 막은 뒤라 다시 누를 때 또 묻지 않게
+  const meta = await askTripMeta(data); if(!meta) return;
+  data = { ...data, ...meta };
   // 연구과제: 사업=그 과제로 품의 → 그 과제 참여연구원이어야 사업코드도움에 나오고 결재가 남 (경영지원부 2026-11-20)
   if(data.category === '연구과제' && !(await confirmSubmit({ title: '잠깐! 과제의 참여연구원이 맞으시죠?', yes: '네, 맞아요',
     html: `<div class="cf-title">${escH(data.project)}</div>
@@ -639,7 +682,9 @@ async function loadTrips(){
       <div class="inline"><button class="btn small danger del">삭제</button>${t && applyRejected ? '<button class="btn again primary">다시 신청</button>' : ''}${approved && !reportDone && (!rdoc || rdocRejected) ? `<button class="btn primary rep">${repLabel}</button>` : ''}</div>`;
     el.querySelector('b').textContent = (r.docTitle || r.memo || '').replace(/^\[[^\]]*\]\s*/, '');
     const md = d => d ? `${Number(d.slice(5, 7))}월 ${Number(d.slice(8, 10))}일` : '';
-    el.querySelector('.sub').textContent = t ? `${md(t.start)}${t.end && t.end !== t.start ? ' ~ ' + md(t.end) : ' 당일'} 출장 · ${r.total}원` : `${Number(r.ym.slice(5, 7))}월 ${r.day}일 신청 · ${r.total}원`;
+    // 결의로 나간 금액(sendUnitAm). 신청 금액 = 결의 + 환원
+    const amt = r.sent > 0 ? `신청 ${r.total}원 · 정산 ${r.sent.toLocaleString('ko-KR')}원` : `${r.total}원`;
+    el.querySelector('.sub').textContent = t ? `${md(t.start)}${t.end && t.end !== t.start ? ' ~ ' + md(t.end) : ' 당일'} 출장 · ${amt}` : `${Number(r.ym.slice(5, 7))}월 ${r.day}일 신청 · ${amt}`;
     if(el.querySelector('.again')) el.querySelector('.again').onclick = () => repeatTrip(t.id, true);   // 반려된 신청만: 그대로 불러와 고쳐 올림 (승인된 출장엔 버튼 없음 — 다시 올리는 걸로 보였음, 사용자 요청 2026-11-10)
     if(el.querySelector('.rep')) el.querySelector('.rep').onclick = async () => {   // 이 PC 기록이 없거나 그룹웨어에서 들여온 기록이면 결재 문서 본문을 (다시) 읽어 채운다
       if(t && t.status !== '그룹웨어') return openReport(t.id);
@@ -1005,6 +1050,52 @@ $('#btnReport').onclick = async () => {
 };
 
 /* ---------- 설정 ---------- */
+/** 연구과제 과제명 = 그룹웨어 사업코드도움 목록에서 내 부서를 뺀 것 (참여연구원으로 등록된 과제만 나옴). keep: 목록에 없어도 남길 값 */
+let projLoading = false, projNames = [];
+const projectNames = (c, keep) => [...new Set([...(c.budgetDepts || []).filter(n => n !== c.budgetDept), keep].filter(Boolean))];
+/** 검색 단어가 모두 든 이름만 (띄어쓰기·대소문자 무시) */
+const matchNames = (names, q) => { const ws = String(q || '').toLowerCase().split(/\s+/).filter(Boolean); return names.filter(n => { const t = n.replace(/\s/g, '').toLowerCase(); return ws.every(w => t.includes(w)); }); };
+const projEmpty = () => projLoading ? '과제 목록을 불러오는 중…' : '고를 수 있는 과제가 없어요 (참여연구원 등록 확인)';
+/** 과제 목록이 비었으면 그룹웨어에서 다시 받는다. redraw: 받기 시작할 때·끝났을 때 다시 그리기 */
+function ensureProjects(redraw){ if(projectNames(META.config).length || projLoading) return; projLoading = true; redraw(); loadProfile(false, () => { projLoading = false; redraw(); }); }
+function fillProjects(c, keep = $('#pm_project').value){
+  projNames = projectNames(c, keep);
+  $('#pm_project').value = keep || '';
+  drawProjects();
+}
+const projHits = () => matchNames(projNames, $('#pm_project_q').value);
+function drawProjects(){   // 고른 건 강조
+  const hits = projHits(), cur = $('#pm_project').value;
+  $('#pm_proj_info').textContent = cur ? `선택: ${cur}` : projNames.length ? `${hits.length === projNames.length ? '' : hits.length + ' / '}${projNames.length}개` : '';   // 검색으로 가려져도 고른 게 보이게
+  $('#pm_project_list').innerHTML = hits.length ? hits.map(n => `<div class="${n === cur ? 'sel' : ''}" data-v="${escH(n)}">${escH(n)}</div>`).join('')
+    : `<p>${projNames.length ? '검색 결과가 없어요' : projEmpty()}</p>`;
+}
+/** 글자 칸에 과제 목록을 붙인다: 누르거나 치면 바로 아래에 검색되는 목록, 고르면 칸에 들어감. 목록에 없는 이름도 그대로 쓸 수 있음 */
+function attachProjectList(input){
+  const wrap = document.createElement('div'); wrap.className = 'pj-wrap'; input.replaceWith(wrap); wrap.append(input);
+  const pop = document.createElement('div'); pop.className = 'pm-list pj-pop hidden'; wrap.append(pop);
+  const hide = () => pop.classList.add('hidden');
+  const show = () => {
+    if(document.activeElement !== input) return hide();
+    const names = projectNames(META.config), cur = input.value.trim();
+    const hits = matchNames(names, names.includes(cur) ? '' : cur);   // 이미 고른 이름이면 전체를 보여 줌 (다른 걸로 바꾸기 쉽게)
+    pop.innerHTML = hits.length ? hits.map(n => `<div class="${n === cur ? 'sel' : ''}" data-v="${escH(n)}">${escH(n)}</div>`).join('')
+      : `<p>${names.length ? '목록에 없어요 — 적은 이름 그대로 써요' : projEmpty()}</p>`;
+    pop.classList.remove('hidden');
+  };
+  input.autocomplete = 'off';
+  input.addEventListener('focus', () => { show(); ensureProjects(show); });
+  input.addEventListener('input', show);
+  input.addEventListener('blur', hide);
+  input.addEventListener('keydown', e => { if(e.key === 'Escape') hide(); });
+  pop.addEventListener('mousedown', e => {   // mousedown: 칸에서 포커스가 빠지기 전에
+    e.preventDefault(); const d = e.target.closest('[data-v]'); if(!d) return;
+    input.value = d.dataset.v; ['input', 'change'].forEach(t => input.dispatchEvent(new Event(t, {bubbles: true}))); hide();
+  });
+}
+attachProjectList($('#r_project'));   // 출장보고서 과제명
+$('#pm_project_q').oninput = drawProjects;
+$('#pm_project_list').onclick = e => { const d = e.target.closest('[data-v]'); if(d){ $('#pm_project').value = d.dataset.v; drawProjects(); } };
 /** 예산 부서 선택: 그룹웨어 사업코드 목록 (없으면 지금 값만) */
 function fillDepts(c){   // 고를 게 두 개 이상이면 선택 상자, 아니면 글자 칸
   const list = [...new Set([c.budgetDept, ...(c.budgetDepts || [])].filter(Boolean))];
@@ -1012,14 +1103,13 @@ function fillDepts(c){   // 고를 게 두 개 이상이면 선택 상자, 아�
   $('#s_dept').classList.toggle('hidden', !many); $('#s_dept_text').classList.toggle('hidden', many);
   $('#s_dept').innerHTML = '';
   list.forEach(n => { const o = document.createElement('option'); o.value = o.textContent = n; $('#s_dept').appendChild(o); });
-  // 연구과제 과제명 후보 = 사업코드도움 목록 (참여연구원으로 등록된 과제만 나옴). 품의 입력 때 이 이름으로 사업을 고름
-  $('#a_project_list').innerHTML = list.filter(n => n !== c.budgetDept).map(n => `<option value="${escH(n)}">`).join('');
+  fillProjects(c);
   $('#s_dept').value = c.budgetDept || list[0] || '';
   $('#s_dept_text').value = c.budgetDept || '';
 }
 const deptValue = () => ($('#s_dept').classList.contains('hidden') ? $('#s_dept_text') : $('#s_dept')).value.trim();
-async function loadProfile(force){   // 그룹웨어에서 이름·품의부서·사업코드 목록
-  runJob('내 정보 불러오기', '/api/job/gw-profile', {force}, async () => { META = await rpc('/api/meta'); const c = META.config; $('#s_name').value = c.name; fillDepts(c); $('#s_msg').textContent = '그룹웨어에서 불러왔어요'; }, {quiet: true});
+async function loadProfile(force, onEnd = null){   // 그룹웨어에서 이름·품의부서·사업코드 목록. onEnd: 성공·실패 상관없이 끝나면
+  runJob('내 정보 불러오기', '/api/job/gw-profile', {force}, async () => { META = await rpc('/api/meta'); const c = META.config; $('#s_name').value = c.name; fillDepts(c); $('#s_msg').textContent = '그룹웨어에서 불러왔어요'; }, {quiet: true, onEnd});
 }
 $('#btnProfile').onclick = () => loadProfile(true);
 $('#btnSave').onclick = async () => {

@@ -30,6 +30,10 @@ window.fetch=async(url,opt)=>{ const u=String(url);
     const extra=st&&st.approve?st.approve.map(a=>({품의연월:a.품의연월,품의일:a.품의일,순번:a.순번,품의구분:'지출',적요:a.적요+'로 인한 출장',총금액:a.총금액,결재상태:a.결재상태})):[];
     const top=JSON.parse(localStorage.top||'[]').concat(extra).filter(r=>r.순번&&(r.품의연월||'').replace('-','')===ym&&(!b.getDt||String(+r.품의일)===String(+b.getDtDate)));
     return new Response(JSON.stringify({resultCode:0,resultData:top.map(toApi)}),{status:200,headers:{'Content-Type':'application/json'}}); }
+  if(u.endsWith('/nonprofit/NCA0019/0BN00001'))   // 품의서승인 목록: 결의로 나간 금액 (테스트용: 순번×100). 품의서입력 목록(NCA0018)은 실제처럼 0
+    return new Response(JSON.stringify({resultCode:0,resultData:JSON.parse(localStorage.top||'[]').filter(r=>r.순번).map(r=>({...toApi(r),sendUnitAm:Number(r.순번)*100,refundUnitAm:5}))}),{status:200,headers:{'Content-Type':'application/json'}});
+  if(u.endsWith('/nonprofit/NPCodePicker/0BN00001')&&JSON.parse((opt&&opt.body)||'{}').helpTy==='ABGT_BOTTOM_CODE2')   // 사업코드도움 목록 (부서·과제)
+    return new Response(JSON.stringify({resultCode:0,resultData:{resultList:DEPTS.map(([c,n])=>({mgtCd:c,mgtNm:n,printCd:c,printNm:n,bottomCd:'',bottomNm:''}))}}),{status:200,headers:{'Content-Type':'application/json'}});
   if(u.endsWith('/eap/eap107A04')){ const docs=JSON.parse(localStorage.docs||'[]');   // 상신문서 목록 (테스트가 localStorage.docs 로 넣음: DOC_NO·FORM_NM·DOC_TITLE)
     return new Response(JSON.stringify({resultCode:200,resultData:{list:{list:docs,totalCount:docs.length}}}),{status:200,headers:{'Content-Type':'application/json'}}); }
   return realFetch(url,opt); };
@@ -57,7 +61,7 @@ const TOP=['품의연월','품의일','순번','품의구분','적요','총금�
 // 실제 사업코드도움: 부서코드 | 부서명, 행이 많고 보이는 행만 그림(가상 스크롤). 매니퓰레이터 사업부는 아래쪽.
 const DEPTS=[];for(let i=0;i<30;i++)DEPTS.push(['D'+(1000+i),'테스트부서'+i]);DEPTS.splice(24,0,['MBU1000','매니퓰레이터 사업부']);DEPTS.push(['P2026004','RBY1 과제 (2026)']);   // 참여연구원으로 등록된 과제도 같은 목록에 나옴
 const SEARCH='__SEARCH__';   // enter: Enter로 검색 / button: 돋보기 버튼만 / none: 검색 안 됨(스크롤로 찾기)
-const CODES=[['8120002','여비교통비(판)_국내교통비'],['8120003','여비교통비(판)_국내숙박비'],['8120004','여비교통비(판)_식대'],['1350015','선급과제비(연구활동비)'],['1350011','선급과제비(재료비)']];
+const CODES=[['8120002','여비교통비(판)_국내교통비'],['8120003','여비교통비(판)_국내숙박비'],['8120004','여비교통비(판)_식대'],['1260001','선급과제비(재료비)'],['1260003','선급과제비(연구활동비)']];
 let S;
 function budget(){
   // 위쪽 품의 목록은 새로고침해도 남도록 localStorage 에 보관 (삭제 테스트용). 순번 44 는 결재 진행 중인 기존 품의
@@ -154,6 +158,8 @@ function approvalDialog(){
 route();
 </script></body></html>`;
 
+// 수신및참조 자동완성 조직도. MOCK_NO_ORG='연구지원팀' 처럼 쉼표로 빼면 그 부서가 없는 회사 (조직개편)
+const ORG = ['구매팀', '경영지원부', '경영지원부(전자결재용)', '연구지원팀', '연구기획운영팀', '개발 2팀', '개발 1팀'];
 // 구매의뢰서 작성 창 (실제 덤프 구조를 줄여서). MOCK_TEMPDRAFT=1 이면 "임시 저장 본문" 창을 늦게 띄움
 const COMPOSE = `<!doctype html><html><head><meta charset="utf-8"><title>전자결재</title><style>
 .OBTAutoCompleteChips_item__5KBpq{display:inline-block;margin:2px;padding:1px 4px;border:1px solid #aac} .ac{position:fixed;left:300px;top:220px;background:#fff;border:1px solid #888;z-index:9}
@@ -171,7 +177,7 @@ const COMPOSE = `<!doctype html><html><head><meta charset="utf-8"><title>전자�
 <iframe id="editorView_UBAP001" src="/compose-editor.html" style="width:900px;height:600px"></iframe>
 <input type="file" multiple id="files">
 <script>
-const ORG=['구매팀','경영지원부','경영지원부(전자결재용)','연구지원팀','개발 2팀','개발 1팀'];
+const ORG=__ORG__;
 const chips=document.getElementById('chips'), inp=document.getElementById('refin');
 const add=n=>{ const d=document.createElement('div'); d.className='OBTAutoCompleteChips_item__5KBpq OBTAutoCompleteChips_correct__5KBpq'; d.innerHTML='<div>'+n+' <button>x</button></div>'; chips.insertBefore(d, chips.lastElementChild); window.__chips=(window.__chips||[]).concat(n); };
 const close=()=>document.querySelectorAll('.ac,.tip').forEach(x=>x.remove());
@@ -215,7 +221,7 @@ function start(port = 0) {
     if (req.url === '/' || req.url.startsWith('/?')) return send(INDEX.replace('__SEARCH__', process.env.MOCK_SEARCH || 'button'));
     if (req.url.startsWith('/popup.html')) return send(POPUP);
     if (req.url === '/compose.js') return send(fs.readFileSync(path.join(__dirname, 'compose.js'), 'utf8'), 'text/javascript; charset=utf-8');
-    if (req.url.startsWith('/compose.html')) return send(COMPOSE.replace('/compose-editor.html', '/compose-editor.html' + (req.url.split('?')[1] ? '?' + req.url.split('?')[1] : '')).replace('__TEMPDRAFT__', process.env.MOCK_TEMPDRAFT ? 'true' : 'false').replace(/__LOADING__/g, String(Number(process.env.MOCK_LOADING) || 0)).replace('__TEMPDELAY__', String(Number(process.env.MOCK_TEMPDRAFT) > 1 ? Number(process.env.MOCK_TEMPDRAFT) : 700)));
+    if (req.url.startsWith('/compose.html')) return send(COMPOSE.replace('/compose-editor.html', '/compose-editor.html' + (req.url.split('?')[1] ? '?' + req.url.split('?')[1] : '')).replace('__ORG__', JSON.stringify(ORG.filter(o => !(process.env.MOCK_NO_ORG || '').split(',').includes(o)))).replace('__TEMPDRAFT__', process.env.MOCK_TEMPDRAFT ? 'true' : 'false').replace(/__LOADING__/g, String(Number(process.env.MOCK_LOADING) || 0)).replace('__TEMPDELAY__', String(Number(process.env.MOCK_TEMPDRAFT) > 1 ? Number(process.env.MOCK_TEMPDRAFT) : 700)));
     if (req.url.startsWith('/compose-editor.html')) return send(`<!doctype html><html><head><meta charset="utf-8"></head><body contenteditable="true">${fs.readFileSync(path.join(FIX, /방문객/.test(decodeURIComponent(req.url)) ? 'visitor_body.html' : 'purchase_body.html'), 'utf8')}</body></html>`);   // 양식마다 실제 본문
     if (req.url.startsWith('/editor.html'))
       return send(`<!doctype html><html><head><meta charset="utf-8"></head><body contenteditable="true">${fs.readFileSync(path.join(FIX, process.env.MOCK_FORM || 'apply_form_body.html'), 'utf8')}</body></html>`);

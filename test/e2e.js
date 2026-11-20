@@ -22,6 +22,7 @@ const ui = {
 };
 
 if (app.dock) app.dock.hide();   // 테스트용 앱이 Dock 에 두 번째 아이콘으로 뜨지 않게
+app.commandLine.appendSwitch('disable-features', 'PaintHolding');   // 앱(main.js)과 같게
 app.whenReady().then(async () => {
   let code = 0;
   const { srv, url, saved } = await mock.start();
@@ -36,6 +37,8 @@ app.whenReady().then(async () => {
       gw = new BrowserWindow({ width: 1400, height: 950, show: !!process.env.E2E_SHOW, webPreferences: { partition: 'e2e-' + Date.now(), backgroundThrottling: false } });
       gw.webContents.setWindowOpenHandler(() => ({ action: 'allow', overrideBrowserWindowOptions: { show: false, webPreferences: { backgroundThrottling: false } } }));
       if (!process.env.E2E_SHOW) gw.webContents.on('did-create-window', w => w.on('show', () => w.hide()));   // 성공 시 띄우는 작성 팝업도 테스트에선 숨김
+      // E2E_LOCK: 사람이 [작업 보기]로 보는 중처럼 창을 띄우고 잠금 (main.js lockGw 와 같게 마우스만). E2E_LOCK=focus 는 예전 잠금(포커스도 막음) 재현용
+      if (process.env.E2E_LOCK) { gw.showInactive(); gw.setIgnoreMouseEvents(true); if (process.env.E2E_LOCK === 'focus') gw.setFocusable(false); }
       return gw;
     };
     const env = { cfg: store.config(), store, ui, log: m => { ui.info(m); console.log('  ·', m); }, gwWindow, makeNaverWindow: () => { throw new Error('no naver'); }, creds: () => ({ id: 'tester', pw: 'pw1234' }) };
@@ -65,6 +68,12 @@ app.whenReady().then(async () => {
     const t0 = Date.now();
     const { id } = await runner.runApply(env, data);
     console.log(`  runApply ${((Date.now() - t0) / 1000).toFixed(1)}s, id=${id}`);
+    {   // 연구과제 과제명 목록 = 사업코드도움 전체 (화면 그리드는 보이는 줄만 읽혀 과제가 빠졌음)
+      const { Amaranth } = require('../src/engine/gw');
+      const names = await new Amaranth({ win: gwWindow(), baseUrl: url, ui, log: () => {} }).budgetDeptList({ coCd: '1000', empCd: '1' }, '16');
+      assert.ok(names.includes('RBY1 과제 (2026)') && names.length === 32, `사업코드 목록: ${names.length}개`);
+      console.log('E2E 사업코드 목록(API) OK');
+    }
 
     // 그리드 상태
     const st = await gw.webContents.executeJavaScript('JSON.stringify({top:S.top, bot:S.bot, approval:window.__approval})');
@@ -211,6 +220,7 @@ app.whenReady().then(async () => {
     // 올린 품의 목록·삭제: 결재 진행 중(순번 44)은 잠김, 나머지만 삭제
     const { rows } = await runner.runListBudget(env);
     assert.equal(rows.find(r => r.seq === '44').locked, true);
+    assert.ok(rows.length && rows.every(r => r.sent === Number(r.seq) * 100 && r.refund === 5), '결의 금액은 품의서승인 목록 API 값: ' + JSON.stringify(rows.map(r => [r.seq, r.sent])));
     const mine = rows.filter(r => !r.locked);
     assert.ok(mine.length >= 1, `삭제 가능한 품의가 1건 이상이어야 함: ${JSON.stringify(rows)}`);
     const res = await runner.runDeleteBudget(env, [...mine.map(r => r.key), rows.find(r => r.seq === '44').key]);

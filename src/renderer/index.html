@@ -55,6 +55,19 @@ main{max-width:1080px;margin:0 auto;padding:24px 20px 80px}
 input,select,textarea{width:100%;font:inherit;color:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:#fff}
 input:focus,select:focus,textarea:focus{outline:2px solid var(--accent-soft);border-color:var(--accent)}
 input[readonly]{background:var(--bg);color:var(--muted);cursor:default} input[readonly]:focus{outline:none;border-color:var(--line)}
+.pm-proj-head{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:8px;font-size:14px}
+.pm-proj-head span{color:var(--muted);font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pm-search{padding-left:34px;background:#fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='none' stroke='%236b7280' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='7' cy='7' r='5'/%3E%3Cpath d='m11 11 3.5 3.5'/%3E%3C/svg%3E") no-repeat 11px center}
+.pm-list{display:flex;flex-direction:column;gap:6px;max-height:264px;overflow:auto;margin-top:10px;padding:2px}
+.pm-list div{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#fff;cursor:pointer;transition:border-color .12s,background .12s}
+.pm-list div::before{content:'';flex:none;width:16px;height:16px;border-radius:50%;border:1.5px solid #c3c8cf;box-sizing:border-box}
+.pm-list div:hover{border-color:var(--accent)}
+.pm-list div.sel{border-color:var(--accent);background:var(--accent-soft);color:var(--accent);font-weight:600}
+.pm-list div.sel::before{border:4.5px solid var(--accent);background:#fff}
+.pm-list p{margin:0;padding:18px 0;text-align:center;color:var(--muted)}
+.pj-wrap{position:relative;flex:1;min-width:0} .pj-wrap:has(>input.hidden){display:none}
+.pj-pop{position:absolute;left:0;right:0;top:100%;z-index:30;margin-top:4px;padding:6px;background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 12px 32px rgba(15,23,42,.16)}
+.pj-pop div{padding:8px 10px}
 textarea{resize:vertical;min-height:84px}
 .seg{display:flex;gap:6px;flex-wrap:wrap}
 .seg label{border:1px solid var(--line);border-radius:999px;padding:6px 14px;cursor:pointer;user-select:none}
@@ -280,8 +293,9 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
 @keyframes hintBob{0%,100%{transform:translateY(0)}50%{transform:translateY(-2px)}}
 .tk-break span.need{background:#fff3cd;color:#7a4b00;font-weight:600}
 
-#cfmModal,#aiLimitModal,#aiConsentModal,#askModal,#carModal,#mealModal,#vsAskModal{position:fixed;inset:0;background:rgba(15,23,42,.45);display:none;align-items:center;justify-content:center;z-index:70;backdrop-filter:blur(2px)}
-#cfmModal.on,#aiLimitModal.on,#aiConsentModal.on,#askModal.on,#carModal.on,#mealModal.on,#vsAskModal.on{display:flex;animation:cfFade .18s ease-out}
+#cfmModal,#aiLimitModal,#aiConsentModal,#askModal,#carModal,#mealModal,#vsAskModal,#preModal{position:fixed;inset:0;background:rgba(15,23,42,.45);display:none;align-items:center;justify-content:center;z-index:70;backdrop-filter:blur(2px)}
+.pm-pick{display:flex;gap:10px}.pm-pick .btn{flex:1;padding:14px;font-size:15px}.pm-pick .btn.sel{border-color:#6d5efc;background:#f3f1ff;font-weight:700}
+#cfmModal.on,#aiLimitModal.on,#aiConsentModal.on,#askModal.on,#carModal.on,#mealModal.on,#vsAskModal.on,#preModal.on{display:flex;animation:cfFade .18s ease-out}
 @keyframes cfFade{from{opacity:0}to{opacity:1}}
 /* 출장지 자동완성 (네이버 지역 검색) */
 .acwrap{position:relative;min-width:0}.acwrap input{width:100%}
@@ -333,7 +347,7 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
 .pofile .thumb{flex:none;width:64px;height:44px;border-radius:8px;object-fit:cover;border:1px solid var(--line);background:#f3f6fa}
 #pu_items td{padding:3px 3px}#pu_items input{padding:8px 6px;min-width:0}#pu_items input[type=date]{padding:8px 4px;font-size:14px}#pu_items .del{padding:6px 8px}
 #askChoices{display:flex;flex-direction:column;gap:8px}#askChoices button{text-align:left;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:#fff;font-size:14px;cursor:pointer}#askChoices button:hover{border-color:var(--accent);background:var(--accent-soft)}#askChoices button small{display:block;color:var(--muted);margin-top:2px}
-#cfmModal .box,#aiLimitModal .box,#aiConsentModal .box,#askModal .box,#carModal .box,#mealModal .box,#vsAskModal .box{background:#fff;border-radius:16px;width:620px;max-width:calc(100vw - 32px);max-height:calc(100vh - 48px);display:flex;flex-direction:column;box-shadow:0 30px 70px -20px rgba(0,0,0,.45);animation:cfPop .22s cubic-bezier(.2,.9,.3,1.2)}
+#cfmModal .box,#aiLimitModal .box,#aiConsentModal .box,#askModal .box,#carModal .box,#mealModal .box,#vsAskModal .box,#preModal .box{background:#fff;border-radius:16px;width:620px;max-width:calc(100vw - 32px);max-height:calc(100vh - 48px);display:flex;flex-direction:column;box-shadow:0 30px 70px -20px rgba(0,0,0,.45);animation:cfPop .22s cubic-bezier(.2,.9,.3,1.2)}
 @keyframes cfPop{from{transform:translateY(8px) scale(.98);opacity:.6}to{transform:none;opacity:1}}
 .cf-head{display:flex;align-items:center;padding:18px 22px 10px;font-size:17px}.cf-head .x{margin-left:auto;border:0;background:none;font-size:16px;cursor:pointer;color:var(--muted)}
 .cf-body{padding:4px 22px 10px;overflow:auto}
@@ -429,13 +443,15 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
     <div class="row"><label>출장지</label><div class="acwrap"><input id="a_destination" placeholder="예: 레인보우로보틱스 판교 AI 사무소" autocomplete="off"><div id="a_dest_ac" class="ac hidden"></div></div></div>
     <div class="row"><label>출발</label><div class="two"><input type="date" id="a_start"><input type="time" id="a_start_time" title="출발 시각"></div></div>
     <div class="row"><label>복귀</label><div class="two"><input type="date" id="a_end"><input type="time" id="a_end_time" title="복귀 시각"></div></div>
+    <div hidden><!-- 구분·과제명·동행자는 [그룹웨어 보내기] 때 창으로 물어봄 (값만 여기 담음) -->
     <div class="row"><label>구분</label>
       <div class="inline"><div class="seg">
-        <label><input type="radio" name="a_category" value="일반" checked>일반</label>
+        <label><input type="radio" name="a_category" value="일반">일반</label>
         <label><input type="radio" name="a_category" value="연구과제">연구과제</label>
       </div><input id="a_project" placeholder="과제명 (그룹웨어 사업 이름)" class="hidden" list="a_project_list"><datalist id="a_project_list"></datalist></div></div>
     <div class="row"><label>동행자</label><input id="a_companions" placeholder="쉼표로 구분 (없으면 비워두기)"></div>
     <div class="row hidden" id="a_cp_row"><label>동행목적</label><input id="a_companion_purpose"></div>
+    </div>
     <div class="row" style="align-items:start"><label style="padding-top:8px">출장목적</label><textarea id="a_purpose" placeholder="무엇을, 왜 하러 가는지 2~4문장"></textarea></div>
   </div>
 
@@ -545,7 +561,7 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
         <label><input type="radio" name="r_category" value="생산">생산</label>
         <label><input type="radio" name="r_category" value="기타">기타</label>
         <label><input type="radio" name="r_category" value="정부과제">정부과제</label></div></div>
-      <div class="row"><label>과제명</label><input id="r_project" placeholder="정부과제면 필수"></div>
+      <div class="row"><label>과제명</label><input id="r_project" placeholder="과제 이름 (목록에서 검색 · 정부과제면 필수)"></div>
       <div class="row"><label>출장일시</label><input id="r_period"></div>
       <div class="row"><label>출장지</label><input id="r_destination"></div>
       <div class="row"><label>방문기관</label><input id="r_visit_org"></div>
@@ -873,6 +889,22 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
 <div id="cfmModal"><div class="box"><div class="cf-head"><b id="cfTitle">이대로 보낼까요?</b><button class="x" type="button" id="cfX">✕</button></div>
   <div class="cf-body" id="cfBody"></div>
   <div class="cf-foot"><span class="cf-note" id="cfNote"></span><button class="btn" type="button" id="cfNo">고칠게요</button><button class="btn primary glow" type="button" id="cfYes">보내기 ✦</button></div></div></div>
+<div id="preModal"><div class="box" style="width:480px"><div class="cf-head"><b id="pm_title">출장 구분을 골라 주세요</b><button class="x" type="button" id="pmX">✕</button></div>
+  <div class="cf-body">
+    <div id="pm_cat">
+      <div class="pm-pick"><button class="btn" type="button" data-cat="일반">일반</button><button class="btn" type="button" data-cat="연구과제">연구과제</button></div>
+      <div class="hidden" id="pm_proj_row" style="margin-top:16px"><div class="pm-proj-head"><b>과제</b><span id="pm_proj_info"></span></div><input id="pm_project_q" class="pm-search" placeholder="과제 이름으로 검색 (예: 소방, 휴머노이드)" autocomplete="off"><div id="pm_project_list" class="pm-list"></div><input type="hidden" id="pm_project"></div>
+    </div>
+    <div id="pm_comp" class="hidden">
+      <div class="pm-pick"><button class="btn" type="button" id="pmAlone">없음 (혼자)</button><button class="btn" type="button" id="pmWith">있음</button></div>
+      <div id="pm_comp_rows" class="hidden" style="margin-top:12px">
+        <div class="row"><label>동행자</label><input id="pm_companions" placeholder="쉼표로 구분 (예: 홍길동, 김철수)"></div>
+        <div class="row"><label>동행목적</label><input id="pm_companion_purpose" placeholder="예: 셋업 지원"></div>
+      </div>
+    </div>
+    <div class="err" id="pm_err"></div>
+  </div>
+  <div class="cf-foot"><button class="btn" type="button" id="pmCancel">취소</button><button class="btn primary glow" type="button" id="pmOk">다음</button></div></div></div>
 <div id="aiLimitModal"><div class="box" style="width:480px"><div class="cf-head"><b>💰 지원 한도가 있나요?</b><button class="x" type="button" id="alX">✕</button></div>
   <div class="cf-body">
     <p style="margin:0 0 10px">AI 도구 비용 지원에 한도가 있으면 금액을 넣어 주세요. 청구 합계가 넘으면 <b>한도까지만</b> 품의해요.</p>
