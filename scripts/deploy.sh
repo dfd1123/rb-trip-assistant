@@ -40,12 +40,12 @@ done
 [ -n "$NAVER_CLIENT_ID" ] && [ -n "$NAVER_CLIENT_SECRET" ] || { echo "Error: .env 에 NAVER_CLIENT_ID / NAVER_CLIENT_SECRET 이 없습니다 (네이버 지역 검색 키, 앱에 내장)."; exit 1; }
 [ -n "$SLACK_BOT_TOKEN" ] && [ -n "$SLACK_CHANNEL" ] || { echo "Error: .env 에 SLACK_BOT_TOKEN / SLACK_CHANNEL 이 없습니다 (오류 기록을 받을 슬랙 봇 토큰·채널 ID, 앱에 내장)."; exit 1; }
 docker info >/dev/null 2>&1 || { echo "Error: Docker 가 실행 중이 아닙니다 (리눅스 deb·rpm 빌드). Docker 를 켜고 다시 실행하세요."; exit 1; }
-# 빌드 이미지가 amd64 전용 — 에뮬레이션이 없으면 맥·윈도우를 다 빌드한 뒤에야 실패하니 먼저 확인
-docker run --rm --platform linux/amd64 electronuserland/builder:18 true >/dev/null 2>&1 || {
-  echo "Error: Docker 가 amd64 이미지를 못 돌립니다 (exec format error). 둘 중 하나 하고 다시 실행하세요:"
-  echo "  · Docker Desktop › Settings › General › 'Use Rosetta for x86_64/amd64 emulation on Apple Silicon' 켜고 Apply & restart"
-  echo "  · docker run --privileged --rm tonistiigi/binfmt --install amd64   (Docker 를 다시 켜면 또 해야 함)"
-  exit 1; }
+# 빌드 이미지가 amd64 전용 — Rosetta 로만 돈다 (QEMU 는 app-builder(Go)가 'fatal error: lfstack.push' 로 죽음).
+# 맥·윈도우를 다 빌드한 뒤에야 실패하지 않게 먼저 확인
+if [ "$(uname -m)" = arm64 ] && ! docker run --rm --privileged --pid=host alpine nsenter -t 1 -m test -f /proc/sys/fs/binfmt_misc/rosetta >/dev/null 2>&1; then
+  echo "Error: Docker 에 Rosetta(amd64 실행) 등록이 없습니다. Docker Desktop 을 재시작하세요 (Settings › General › 'Use Rosetta …' 켜짐 확인)."
+  exit 1
+fi
 if [ $IS_MAC = 1 ]; then
   if [ -z "$APPLE_ID" ] || [ -z "$APPLE_APP_SPECIFIC_PASSWORD" ]; then
     echo "Error: 맥 공증에 APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD 가 필요합니다 (환경변수나 ~/.zshrc 의 export 줄에서 못 찾음)."
