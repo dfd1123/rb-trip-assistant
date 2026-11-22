@@ -33,10 +33,10 @@ async function check(force = false) {
   if (!force && Date.now() - lastCheck < CHECK_GAP) return state;
   lastCheck = Date.now();
   try {
-    const res = await fetch(VERSION_URL, { cache: 'no-store' });
+    const res = await fetch(VERSION_URL, { cache: 'no-store', signal: AbortSignal.timeout(15000) });
     if (!res.ok) return state;
     const v = await res.json();   // { version, notes, assets: [{ name, url }], updated_at }
-    release = { tag_name: v.version, assets: (v.assets || []).map(a => ({ name: a.name, browser_download_url: a.url })) };
+    release = { tag_name: v.version, assets: (v.assets || []).filter(a => String(a.url || '').startsWith(`https://github.com/${RELEASE_REPO}/releases/download/`)).map(a => ({ name: a.name, browser_download_url: a.url })) };   // 우리 Release 파일만 받아 실행
     if (newer(v.version, state.current) && !hasAssetForThisPC()) { Object.assign(state, { status: 'latest', version: '' }); return state; }   // 이 OS 파일이 빠진 배포(예: 맥 빼고 배포) → 이전 버전 유지
     if (newer(v.version, state.current)) Object.assign(state, { status: 'available', version: String(v.version).replace(/^v/, ''), notes: String(v.notes || '').slice(0, 1500),
       url: `https://github.com/${RELEASE_REPO}/releases/tag/v${String(v.version).replace(/^v/, '')}`, error: '' });
@@ -46,16 +46,18 @@ async function check(force = false) {
 }
 
 async function download(url, file) {
-  const res = await fetch(url);
-  if (!res.ok || !res.body) throw new Error(`다운로드 실패 (${res.status})`);
+  const ctrl = new AbortController(); let idle; const poke = () => { clearTimeout(idle); idle = setTimeout(() => ctrl.abort(), 60000); };   // 60초 동안 한 조각도 안 오면 끊음 (멈추면 업데이트 창에서 못 나갔음)
+  poke();
+  let res; try { res = await fetch(url, { signal: ctrl.signal }); } catch (e) { clearTimeout(idle); throw new Error('다운로드가 멈췄어요. 네트워크를 확인하고 다시 해 주세요.'); }
+  if (!res.ok || !res.body) { clearTimeout(idle); throw new Error(`다운로드 실패 (${res.status})`); }
   const total = Number(res.headers.get('content-length')) || 0;
   const out = fs.createWriteStream(file);
   const failed = new Promise((_, j) => out.once('error', j)); failed.catch(() => {});   // 쓰기 오류(디스크 부족 등)는 처음부터 받는다 — 안 받으면 앱 전체 오류창이 뜨고 drain 을 영영 기다렸음
   let got = 0;
-  for await (const chunk of res.body) {
-    got += chunk.length; if (total) state.percent = Math.round(got / total * 100);
+  try { for await (const chunk of res.body) {
+    poke(); got += chunk.length; if (total) state.percent = Math.round(got / total * 100);
     if (!out.write(chunk)) await Promise.race([new Promise(r => out.once('drain', r)), failed]);
-  }
+  } } catch (e) { out.destroy(); throw ctrl.signal.aborted ? new Error('다운로드가 멈췄어요. 네트워크를 확인하고 다시 해 주세요.') : e; } finally { clearTimeout(idle); }
   // end 콜백은 'finish'(다 썼음)에 불리고 파일 핸들은 그 뒤 'close' 에 닫힌다. Windows 는 쓰기 핸들이 열린 exe 를 실행하면 EBUSY → close 까지 기다림
   await Promise.race([new Promise(r => { out.once('close', r); out.end(); }), failed]);
   if (total && got !== total) throw new Error(`다운로드가 중간에 끊겼어요 (${got}/${total} bytes). 다시 시도해 주세요.`);
@@ -131,9 +133,9 @@ async function installDownload() {
   state.status = 'downloading'; state.percent = 0;
   await download(asset.browser_download_url, file);
   state.status = 'installing';
-  const launch = async (cmd, args = []) => { await launchDetached(cmd, args); setTimeout(() => app.quit(), 300); };
+  const launch = async (cmd, args = []) => { app.releaseSingleInstanceLock(); try { await launchDetached(cmd, args); } catch (e) { app.requestSingleInstanceLock(); throw e; } setTimeout(() => app.quit(), 300); };   // 잠금을 먼저 놔야 새 버전이 '이미 켜져 있음'으로 꺼지지 않음
   if (kind === 'exe') await launch(file, ['/S', '--force-run']);   // 조용히 설치하고 실행
-  else if (kind === 'appimage') { fs.chmodSync(file, 0o755); try { fs.unlinkSync(process.env.APPIMAGE); } catch (e) { /* 없으면 그냥 복사 */ } fs.copyFileSync(file, process.env.APPIMAGE); await launch(process.env.APPIMAGE); }   // 실행 중인 AppImage 에 덮어쓰면 ETXTBSY → 먼저 지우고(inode 는 남아 실행엔 지장 없음) 새로 만든다
+  else if (kind === 'appimage') { const next = `${process.env.APPIMAGE}.new`; fs.copyFileSync(file, next); fs.chmodSync(next, 0o755); fs.renameSync(next, process.env.APPIMAGE); await launch(process.env.APPIMAGE); }   // 옆에 다 쓴 뒤 바꿔 끼움 (지우고 복사하다 실패하면 앱이 없어졌음). 실행 중 파일도 rename 은 됨   // 실행 중인 AppImage 에 덮어쓰면 ETXTBSY → 먼저 지우고(inode 는 남아 실행엔 지장 없음) 새로 만든다
   else await installPackage(kind, file);
 }
 

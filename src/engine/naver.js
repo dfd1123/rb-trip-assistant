@@ -16,7 +16,7 @@ const directionsUrl = (mode, originGeo, destGeo) => `https://map.naver.com/p/dir
 function parsePlace(text) {
   const ls = String(text || '').split(/\n+/).map(s => s.trim()).filter(Boolean);
   if (ls[0] !== '장소' || ls.length < 2) return null;   // 번지로 찾은 곳은 '장소\n세종 집현동 1095' 두 줄뿐
-  const addrAt = ls.findIndex((s, i) => i > 1 && /^(서울|부산|대구|인천|광주|대전|울산|세종|경기|강원|충북|충남|전북|전남|경북|경남|제주|충청|전라|경상)/.test(s));
+  const addrAt = ls.findIndex((s, i) => i > 1 && /^(서울|부산|대구|인천|광주|대전|울산|세종|경기|강원|충북|충남|전북|전남|경북|경남|제주|충청|전라|경상)(?:특별시|광역시|특별자치시|특별자치도|남도|북도|도|시)?\s/.test(s));   // 지역 이름 뒤 띄어쓰기까지 — '서울대학교'·'대전역'을 주소로 봐 분류(대학교)가 이름이 됐음
   if (addrAt < 0) return { name: ls[ls.length - 1], address: '' };
   const name = ls[addrAt - 1];
   const address = ls[addrAt].endsWith(' ' + name) ? ls[addrAt].slice(0, -name.length - 1).trim() : ls[addrAt];   // "… 공단1로 78 한국항공우주산업" → 이름 꼬리 떼기
@@ -212,6 +212,7 @@ async function lookupFare({ makeWindow, mode, origin, dest, shotPath, ui, log, d
       try { require('fs').mkdirSync(require('path').dirname(shotPath), { recursive: true }); shot = await p.screenshot(shotPath); }
       catch (e) { log(`(지도 화면 캡처 실패: ${String(e.message).slice(0, 80)} — 증빙 캡처는 직접 넣어 주세요)`); }
     }
+    const recapture = async () => { try { require('fs').mkdirSync(require('path').dirname(shotPath), { recursive: true }); return await p.screenshot(shotPath); } catch (e) { return ''; } };   // 사람이 지도 창에서 직접 찾은 화면
     // 못 읽으면 바로 사람에게: [네이버 지도 열기]로 직접 검색해서 금액만 입력
     const manualHint = `자동 교통비 검색이 안 됐어요${found ? '' : where.failed === 0 ? ` (출발지 '${origin}'를 지도에서 못 찾음 — 설정의 기본 출발지를 지도에서 찾히는 주소로 바꿔 주세요)` : ` ('${dest}'를 지도에서 못 찾음 — 지도 검색어 칸에 주소를 넣으면 다음엔 자동)`}. 위 [네이버 지도 열기]를 눌러 직접 길찾기한 뒤 `;
 
@@ -222,7 +223,7 @@ async function lookupFare({ makeWindow, mode, origin, dest, shotPath, ui, log, d
       if (v && fuelOnly) log(`읽은 값: 연료비 ${v.fuel.toLocaleString('ko-KR')}원 (편도, ${basis} 기준)`);
       else if (v && !(await ui.confirm(`읽은 값: 연료비 ${v.fuel.toLocaleString('ko-KR')}원, 통행료 ${v.toll.toLocaleString('ko-KR')}원 (편도, ${basis} 기준). 맞나요?`))) v = null;
       const source = v ? 'naver' : 'manual';
-      if (!v) v = { fuel: await ui.askInt(manualHint + '연료비(편도, 원)를 입력해 주세요'), toll: fuelOnly ? 0 : await ui.askInt('통행료(편도, 원, 없으면 0)') };
+      if (!v) { v = { fuel: await ui.askInt(manualHint + '연료비(편도, 원)를 입력해 주세요'), toll: fuelOnly ? 0 : await ui.askInt('통행료(편도, 원, 없으면 0)') }; shot = await recapture(); }
       const oneWay = v.fuel + v.toll;
       return { mode, oneWay, ...v, total: roundTrip(oneWay), source, screenshot: shot, place: where.geo || where.place || null, query: dest, basis,
         describe: `(연료비 ${v.fuel.toLocaleString('ko-KR')} + 통행료 ${v.toll.toLocaleString('ko-KR')}) × 2 = ${roundTrip(oneWay).toLocaleString('ko-KR')}원${basis ? ` (${basis})` : ''}` };
@@ -230,7 +231,7 @@ async function lookupFare({ makeWindow, mode, origin, dest, shotPath, ui, log, d
     let t = found ? (detailFare || parseTransitText(text)) : null;
     if (t && !(await ui.confirm(`읽은 값: 총 요금 ${t.toLocaleString('ko-KR')}원 (편도). 맞나요?`))) t = null;
     const source = t ? 'naver' : 'manual';
-    if (!t) t = await ui.askInt(manualHint + '버스 포함 총 요금(편도, 원)을 입력해 주세요');
+    if (!t) { t = await ui.askInt(manualHint + '버스 포함 총 요금(편도, 원)을 입력해 주세요'); shot = await recapture(); }
     return { mode, oneWay: t, total: roundTrip(t), source, screenshot: shot, place: where.geo || where.place || null, query: dest,
       describe: `${t.toLocaleString('ko-KR')} × 2 = ${roundTrip(t).toLocaleString('ko-KR')}원` };
   } finally {

@@ -50,7 +50,7 @@ app.whenReady().then(async () => {
       return gw;
     };
     const asked = [];
-    const ui = { logs: [], info(m) { this.logs.push(m); }, async assist(m) { throw new Error(`자동화가 사람 도움을 요청함: ${m}`); }, async confirm(t) { asked.push(t); return this.redo; }, async askInt(t) { throw new Error(`입력 요청: ${t}`); },
+    const ui = { logs: [], info(m) { this.logs.push(m); }, async assist(m) { throw new Error(`자동화가 사람 도움을 요청함: ${m}`); }, async confirm(t) { if (/작성 창이 아직 열려/.test(t)) return true; asked.push(t); return this.redo; }, async askInt(t) { throw new Error(`입력 요청: ${t}`); },
       async askChoice(t, opts) { asked.push(t + ' :: ' + opts.join(' / ')); const i = opts.findIndex(o => /임직원/.test(o)); return i >= 0 ? i : 0; }, async pause(m) { throw new Error(`멈춤: ${m}`); }, redo: true };
     const env = { cfg: store.config(), store, ui, log: m => { ui.info(m); if (process.env.E2E_LOG) console.log('  ·', m); }, gwWindow, makeNaverWindow: () => { throw new Error('no naver'); }, creds: () => ({ id: 'tester', pw: 'pw1234' }), debugDir: null };
     const report = (expenses) => ({ trip_id: 't1', reason: 'FCC인증의 건', name: '이정우', companions: [], category: '로봇', project: '', destination: '한국항공우주산업', visit_org: '한국항공우주산업', fund: '일반경비',

@@ -64,6 +64,8 @@ test('보고서: 정부과제는 과제명 필수', () => {
   const base = { reason: 'r', name: 'n', fund: '일반경비', category: '로봇', period: 'p', destination: 'd', purpose: 'p', report: 'r', schedule: [{ date: '10/20', place: 'x', detail: '점검' }], expenses: [{ item: 'meal', amount: 1000, proofs: ['/tmp/영수증.jpg'] }] };
   assert.throws(() => R.parseReport({ ...base, category: '정부과제' }), /과제명/);
   assert.equal(R.parseReport({ ...base, category: '로봇' }).category, '로봇');
+  assert.throws(() => R.parseReport({ ...base, category: '기타', project: ' ' }), /기타는 내용/);   // 기타는 내용 필수 (과제구분 칸)
+  assert.equal(R.parseReport({ ...base, category: '기타', project: '고객사 데모' }).project, '고객사 데모');
   assert.throws(() => R.parseReport({ ...base, schedule: [{ date: '10/20', place: 'x', detail: '' }] }), /세부 활동/);   // 세부 활동 내용 필수
   assert.throws(() => R.parseReport({ ...base, category: '' }), /출장구분/);   // 기본값 없음, 필수 (사용자 요청 2026-11-10)
   assert.equal(R.parseReport({ ...base, expenses: [] }).expenses.length, 0);                                            // 정산할 경비가 없어도 됨 (전액 환원)
@@ -775,6 +777,9 @@ test('보고서 초안: 자차 유류비 줄은 넣지 않음(화면이 네이�
   assert.equal(e.amount, 60000); assert.ok(!/여유/.test(e.memo), e.memo); assert.deepEqual(e.proofs, []);   // 지도 캡처는 영수증이 아님
   s.save('t2', { apply: apply('transit') });
   assert.equal(reportDraft(s, {}, 't2').expenses[0].amount, 60000);   // 조회값이 없으면 신청액에서 여유분만 뺌
+  assert.equal(reportDraft(s, {}, 't2').category, undefined);   // 출장구분 기본값 없음
+  s.save('p', { apply: { ...apply('transit'), category: '연구과제', project: '휴머노이드 과제' } });
+  const pd = reportDraft(s, {}, 'p'); assert.equal(pd.category, '정부과제'); assert.equal(pd.project, '휴머노이드 과제');
 });
 
 test('한 줄 메모 자가 테스트 2026-10-28: 모델명 숫자·요일 조사·주말 걸친 범위·잘못된 M/D·해 넘김·새벽 출발·밤 12시·장소', () => {
@@ -1094,4 +1099,93 @@ test('연구과제 출장 품의(줄이 다 선급과제비(연구활동비)): �
   const { plan, left } = R.planPayees(budgets, [L('국내교통비', 40000, 'KTX'), L('식대', 12000, '11/20 1인 중식')]);
   assert.equal(left.length, 0, '못 넣은 영수증이 없어야 함');
   assert.equal(plan.reduce((a, pb) => a + pb.lines.reduce((x, l) => x + l.amount, 0), 0), 52000);
+  // 줄마다 비고(교통·숙박·식대)에 맞는 영수증이 들어가야 함 — 앞 줄부터 채우면 숙박 영수증이 교통 줄·숙박 줄로 쪼개졌음 (2026-11-22)
+  const b3 = [{ 예산과목: P, 예산과목비고: '출장 대중교통비 (왕복)', 품의금액: '94,814' }, { 예산과목: P, 예산과목비고: '출장 숙박비 (2박 × 70,000원)', 품의금액: '140,000' }, { 예산과목: P, 예산과목비고: '출장 식대 (아침 2회, 점심 3회, 저녁 2회)', 품의금액: '91,000' }];
+  const D = (label, amount, memo, date) => ({ ...L(label, amount, memo), date });
+  const r3 = R.planPayees(b3, [D('국내교통비', 45000, '10/19 KTX', '2026-10-19'), D('식대', 15000, '10/19 1인 중식', '2026-10-19'), D('국내숙박비', 70000, '10/19 숙박', '2026-10-19'),
+    D('식대', 15000, '10/20 1인 석식', '2026-10-20'), D('국내숙박비', 70000, '10/20 숙박', '2026-10-20'), D('국내교통비', 45000, '10/21 KTX', '2026-10-21')]);
+  assert.deepEqual(r3.plan.map(pb => pb.lines.map(l => l.memo)), [['10/19 KTX', '10/21 KTX'], ['10/19 숙박', '10/20 숙박'], ['10/19 1인 중식', '10/20 1인 석식']]);
+  assert.ok(r3.plan.every(pb => pb.lines.every(l => !l.split)), '영수증이 줄 사이로 쪼개지면 안 됨');
+  // 숙박이 숙박 줄을 넘으면 남는 줄로 (예산과목이 같아 결의 가능)
+  const r4 = R.planPayees(b3, [D('국내숙박비', 150000, '10/19 숙박 (2박)', '2026-10-19')]);
+  assert.deepEqual(r4.plan.map(pb => pb.lines.reduce((x, l) => x + l.amount, 0)), [10000, 140000, 0]);
+  // 품의가 선급과제비 한 줄(교통·식대·숙박 합친 금액)뿐이면 영수증이 다 그 줄로, 넘는 금액만 cut
+  const one = [{ 예산과목: P, 예산과목비고: '출장 경비 (교통·숙박·식대)', 품의금액: '250,000' }];
+  const lines5 = [D('국내교통비', 45000, '10/19 KTX', '2026-10-19'), D('식대', 15000, '10/19 1인 중식', '2026-10-19'), D('국내숙박비', 70000, '10/19 숙박', '2026-10-19'), D('국내교통비', 45000, '10/20 KTX', '2026-10-20')];
+  const r5 = R.planPayees(one, lines5);
+  assert.equal(r5.left.length, 0); assert.deepEqual(r5.plan[0].lines.map(l => [l.memo, l.amount, l.cut]), [['10/19 KTX', 45000, 0], ['10/19 1인 중식', 15000, 0], ['10/19 숙박', 70000, 0], ['10/20 KTX', 45000, 0]]);
+  const r6 = R.planPayees([{ ...one[0], 품의금액: '150,000' }], lines5);   // 175,000 > 150,000 → 마지막 KTX 가 20,000 만
+  assert.deepEqual(r6.plan[0].lines.map(l => [l.amount, l.cut]), [[45000, 0], [15000, 0], [70000, 0], [20000, 25000]]);
+});
+
+test('버그 탐색 2026-11-22: 한 줄 메모 날짜·시각·동행자·사유', () => {
+  const Q = require('../src/engine/quick');
+  const T = (y, m, d) => new Date(y, m - 1, d), D = (s, t) => { const r = Q.parseDates(s, t); return `${r.start}~${r.end}`; };
+  assert.equal(D('12/31~2 부산 공장 설치', T(2026, 12, 28)), '2026-12-31~2027-01-02', '월 없는 끝 날이 앞서면 다음 달 (전엔 12/2~12/31 로 뒤집힘)');
+  assert.equal(D('12월 31일~2일', T(2026, 12, 28)), '2026-12-31~2027-01-02');
+  assert.equal(D('10/20~10/18', T(2026, 10, 1)), '2026-10-18~2026-10-20', '월을 쓴 거꾸로 범위는 그대로 뒤집음');
+  assert.equal(D('이번주 화요일 출발 다음주 수요일 복귀', T(2026, 12, 28)), '2026-12-29~2027-01-06');
+  assert.equal(D('내일 출발 다음주 월요일 복귀 대전', T(2026, 12, 28)), '2026-12-29~2027-01-04');
+  assert.equal(D('30일 출발 2일 복귀 대전 공장', T(2026, 12, 28)), '2026-12-30~2027-01-02');
+  assert.deepEqual(Q.parseTimes('내일 판교 회의 06:00 출발 21:00 복귀'), { startTime: '06:00', endTime: '21:00' }, "'06:00' 은 오후 아님");
+  assert.deepEqual(['박지성 과장님이랑 같이 판교 회의', '이영희 님과 같이', '김철수·이영희와 같이'].map(Q.parseCompanions), [['박지성'], ['이영희'], ['김철수', '이영희']]);
+  const P = [{ name: '레인보우로보틱스 판교 AI 사무소', to: 'x', aliases: ['판교'] }], A = m => Q.quickApply(m, { today: T(2026, 11, 22), places: P }).data;
+  assert.equal(A('내일 판교 Gain 튜닝').reason, 'Gain 튜닝', "출장지 이름의 'AI' 가 Gain 안에서 지워졌음");
+  assert.equal(A('판교 AI 모델 학습 검증').reason, 'AI 모델 학습 검증');
+  assert.equal(A('내일 판교 고객 미팅 안건').reason, '고객 미팅 안건');
+  assert.equal(A('내일 판교 회의 저녁 늦게 복귀').reason, '회의');
+  assert.equal(Q.parseMode('모레 현대자동차 남양연구소 시험').mode, '');
+  assert.deepEqual(Q.parseMode('법인차 그랜저'), { mode: 'corporate', corporate_car: '그랜져', matched: [] });
+});
+
+test('버그 탐색 2026-11-22: 규칙 (조사·출장일·품의 제목·알림·식대 한도·해외 영수증)', () => {
+  assert.equal(R.ro('Meeting'), 'Meeting으로');
+  assert.deepEqual(['10.19~20', '12월 30일 ~ 2일', '10/19 09:00~18:00'].map(s => { const r = R.parseTripPeriod(s, '2026-12-20'); return [r.end, r.end_time]; }),
+    [['2026-10-20', ''], ['2027-01-02', ''], ['2026-10-19', '18:00']]);
+  assert.equal(R.puiTitle('서버 증설 요청', '2026-10-05'), '[품의서] 26년 10월 서버 증설 요청의 건');
+  assert.equal(R.puiTitle('10월 AI 툴 결제', '2026-10-05'), '[품의서] 26년 10월 AI 툴 결제 요청의 건');
+  assert.equal(R.dueRepeat([{ on: true, day: 25, base: '2026-10', last: '2026-10', done: '2026-11' }], new Date(2026, 10, 25)), null, '이번 달에 이미 올렸으면 알림 없음');
+  const rates = { breakfast: 8000, lunch: 15000, dinner: 15000 };
+  assert.equal(R.capMealRows([{ item: 'meal', amount: 106000, memo: '출장 식대 (아침 2회, 점심 3회, 저녁 3회)' }], rates)[0].amount, 106000, '끼니 횟수만큼 한도');
+  assert.equal(R.capMealRows([{ item: 'meal', amount: 9000, meal: '조식' }], { ...rates, breakfast: 0 })[0].amount, 0, '한도 0 도 한도');
+  const air = [{ 예산과목: '여비교통비(판)_항공권', 예산과목비고: '12/01~12/05 김 1인 해외출장 항공 비용', 품의금액: '1,500,000' }];
+  assert.equal(R.planPayees(air, [{ label: '여비교통비(판)_항공권', amount: 1400000, date: '2026-11-10', pay: 'personal', memo: '항공', proofs: ['a'] }]).plan[0].lines[0].amount, 1400000, '출장 전에 산 항공권도 정산');
+});
+
+test('버그 탐색 2026-11-22: 그리드 글 칸 100자, 띄어쓰기만 다른 같은 적요', () => {
+  assert.equal(R.budgetMemo(`[x] ${'가'.repeat(120)}의 건`).length, 100, '그룹웨어 글 칸은 100자 — 넘으면 저장 확인이 늘 실패');
+  const b = [{ 예산과목: '여비교통비(판)_국내교통비', 예산과목비고: '', 품의금액: '100,000' }];
+  const L = memo => ({ label: '여비교통비(판)_국내교통비', pay: 'personal', amount: 12000, memo, proofs: ['x.png'] });
+  const memos = R.planPayees(b, [L('10/20 택시'), L('10/20  택시')]).plan[0].lines.map(l => l.memo);
+  assert.notEqual(memos[0].replace(/\s/g, ''), memos[1].replace(/\s/g, ''), '줄 찾기가 공백을 무시하니 (2) 를 붙여 구분');
+});
+
+test('버그 탐색 2026-11-22: 매달 알림 — 말일에 PC 꺼져 있으면 다음 달 초에 따라잡음', () => {
+  const r = { on: true, day: 31, base: '2026-12', last: '2026-12', done: '2026-12' };
+  assert.equal(R.dueRepeat([r], new Date(2027, 1, 1)).ym, '2027-01', '1월 31일 알림을 2/1 에');
+  assert.equal(R.dueRepeat([{ ...r, last: '2027-01' }], new Date(2027, 1, 1)), null, '보냈으면 다시 안 함');
+  assert.equal(R.dueRepeat([{ ...r, last: '2027-01' }], new Date(2027, 1, 28)).ym, '2027-02', '2월 알림은 그대로');
+});
+
+test('버그 탐색 2026-11-22: 고친 파서가 넘치지 않게 (회귀)', () => {
+  const Q = require('../src/engine/quick');
+  const D = s => { const r = Q.parseDates(s, new Date(2026, 10, 18)); return `${r.start}~${r.end}`; };
+  assert.equal(D('오늘 결재 11/25 출발 11/26 복귀 판교'), '2026-11-25~2026-11-26', "사이에 날짜가 있으면 '오늘'은 시작이 아님");
+  assert.equal(D('20일 출발 3일 일정'), '2026-11-20~2026-11-20', "'3일 일정' 은 복귀 날이 아님");
+  assert.equal(D('27일 출발, 1일 2회 미팅'), '2026-11-27~2026-11-27');
+  assert.equal(R.parseTripPeriod('10월 19일 - 1박 2일', '2026-10-10').end, '2026-10-19', "'1박' 의 1 은 날짜 아님");
+  const b = [{ 예산과목: '여비교통비(판)_국내숙박비', 예산과목비고: '10/30~2 숙박', 품의금액: '300,000' }, { 예산과목: '여비교통비(판)_국내숙박비', 예산과목비고: '11/15 숙박', 품의금액: '70,000' }];
+  assert.deepEqual(R.planPayees(b, [{ label: '여비교통비(판)_국내숙박비', amount: 70000, date: '2026-11-15', pay: 'personal', memo: '숙박', proofs: ['a'] }]).plan.map(p => p.lines.length), [0, 1], "'10/30~2' 는 11/2 까지");
+});
+
+test('버그 탐색 2026-11-22: 채주 계획 — 날짜 안 맞는 영수증은 알림, 한도 초과와 구별, 비고 숫자는 날짜 아님', () => {
+  const B = (s, l, a = '100,000') => ({ 예산과목: `여비교통비(판)_${l}`, 예산과목비고: s, 품의금액: a });
+  const L = (d, a, l) => ({ label: `여비교통비(판)_${l}`, amount: a, date: d, pay: 'personal', memo: d, proofs: [`p${d}${a}`] });
+  const amounts = r => r.plan.map(p => p.lines.map(l => l.amount));
+  const early = R.planPayees([B('10/19 ~ 20 숙박 예정', '국내숙박비')], [L('2026-10-10', 70000, '국내숙박비')]).plan[0];
+  assert.equal(early.missed.length, 1, '미리 결제한 숙박 영수증은 말없이 빠지지 않고 알림');
+  assert.equal(R.planPayees([B('출장 식대', '식대', '50,000')], [L('2026-10-19', 30000, '식대'), L('2026-10-20', 30000, '식대'), L('2026-10-21', 30000, '식대')]).plan[0].missed.length, 0, '한도 초과는 날짜 문제가 아님');
+  assert.deepEqual(amounts(R.planPayees([B('10/22 - 2매 KTX', '국내교통비'), B('10/24 - KTX 복귀', '국내교통비')], [L('2026-10-24', 50000, '국내교통비')])), [[], [50000]], "'2매' 는 끝 날 아님");
+  assert.deepEqual(amounts(R.planPayees([B('10/19 숙박 1박', '국내숙박비'), B('10/20 숙박 1박', '국내숙박비')], [L('2026-10-19', 60000, '국내숙박비'), L('2026-10-20', 70000, '국내숙박비')])), [[60000], [70000]], '그 날 시작하는 줄 먼저');
+  assert.deepEqual(amounts(R.planPayees([B('10/22 - 2인 중식', '식대', '30,000'), B('10/23 - 1인 석식', '식대', '15,000')], [L('2026-10-22', 20000, '식대'), L('2026-10-23', 15000, '식대')])), [[20000], [15000]]);
 });

@@ -13,7 +13,7 @@ const won = n => (Number(n)||0).toLocaleString('ko-KR') + '원';
 // 금액 칸: 전각 숫자(１２０００)·쉼표·원·₩ 정리, 소수점은 반올림 (12,000.00 → 12000). 그래도 숫자 꼴이 아니면 숫자만 모음
 const num = s => { const t = String(s ?? '').normalize('NFKC').replace(/[,\s원₩]/g, ''); return /^-?\d+(\.\d+)?$/.test(t) ? Math.round(Math.abs(+t)) : Number(t.replace(/[^\d]/g, '')) || 0; };
 const snum = s => { const t = String(s ?? '').normalize('NFKC').replace(/[,\s원₩]/g, ''); return t === '' ? 0 : Number.isFinite(+t) ? +t : (/^-/.test(t) ? -1 : 1) * num(t); };   // 구매 금액: 부호(할인 -5,000)·소수점(12,000.00) 그대로. num() 은 둘 다 버려 100배가 됐음
-const qtyNum = s => Number(String(s||'').replace(/[^\d.]/g,'').replace(/(\..*)\./g, '$1')) || 0;   // 수량은 소수 가능 (1.5m). num() 은 점을 버려 1.5 → 15 가 됐음
+const qtyNum = s => String(s ?? '').trim() === '' ? 1 : Number(String(s).replace(/[^\d.]/g,'').replace(/(\..*)\./g, '$1')) || 0;   // 빈 수량 = 1 (엔진 parsePurchase 와 같게 — 0 으로 보내 0원 줄이 됐음)   // 수량은 소수 가능 (1.5m). num() 은 점을 버려 1.5 → 15 가 됐음
 const radio = name => (document.querySelector(`input[name=${name}]:checked`)||{}).value;
 const setRadio = (name, v) => { const el = document.querySelector(`input[name=${name}][value="${v}"]`); if(el) el.checked = true; };
 const list = s => String(s||'').split(',').map(x=>x.trim()).filter(Boolean);
@@ -39,6 +39,9 @@ $$('input[type=time]').forEach(timeSelect);
 if(window.api.onDevStale) window.api.onDevStale(() => { if($('#devStale')) return; const b = document.createElement('div'); b.id = 'devStale';
   b.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:9999;background:#f59e0b;color:#111;font-size:13px;padding:6px 12px;text-align:center';
   b.textContent = '엔진 코드가 바뀌었어요. 적용하려면 앱을 다시 켜 주세요 (yarn dev).'; document.body.appendChild(b); });
+
+/** m달 전 같은 날 (없는 날이면 그달 말일 — setMonth 는 5/31 의 3달 전을 3/3 으로 넘김) */
+const monthsAgo = (t, m) => { const d = new Date(t.getFullYear(), t.getMonth() - m, 1); d.setDate(Math.min(t.getDate(), new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate())); return d; };
 
 /* ---------- 탭 ---------- */
 $$('nav button').forEach(b => b.onclick = () => {
@@ -71,6 +74,7 @@ function expRow(tbody, e={}, onchange){
   sel.value = e.item || (tid==='a_exp' ? 'domestic_lodging' : 'domestic_transport');
   amt.value = (e.amount === 0 || e.amount) && e.amount !== '' ? Number(e.amount).toLocaleString('ko-KR') : '';   // 0원도 그대로 보임
   memo.value = e.memo || '';
+  if(e.touched) tr.dataset.touched = '1';   // 다시 그려도(자동 작성·다시 열기) 손댄 줄 표시 유지
   tr.addEventListener('input', () => { tr.dataset.touched = '1'; });   // 사람이 손댄 줄 — 영수증을 읽어 예상 금액 줄을 바꿀 때 이 줄은 안 지움 (직접 쓴 식대 줄이 사라졌음 — 2026-11-10)
   if(e.kind) tr.dataset.kind = e.kind;   // AI 가 읽은 영수증 종류 (주유·통행료·택시…) — 면세·법인차량 차량유지비 판단
   if(pay){ pay.value = e.pay || 'personal';
@@ -81,6 +85,7 @@ function expRow(tbody, e={}, onchange){
     const showNv = () => nvBox.classList.toggle('hidden', pay.value !== 'card');
     nv.onchange = () => { nv.dataset.auto = ''; onchange(); };
     memo.addEventListener('input', () => { if(nv.dataset.auto) nv.checked = guess(); });
+    tr._reguess = () => { if(nv.dataset.auto) nv.checked = guess(); };   // AI 가 적요를 채운 뒤에도 (코드로 넣은 값엔 input 이 안 남)
     sel.addEventListener('change', () => { if(nv.dataset.auto) nv.checked = guess(); });
     pay.onchange = () => { showNv(); onchange(); }; showNv(); }
   const ppl = tr.querySelector('.ppl');
@@ -88,7 +93,8 @@ function expRow(tbody, e={}, onchange){
     const box = tr.querySelector('.ppl-box');
     const show = () => box.classList.toggle('hidden', sel.value !== 'meal');
     ppl.value = e.people || '';
-    ppl.oninput = () => { ppl.value = ppl.value.replace(/[^\d]/g, '').slice(0, 2); if(ppl.value) memo.value = withPeople(memo.value, Number(ppl.value)); };
+    ppl.oninput = () => { ppl.value = ppl.value.replace(/[^\d]/g, '').slice(0, 2); if(ppl.value) memo.value = withPeople(memo.value, Number(ppl.value));
+      if(tr.dataset.paid){ amt.value = Number(tr.dataset.paid).toLocaleString('ko-KR'); delete tr.dataset.paid; delete tr.dataset.mealOk; onchange(); } };   // 한도로 깎은 뒤 인원을 늘리면 영수증 금액에서 다시 (깎인 금액이 그대로 나갔음)
     sel.addEventListener('change', show); show();
   }
   if(proofCell){   // 정산 경비 증빙: 줄마다 여러 개 가능(하루 식대 묶음), 전부 그 채주 줄 첨부로 올라감
@@ -99,17 +105,19 @@ function expRow(tbody, e={}, onchange){
       proofs.forEach((p, i) => {
         const chip = document.createElement('div'); chip.className = 'chip';
         const nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = (/\.pdf$/i.test(p) ? '📄 ' : '🖼️ ') + p.split(/[\\/]/).pop(); nm.title = p + ' (눌러서 열기)'; nm.onclick = () => rpc('/api/open', {path: p});
-        const x = document.createElement('button'); x.className = 'x'; x.type = 'button'; x.textContent = '✕'; x.title = '빼기'; x.onclick = () => { proofs.splice(i, 1); draw(); };
+        const x = document.createElement('button'); x.className = 'x'; x.type = 'button'; x.textContent = '✕'; x.title = '빼기'; x.onclick = () => { proofs.splice(i, 1); draw(); onchange(); };
         chip.append(nm, x); box.appendChild(chip);
       });
       tr.dataset.proofs = JSON.stringify(proofs);
       const add = tr.querySelector('.add'); add.textContent = proofs.length ? '+ 더 첨부' : '+ 증빙 첨부'; add.classList.remove('need');
     };
-    tr.querySelector('.add').onclick = async () => { const {paths} = await rpc('/api/pick-proofs', {many: true}); const add = (paths || []).filter(p => !proofs.includes(p)); if(add.length){ proofs.push(...add); draw(); fillMemo(tr); } };
+    tr.querySelector('.add').onclick = async () => { const {paths} = await rpc('/api/pick-proofs', {many: true}); const add = (paths || []).filter(p => !proofs.includes(p)); if(add.length){ proofs.push(...add); draw(); onchange(); fillMemo(tr); } };
     draw();
   }
   if(e.date) tr.dataset.date = e.date; if(e.meal) tr.dataset.meal = e.meal;   // AI 가 영수증에서 읽은 날짜·끼니 (적요 글자 말고 이걸로 묶음)
-  amt.oninput = () => { delete tr.dataset.paid; delete tr.dataset.mealOk; amt.value = amt.value ? num(amt.value).toLocaleString('ko-KR') : ''; if(tid==='a_exp' && !tr.dataset.user) tr.dataset.user = 'edited'; onchange(); };   // 사람이 금액을 고친 줄은 규정 재계산이 덮지 않음
+  memo.addEventListener('input', () => { const md = /^\s*(\d{1,2})\/(\d{1,2})/.exec(memo.value), d = tr.dataset.date; if(md && d && (+md[1] !== +d.slice(5, 7) || +md[2] !== +d.slice(8, 10))) delete tr.dataset.date;
+    const mk = (MEAL_KINDS.find(([, re]) => re.test(memo.value)) || [])[0]; if(mk && tr.dataset.meal && mk !== tr.dataset.meal) delete tr.dataset.meal; });   /* 적요의 날짜·끼니가 AI 값과 '다를 때만' 사람 것 (같은 날 식대 묶기는 AI 날짜로) */   // 사람이 적요의 날짜·끼니를 고치면 그게 기준 (숨은 AI 값이 이겼음)
+  amt.oninput = () => { delete tr.dataset.paid; delete tr.dataset.mealOk; amt.value = amt.value ? num(amt.value).toLocaleString('ko-KR') : ''; if(tid==='a_exp' && (!tr.dataset.user || tr.dataset.user === 'kept')) tr.dataset.user = 'edited'; onchange(); };   // 사람이 금액을 고친 줄은 규정 재계산이 덮지 않음
   sel.onchange = memo.oninput = onchange;
   tr.querySelector('.del').onclick = () => { tr.remove(); onchange(); };
   tbody.appendChild(tr); onchange();
@@ -123,13 +131,17 @@ function confirmNoProof(what = '영수증·증빙'){
    영수증 원래 금액은 tr.dataset.paid, 확인한 값은 dataset.mealOk("끼니:인원:금액") — 같은 값이면 다시 안 물음. 금액을 사람이 고치면 둘 다 지움 */
 const MEAL_KINDS = [['조식', /조식|아침/], ['중식', /중식|점심/], ['석식', /석식|저녁/]];
 const mealKindOf = tr => tr.dataset.meal || (MEAL_KINDS.find(([, re]) => re.test(tr.querySelector('.memo').value)) || [])[0] || '';
-const mealPer = kind => { const r = (META.config && META.config.rates) || {}; return Number({ 조식: r.breakfast, 중식: r.lunch, 석식: r.dinner }[kind]) || 0; };
+const mealPer = kind => { const r = (META.config && META.config.rates) || {}, v = { 조식: r.breakfast, 중식: r.lunch, 석식: r.dinner }[kind]; return v === '' || v == null ? null : Number(v); };   // 0원 한도도 한도 (엔진 capMealRows 와 같게)
+/** 적요 끼니 한도 합 (1인, "아침 2회" 는 2번). 엔진 capMealRows 와 같은 셈 */
+const mealLimit = memo => { const ks = MEAL_KINDS.filter(([, re]) => re.test(memo)); if(!ks.length) return null;
+  return ks.reduce((s, [k, re]) => s + (mealPer(k) || 0) * (Number((new RegExp(`(?:${re.source})\\s*(\\d+)\\s*(?:회|끼|번)`).exec(memo) || [])[1]) || 1), 0); };
 const mealPaid = tr => Number(tr.dataset.paid) || num(tr.querySelector('.amt').value);
 function overMealRows(){
   return [...$$('#r_exp tbody tr')].filter(tr => {
     if(tr.querySelector('.item').value !== 'meal' || !claimableTr(tr)) return false;
+    if(!tr.dataset.meal && (MEAL_KINDS.filter(([, re]) => re.test(tr.querySelector('.memo').value)).length > 1 || /(?:조식|중식|석식|아침|점심|저녁)\s*\d+\s*(?:회|끼|번)/.test(tr.querySelector('.memo').value))) return false;   // 여러 끼 줄은 끼니 한도의 합으로 엔진이 깎음 (첫 끼 한도로 깎던 것)
     const kind = mealKindOf(tr), per = mealPer(kind), ppl = Number((tr.querySelector('.ppl') || {}).value) || 1, paid = mealPaid(tr);
-    return per && paid > per * ppl && tr.dataset.mealOk !== `${kind}:${ppl}:${paid}`;
+    return per !== null && paid > per * ppl && tr.dataset.mealOk !== `${kind}:${ppl}:${paid}`;
   });
 }
 /** 한도 넘은 식대 줄이 있으면 모달 → [이대로 맞춰 넣기] 면 true (금액·인원·적요 반영), ✕ 면 false. 없으면 바로 true */
@@ -176,7 +188,7 @@ function confirmMealCaps(){
 const withPeople = (m, n) => /\d+\s*인/.test(m) ? m.replace(/\d+\s*인/, `${n}인`) : m.replace(/^(\d{1,2}\/\d{1,2})?\s*/, (_, d) => `${d ? d + ' ' : ''}${n}인 `).trim();
 /** 가격으로 식대 인원 짐작 (AI 가 없을 때): 설정의 회사 식대 기준(1인 한 끼). 적요에 조식·중식·석식이 있으면 그 기준, 없으면 세 끼 평균 */
 const guessPeople = (amount, memo = '') => { const r = (META.config && META.config.rates) || {};
-  const per = /조식|아침/.test(memo) ? r.breakfast : /중식|점심/.test(memo) ? r.lunch : /석식|저녁/.test(memo) ? r.dinner : ((r.breakfast || 0) + (r.lunch || 0) + (r.dinner || 0)) / 3;
+  const per = mealLimit(memo) ?? ((r.breakfast || 0) + (r.lunch || 0) + (r.dinner || 0)) / 3;   // 여러 끼 줄(신청 식대 "아침 2회…")은 그 합으로 (전엔 첫 끼로 나눠 13인이 됐음)
   return Math.max(1, Math.round((Number(amount) || 0) / (per || 12000))); };
 /** 적요가 비었고 증빙이 있으면 AI 가 영수증에서 날짜·내용을 읽어 적요에 ("9/28 1인 석식"). 적요는 그대로 채주 거래처비고가 된다 */
 async function fillMemo(tr){
@@ -188,7 +200,8 @@ async function fillMemo(tr){
     const r = await rpc('/api/receipt-memo', {path: proof, item: tr.querySelector('.item').value, period: $('#r_period').value});
     if(ppl && meal && !ppl.value) ppl.value = r.people || guessPeople(num(tr.querySelector('.amt').value), r.memo || '');
     if(r.memo && !memo.value.trim()) memo.value = meal && ppl.value ? withPeople(r.memo, Number(ppl.value)) : r.memo;
-    if(r.date) tr.dataset.date = r.date; if(r.meal) tr.dataset.meal = r.meal;
+    if(!memo.value.trim() || memo.value.trim() === String(meal && ppl.value ? withPeople(r.memo, Number(ppl.value)) : r.memo).trim()){ if(r.date) tr.dataset.date = r.date; if(r.meal) tr.dataset.meal = r.meal; }   // 읽는 동안 사람이 적요를 썼으면 AI 날짜·끼니로 덮지 않음
+    if(tr._reguess) tr._reguess();
   } catch(e){ if(ppl && meal && !ppl.value) ppl.value = guessPeople(num(tr.querySelector('.amt').value), memo.value); }   // AI 없음·실패 → 인원만 금액으로, 적요는 직접
   finally { memo.placeholder = '날짜·내용 (예: 9/28 1인 석식)'; }
 }
@@ -201,6 +214,7 @@ const readExp = (tbody, keepEmpty = false) => [...tbody.querySelectorAll('tr')].
   if(tr.dataset.proofs) e.proofs = JSON.parse(tr.dataset.proofs);
   if(tr.dataset.date) e.date = tr.dataset.date; if(tr.dataset.meal) e.meal = tr.dataset.meal;
   if(tr.dataset.kind) e.kind = tr.dataset.kind;
+  if(tr.dataset.touched) e.touched = true;
   if(amt.value.trim() === '') { e.empty = true; if(keepEmpty) e.amount = ''; }
   return e;
 }).filter(e => keepEmpty || !e.empty);   // 금액을 비운 줄만 뺀다. 0원은 사용자가 넣은 값이라 그대로 올림
@@ -298,7 +312,7 @@ $('#btnPrompt').onclick = async () => {
 $('#q_memo').addEventListener('input', () => $('#q_memo').classList.remove('need'));
 $('#btnFill').onclick = async () => {
   $('#aiErr').textContent = '';
-  try { fillApply((await rpc('/api/parse', {text: $('#aiPaste').value})).data); }
+  try { const d = (await rpc('/api/parse', {text: $('#aiPaste').value})).data; quickSeq++; fillApply(d); }
   catch(e){ $('#aiErr').textContent = e.message; }
 };
 /* ---------- 자차 없음: 자차는 못 고르고 대중교통이 기본 ---------- */
@@ -353,11 +367,16 @@ attachAc($('#a_destination'), $('#a_dest_ac'), { onPick: pickPlace, skip: placeG
 // 출장지를 직접 고치면 거기서 나온 값(지도 검색어·교통비·캡처)은 옛 장소 것 → 비우고, 다 고친 뒤(change) 다시 조회
 $('#a_destination').addEventListener('input', () => { placeGeo = null; $('#a_to').value = ''; $('#a_fare').value = ''; fareShot = ''; $('#a_fare_desc').textContent = ''; refreshApply(); });
 $('#a_destination').addEventListener('change', () => { const m = radio('a_mode'); if(!isOverseas() && (m === 'car' || m === 'transit')) lookupFare(false); });
+for (const id of ['#a_to', '#a_from']) {   // 지도 검색어·출발지를 고치면 옛 경로의 교통비·캡처를 그대로 올렸음
+  $(id).addEventListener('input', () => { if(id === '#a_to') placeGeo = null; $('#a_fare').value = ''; fareShot = ''; $('#a_fare_desc').textContent = ''; refreshApply(); });
+  $(id).addEventListener('change', () => { const m = radio('a_mode'); if(!isOverseas() && (m === 'car' || m === 'transit')) lookupFare(false); });
+}
 /** 네이버 지도에서 찾은 도착지로 출장지 칸 채우기: 검색어(예: KAI) 그대로면 '정식 이름 (주소)', 주소가 없으면 뒤에 (주소) */
 function setDestinationFromPlace(place){
   if(!place || !place.address) return;
   const dest = $('#a_destination'), cur = dest.value.trim(), term = ($('#a_to').value.trim() || cur);
   if(/\d/.test(cur) && /(시|군|구|로|길)\s/.test(cur)) return;   // 이미 주소가 들어 있음
+  if(!$('#a_to').value.trim() && term) $('#a_to').value = term;   // 찾힌 검색어를 지도 검색어로 남김 — 다음 조회가 '이름 (주소)' 로 찾다 못 찾았음
   dest.value = !cur || cur === term ? `${place.name} (${place.address})` : `${cur} (${place.address})`;
   dest.classList.remove('need'); refreshApply();
 }
@@ -390,10 +409,11 @@ $$('input[name=a_mode]').forEach(r => r.addEventListener('change', () => {
 /* ---------- 한 줄 자동 작성 ---------- */
 /** 규정으로 계산한 줄만 새 값으로: 사람이 직접 추가한 줄(added)·금액을 고친 줄(edited)은 그대로 두고, 고친 과목은 규정 줄을 다시 넣지 않음 */
 function replaceRuleRows(tb, isRuled, expenses){
-  const rows = [...tb.querySelectorAll('tr')], edited = new Set(rows.filter(tr => tr.dataset.user === 'edited').map(tr => tr.querySelector('.item').value));
+  const kindOf = (item, memo) => item === 'travel_etc' ? `${item}:${/보험/.test(memo || '') ? 'ins' : 'roam'}` : item;   // 로밍·보험은 같은 과목 — 하나를 고치면 다른 하나가 사라졌음
+  const rows = [...tb.querySelectorAll('tr')], edited = new Set(rows.filter(tr => tr.dataset.user === 'edited' || tr.dataset.user === 'kept').map(tr => kindOf(tr.querySelector('.item').value, tr.querySelector('.memo').value)));
   rows.filter(tr => !tr.dataset.user && isRuled(tr)).forEach(tr => tr.remove());
   const keep = [...tb.querySelectorAll('tr')]; tb.innerHTML = '';
-  expenses.filter(e => !edited.has(e.item)).forEach(e => expRow(tb, e, refreshApply)); keep.forEach(tr => tb.appendChild(tr));
+  expenses.filter(e => !edited.has(kindOf(e.item, e.memo))).forEach(e => expRow(tb, e, refreshApply)); keep.forEach(tr => tb.appendChild(tr));
 }
 async function recalcExpenses(){
   if(isOverseas()) return recalcOverseas();   // 해외는 규정이 달라서 따로
@@ -431,10 +451,10 @@ async function recalcOverseas(){
   const r = await rpc('/api/overseas-expenses', { start, end, grade, rate, airfare: v('#a_air'), lodging: v('#a_hotel'), uber: v('#a_uber'), roaming: v('#a_roam'), insurance: v('#a_ins') });
   const tb = $('#a_exp tbody');
   replaceRuleRows(tb, tr => OV_ITEMS.has(tr.querySelector('.item').value) || ['domestic_lodging', 'meal'].includes(tr.querySelector('.item').value), r.expenses);   // 규정으로 계산하는 줄만 새로
-  $('#a_meal_plan').textContent = `해외 ${r.nights}박 ${r.days}일 · ${grade} 등급 일비 $${grade === '가' ? 90 : 50}/일${$('#a_hotel').value.trim() ? '' : ` · 숙박은 한도 $${grade === '가' ? 200 : 150}/박으로 계산 (견적이 있으면 숙박 칸에 넣으세요)`}`;
+  $('#a_meal_plan').textContent = `해외 ${r.nights}박 ${r.days}일 · ${grade} 등급 ${r.perDiem ? `일비 $${r.perDiem}/일` : '일비 없음(식대 실비)'}${$('#a_hotel').value.trim() ? '' : ` · 숙박은 한도 $${r.lodgingCap}/박으로 계산 (견적이 있으면 숙박 칸에 넣으세요)`}`;
   refreshApply();
 }
-['#a_air', '#a_hotel', '#a_uber', '#a_roam', '#a_ins'].forEach(id => $(id).addEventListener('input', () => { if(['#a_air', '#a_hotel', '#a_roam', '#a_ins'].includes(id)){ const x = $(id); x.value = x.value ? num(x.value).toLocaleString('ko-KR') : ''; } clearTimeout(ovTimer); ovTimer = setTimeout(recalcOverseas, 300); }));
+['#a_air', '#a_hotel', '#a_uber', '#a_roam', '#a_ins'].forEach(id => $(id).addEventListener('input', () => { unkeep(); if(['#a_air', '#a_hotel', '#a_roam', '#a_ins'].includes(id)){ const x = $(id); x.value = x.value ? num(x.value).toLocaleString('ko-KR') : ''; } clearTimeout(ovTimer); ovTimer = setTimeout(() => { ovTimer = null; recalcOverseas(); }, 300); }));
 $$('input[name=a_grade]').forEach(r => r.addEventListener('change', () => { $('#a_grade_seg').classList.remove('need'); recalcOverseas(); }));
 // 국내 ↔ 해외 = 다른 신청서 → 새로 작성. 쓰던 게 있으면 묻고, [고칠게요]면 원래 쪽으로 되돌림
 const applyDirty = () => ['#q_memo', '#a_reason', '#a_destination', '#a_start', '#a_purpose', '#a_companions'].some(id => $(id).value.trim()) || !!$('#a_exp tbody tr');
@@ -458,7 +478,8 @@ let recalcTimer = null;
 /** 날짜만 넣고 시각을 비우면 9시 출발·18시 복귀 (엔진 rules.DEFAULT_TIMES 와 같게). 사람이 고치면 그대로 */
 function defaultTimes(){ if($('#a_start').value && !$('#a_start_time').value) $('#a_start_time').value = '09:00'; if(($('#a_end').value || $('#a_start').value) && !$('#a_end_time').value) $('#a_end_time').value = '18:00'; }
 ['#a_start','#a_end'].forEach(id => $(id).addEventListener('change', defaultTimes));
-['#a_start','#a_end','#a_start_time','#a_end_time'].forEach(id => ['input', 'change'].forEach(ev => $(id).addEventListener(ev, () => { clearTimeout(recalcTimer); recalcTimer = setTimeout(recalcExpenses, 300); })));
+const unkeep = () => $$('#a_exp tbody tr').forEach(tr => { if(tr.dataset.user === 'kept' && (['domestic_lodging', 'meal'].includes(tr.querySelector('.item').value) || OV_ITEMS.has(tr.querySelector('.item').value))) delete tr.dataset.user; });   /* 날짜를 바꾸면 불러온 숙박·식대는 규정대로 다시 (해외 견적 줄은 그대로) */
+['#a_start','#a_end','#a_start_time','#a_end_time'].forEach(id => ['input', 'change'].forEach(ev => $(id).addEventListener(ev, () => { unkeep(); clearTimeout(recalcTimer); recalcTimer = setTimeout(() => { recalcTimer = null; recalcExpenses(); }, 300); })));
 $('#btnRecalc').onclick = recalcExpenses;
 function markNeed(missing){
   const map = {'교통편': ['#a_mode_seg'], '국가 등급': ['#a_grade_seg'], '환율': ['#btnRate'], '항공권': ['#a_air'], '날짜': ['#a_start','#a_end'], '출발 시각': ['#a_start_time'], '복귀 시각': ['#a_end_time'], '출장지': ['#a_destination'], '사유': ['#a_reason'], '교통비': ['#a_fare'], '과제명': ['#a_project'], '동행목적': ['#a_companion_purpose'], '출장목적': ['#a_purpose']};
@@ -521,40 +542,46 @@ function confirmSubmit({ title, html, note, yes = '보내기 ✦' }){
 const itemName = k => (META.items[k] || k).replace('여비교통비(판)_', '');
 const MODE_KO = { car: '🚗 자차', transit: '🚆 대중교통', corporate: '🚐 법인차량', overseas: '✈️ 해외' };
 
-/** 보내기 전에 묻기: ① 출장 구분(일반·연구과제 + 과제명) ② 동행자(없음 / 이름·동행목적). 고른 값은 폼에도 넣는다. 취소 = null */
-function askTripMeta(d){
+/** 보내기 전에 묻는 창 (출장 신청·보고서 같이 씀): ① 출장 구분 — projCat 이면 과제를 목록에서, etcCat 이면 내용을 적음 ② fund 면 자금과목, 아니면 동행자.
+ *  고른 값 {category, project, fund | companions, companion_purpose}. 취소 = null */
+function askMeta(d, { cats, projCat, etcCat = '', fund = false }){
   return new Promise(res => {
-    const m = $('#preModal'); let cat = d.category || '', step = 1, comp = d.companions.length ? 'with' : '';
-    $('#pm_project_q').value = ''; fillProjects(META.config, d.project || ''); $('#pm_companions').value = d.companions.join(', '); $('#pm_companion_purpose').value = d.companion_purpose || '';
+    const m = $('#preModal'); let cat = d.category || '', step = 1, comp = (d.companions || []).length ? 'with' : '', fd = d.fund || '';
+    $('#pm_cats').innerHTML = cats.map(c => `<button class="btn" type="button" data-cat="${escH(c)}">${escH(c)}</button>`).join('');
+    $('#pm_etc').value = etcCat && d.category === etcCat ? d.project || '' : '';
+    $('#pm_project_q').value = ''; fillProjects(META.config, d.category === projCat ? d.project || '' : ''); $('#pm_companions').value = (d.companions || []).join(', '); $('#pm_companion_purpose').value = d.companion_purpose || '';
     const draw = () => {
-      $('#pm_title').textContent = step === 1 ? '출장 구분을 골라 주세요' : '동행자가 있나요?';
-      $('#pm_cat').classList.toggle('hidden', step !== 1); $('#pm_comp').classList.toggle('hidden', step !== 2);
-      $$('#pm_cat [data-cat]').forEach(b => b.classList.toggle('sel', b.dataset.cat === cat));
-      $('#pm_proj_row').classList.toggle('hidden', cat !== '연구과제');
+      $('#pm_title').textContent = step === 1 ? '출장 구분을 골라 주세요' : fund ? '자금과목을 골라 주세요' : '동행자가 있나요?';
+      $('#pm_cat').classList.toggle('hidden', step !== 1); $('#pm_comp').classList.toggle('hidden', step !== 2 || fund); $('#pm_fund').classList.toggle('hidden', step !== 2 || !fund);
+      $$('#pm_cats [data-cat]').forEach(b => b.classList.toggle('sel', b.dataset.cat === cat));
+      $('#pm_proj_row').classList.toggle('hidden', cat !== projCat); $('#pm_etc_row').classList.toggle('hidden', !etcCat || cat !== etcCat);
       $('#pmAlone').classList.toggle('sel', comp === 'alone'); $('#pmWith').classList.toggle('sel', comp === 'with');
       $('#pm_comp_rows').classList.toggle('hidden', comp !== 'with');
+      $$('#pm_fund [data-fund]').forEach(b => b.classList.toggle('sel', b.dataset.fund === fd));
       $('#pmOk').textContent = step === 1 ? '다음' : '확인'; $('#pm_err').textContent = '';
     };
-    $$('#pm_cat [data-cat]').forEach(b => b.onclick = () => { cat = b.dataset.cat; draw(); if(cat !== '연구과제') return; $('#pm_project_q').focus();
+    $$('#pm_cats [data-cat]').forEach(b => b.onclick = () => { cat = b.dataset.cat; draw(); if(cat === etcCat) $('#pm_etc').focus(); if(cat !== projCat) return; $('#pm_project_q').focus();
       ensureProjects(() => fillProjects(META.config)); });
     $('#pmAlone').onclick = () => { comp = 'alone'; draw(); };
     $('#pmWith').onclick = () => { comp = 'with'; draw(); $('#pm_companions').focus(); };
+    $$('#pm_fund [data-fund]').forEach(b => b.onclick = () => { fd = b.dataset.fund; draw(); });
     const close = v => { m.classList.toggle('on', false); document.removeEventListener('keydown', key); res(v); };
     const key = e => { if(e.key === 'Escape') close(null); else if(e.key === 'Enter' && !e.isComposing) $('#pmOk').click(); };
     $('#pmOk').onclick = () => {
       if(step === 1){
-        if(!cat) return ($('#pm_err').textContent = '일반·연구과제 중 하나를 골라 주세요.');
-        if(cat === '연구과제' && !$('#pm_project').value && projHits().length === 1) $('#pm_project').value = projHits()[0];   // 검색해서 하나만 남으면 Enter 로 바로
-        if(cat === '연구과제' && !$('#pm_project').value.trim()) return ($('#pm_err').textContent = '목록에서 과제를 골라 주세요.');
+        if(!cat) return ($('#pm_err').textContent = `${cats.join('·')} 중 하나를 골라 주세요.`);
+        if(cat === projCat && !$('#pm_project').value && projHits().length === 1) $('#pm_project').value = projHits()[0];   // 검색해서 하나만 남으면 Enter 로 바로
+        if(cat === projCat && !$('#pm_project').value.trim()) return ($('#pm_err').textContent = '목록에서 과제를 골라 주세요.');
+        if(cat === etcCat && !$('#pm_etc').value.trim()) return ($('#pm_err').textContent = `${etcCat} 내용을 적어 주세요.`);
         step = 2; return draw();
       }
+      const base = { category: cat, project: cat === projCat ? $('#pm_project').value.trim() : cat === etcCat ? $('#pm_etc').value.trim() : '' };
+      if(fund){ if(!fd) return ($('#pm_err').textContent = '일반경비·제조경비 중 하나를 골라 주세요.'); return close({ ...base, fund: fd }); }
       if(!comp) return ($('#pm_err').textContent = '없음·있음 중 하나를 골라 주세요.');
       const names = comp === 'with' ? list($('#pm_companions').value) : [];
       if(comp === 'with' && !names.length) return ($('#pm_err').textContent = '동행자 이름을 넣어 주세요.');
       if(names.length && !$('#pm_companion_purpose').value.trim()) return ($('#pm_err').textContent = '동행목적을 넣어 주세요.');
-      const v = { category: cat, project: cat === '연구과제' ? $('#pm_project').value.trim() : '', companions: names, companion_purpose: names.length ? $('#pm_companion_purpose').value.trim() : '' };
-      setRadio('a_category', v.category); $('#a_project').value = v.project; $('#a_companions').value = names.join(', '); $('#a_companion_purpose').value = v.companion_purpose; refreshApply();
-      close(v);
+      close({ ...base, companions: names, companion_purpose: names.length ? $('#pm_companion_purpose').value.trim() : '' });
     };
     $('#pmCancel').onclick = $('#pmX').onclick = () => close(null);
     document.addEventListener('keydown', key);
@@ -564,12 +591,14 @@ function askTripMeta(d){
 
 $('#btnApply').onclick = async () => {
   $('#a_err').textContent = '';
+  if(recalcTimer){ clearTimeout(recalcTimer); recalcTimer = null; await recalcExpenses(); }   // 방금 바꾼 날짜·시각·견적의 재계산이 끝난 뒤 읽음 (300ms 안에 누르면 옛 금액이 올라갔음)
+  if(ovTimer){ clearTimeout(ovTimer); ovTimer = null; await recalcOverseas(); }
   let data = applyData();
   const need = [];
   if(!data.reason) need.push('사유');
   if(!data.destination) need.push('출장지');   // 빈 채로 보내면 엔진이 "'destination' 값이 필요합니다" 라고만 해서 어디를 고칠지 몰랐음
   if(!data.purpose) need.push('출장목적');
-  if(!data.dates.start || !$('#a_end').value) need.push('날짜');
+  if(!data.dates.start || !$('#a_end').value || $('#a_end').value < data.dates.start) need.push('날짜');   // 끝이 시작보다 빠르면 (해외 일비가 음수가 됐음)
   if(data.scope === '해외'){ if(!data.grade) need.push('국가 등급'); if(!(data.rate > 0) || !data.rate_shot) need.push('환율'); if(!data.expenses.some(e => e.item === 'airfare')) need.push('항공권'); }   // 조회 결과 이미지 첨부 필수 (사전품의 작성 기준)
   else if(!data.transport.mode) need.push('교통편');
   else if(data.transport.mode !== 'corporate' && data.transport.total === undefined) need.push('교통비');   // 0원은 허용 (비운 것만 막음)
@@ -577,7 +606,8 @@ $('#btnApply').onclick = async () => {
   const noAmt = [...$$('#a_exp tbody tr')].filter(tr => !tr.querySelector('.amt').value.trim());   // 빈 칸 ≠ 0원
   if(noAmt.length){ noAmt.forEach(tr => tr.querySelector('.amt').classList.add('need')); $('#a_err').textContent = `금액이 빈 경비 ${noAmt.length}줄이 있어요. 금액을 넣거나 그 줄을 지워 주세요 (0원이면 0).`; return; }
   // 출장 구분(기본값 없음)·동행자는 보낼 때 묻는다 — 다른 빈 칸을 먼저 막은 뒤라 다시 누를 때 또 묻지 않게
-  const meta = await askTripMeta(data); if(!meta) return;
+  const meta = await askMeta(data, { cats: ['일반', '연구과제'], projCat: '연구과제' }); if(!meta) return;
+  setRadio('a_category', meta.category); $('#a_project').value = meta.project; $('#a_companions').value = meta.companions.join(', '); $('#a_companion_purpose').value = meta.companion_purpose; refreshApply();
   data = { ...data, ...meta };
   // 연구과제: 사업=그 과제로 품의 → 그 과제 참여연구원이어야 사업코드도움에 나오고 결재가 남 (경영지원부 2026-11-20)
   if(data.category === '연구과제' && !(await confirmSubmit({ title: '잠깐! 과제의 참여연구원이 맞으시죠?', yes: '네, 맞아요',
@@ -588,7 +618,7 @@ $('#btnApply').onclick = async () => {
   let plan; try { plan = await rpc('/api/plan', data); } catch(e){ $('#a_err').textContent = e.message; return; }
   // 보낼 내용 확인
   const t = data.transport, fare = t.mode === 'corporate' ? 0 : Number(t.total || 0), margin = t.mode !== 'corporate' && fare ? (META.config.rates.fareMargin || 0) : 0;
-  const rows = [...(fare ? [{ item: '교통비', amount: fare + margin, memo: margin ? `왕복 ${won(fare)} + 여유 ${won(margin)}` : '왕복' }] : []), ...plan.expenses.map(e => ({ item: itemName(e.item), amount: e.amount, memo: e.memo }))];
+  const rows = [...(t.mode !== 'corporate' && t.total !== undefined && t.total !== null ? [{ item: '교통비', amount: fare + margin, memo: margin ? `왕복 ${won(fare)} + 여유 ${won(margin)}` : '왕복' }] : []), ...plan.expenses.map(e => ({ item: itemName(e.item), amount: e.amount, memo: e.memo }))];
   if(data.category === '연구과제') rows.forEach(r => { r.memo = `${r.item}${r.memo ? ' · ' + r.memo : ''}`; r.item = '선급과제비(연구활동비)'; });   // 엔진과 같게: 과제 출장은 예산과목이 하나
   const sum = rows.reduce((a, r) => a + r.amount, 0);
   const ok = await confirmSubmit({ title: '출장신청, 이대로 올릴까요?', html: `
@@ -613,7 +643,7 @@ let gwAll = [];
 /* 상태는 그룹웨어 기준: 품의가 그룹웨어에 있으면 그 결재상태, 없으면 '그룹웨어에 없음', 연결 자체가 없으면 '미입력' */
 const DONE = /완료|종결/;   // 결재 끝남 (출장보고서 결재 문서는 '종결'로 옴)
 const REJECTED = /반려|문서삭제/;   // 결재반려·반려취소, 또는 결재 문서가 지워져 품의만 남은 상태
-const stWord = st => DONE.test(st) ? '승인' : REJECTED.test(st) ? '반려' : /상신대기|미상신|^$/.test(st || '') ? '상신 전' : '결재 중';   // 그룹웨어 결재상태 → 쉬운 말
+const stWord = st => DONE.test(st) ? '승인' : REJECTED.test(st) ? '반려' : /상신대기|미상신|보관|임시|^$/.test(st || '') ? '상신 전' : '결재 중';   // 그룹웨어 결재상태 → 쉬운 말
 const pill = (label, st, tip) => `<span class="pill ${DONE.test(st) ? 'ok' : REJECTED.test(st) ? 'bad' : ''}" title="${escH(tip || st || '')}">${label} ${stWord(st)}</span>`;
 const gwPill = (label, link) => {
   if(!link) return '';
@@ -630,11 +660,12 @@ async function loadTrips(){
   // 연결이 끊긴 보고 품의(적요 = "…로 인한 출장 보고")를 같은 출장에 다시 붙인다 (예: 보고서 올리다 앱을 끈 경우)
   for(const r of gwAll){
     if(byReport[r.key] || !(r.trip === 'report' || /출장\s*보고/.test(r.memo || ''))) continue;
-    const t = trips.find(x => x.gwApply && !x.gwReport && gwMap[x.gwApply.key] && x.reportMemo === (r.memo || '').trim());
+    const ad = x => x.ym.replace('-', '') + String(x.day).padStart(2, '0');   // 같은 사유로 여러 번 간 출장: 보고 품의일 이전 신청 중 가장 늦은 것 (전엔 가장 최근 출장에 붙였음)
+    const t = trips.filter(x => x.gwApply && !x.gwReport && gwMap[x.gwApply.key] && x.reportMemo === (r.memo || '').trim() && ad(x.gwApply) <= ad(r)).sort((a, b) => ad(b.gwApply).localeCompare(ad(a.gwApply)))[0];
     if(t){ t.gwReport = { key: r.key, ym: r.ym, day: r.day, seq: r.seq }; byReport[r.key] = t; rpc('/api/trip/link-report', {id: t.id, row: r}); }
   }
   const stOf = k => ((gwMap[k] || {}).status || '');
-  const rows0 = () => gwAll.filter(r => (r.trip ? r.trip === 'apply' : /출장/.test(r.memo || '')) && !byReport[r.key]);   // 결재양식이 '출장신청…'인 품의 (상신 전엔 적요로)
+  const rows0 = () => gwAll.filter(r => (r.trip !== undefined ? r.trip === 'apply' : /출장/.test(r.memo || '')) && !byReport[r.key]);   // trip '' = 다른 양식 문서 (적요에 '출장'이 있어도 출장 아님)   // 결재양식이 '출장신청…'인 품의 (상신 전엔 적요로)
   const applyDay = r => r.ym.replace('-', '') + String(r.day).padStart(2, '0');
   const isRejected = r => { const t = byApply[r.key]; const d = reportDoc(r); return REJECTED.test(stOf(r.key)) || !!(t && t.gwReport && REJECTED.test(stOf(t.gwReport.key))) || !!(d && REJECTED.test(d.status)); };   // 보고 결재 문서가 반려된 것도 (맨 위로)
   // 정산(결의서전송)됨 = 그룹웨어 품의의 결의금액 > 0 또는 이 PC 기록의 결의번호. 예전 방식의 '보고 품의'는 이때 무시한다
@@ -646,11 +677,12 @@ async function loadTrips(){
   const core = x => nz(x).replace(/^(\([^)]*\)|\[[^\]]*\])+/, '').replace(/(으?로인한)?출장(보고)?(의건)?$/, '');   // '(결재라인수정)[양식] KAI 기술 지원 출장의 건' → 'KAI기술지원'
   const dnum = x => String(x || '').replace(/\D/g, '').slice(0, 8);
   const mine = new Set(), paired = {};
+  const firstDoc = list => { const c = list.sort((a, b) => dnum(a.date).localeCompare(dnum(b.date))); const i = c.findIndex((d, k) => !REJECTED.test(d.status) || k === c.length - 1); return c[i]; };   // 건너뛴 반려 문서는 다른 같은 이름 출장 것일 수 있어 남겨 둠   // 반려된 뒤 다시 올린 보고서가 있으면 그것 (전엔 옛 반려 문서에 붙어 계속 '반려'로 보였음)
   // 이름이 같은 출장이 여럿이면 보고 문서 하나를 두 출장에 붙이지 않는다 (최근 신청부터, 신청일 이후 가장 이른 문서)
-  rows0().sort((a, b) => applyDay(b).localeCompare(applyDay(a))).forEach(r => { const t = byApply[r.key]; const d = t && gwReportDocs.filter(d => !mine.has(d) && nz(d.title) === nz(t.reportDocTitle) && dnum(d.date) >= applyDay(r)).sort((a, b) => dnum(a.date).localeCompare(dnum(b.date)))[0]; if(d){ paired[r.key] = d; mine.add(d); } });
+  rows0().sort((a, b) => applyDay(b).localeCompare(applyDay(a))).forEach(r => { const t = byApply[r.key]; const d = t && firstDoc(gwReportDocs.filter(d => !mine.has(d) && nz(d.title) === nz(t.reportDocTitle) && dnum(d.date) >= applyDay(r))); if(d){ paired[r.key] = d; mine.add(d); } });
   rows0().filter(r => !paired[r.key] && DONE.test(stOf(r.key))).sort((a, b) => applyDay(b).localeCompare(applyDay(a))).forEach(r => {
     const c = core(r.docTitle || r.memo);
-    const d = c && gwReportDocs.filter(d => !mine.has(d) && core(d.title) === c && dnum(d.date) >= applyDay(r)).sort((a, b) => dnum(a.date).localeCompare(dnum(b.date)))[0];
+    const d = c && firstDoc(gwReportDocs.filter(d => !mine.has(d) && core(d.title) === c && dnum(d.date) >= applyDay(r)));
     if(d){ paired[r.key] = d; mine.add(d); }
   });
   const reportDoc = r => paired[r.key] || null;
@@ -720,14 +752,14 @@ function showVia(r){ const el = $('#gwVia'); if(!el || !(META.config && META.dev
   el.textContent = r.via === 'api' ? `API · ${(r.ms / 1000).toFixed(1)}초` : `화면 읽기 · ${(r.ms / 1000).toFixed(1)}초${r.apiError ? ' · API 실패: ' + r.apiError.slice(0, 60) : ''}`;
   el.className = 'pill ' + (r.via === 'api' ? 'ok' : 'bad'); }
 let refundChecked = false;   // 환원 점검은 앱 켜고 한 번만, 목록을 보여 준 뒤 뒤에서
-function refundCheckOnce(){ if(refundChecked) return; refundChecked = true; setTimeout(() => runJob('정산 환원 점검', '/api/job/refund-check', {}, null, {quiet: true}), 500); }
+function refundCheckOnce(){ if(refundChecked) return; refundChecked = true; setTimeout(() => runJob('정산 환원 점검', '/api/job/refund-check', {}, null, {quiet: true, onSkip: () => { refundChecked = false; }}), 500); }   // 다른 작업 때문에 건너뛰면 다음 목록 갱신 때 다시
 let gwReportDocs = [];   // 출장보고서 결재 문서 (결의서입력 → 결재상신으로 올린 것)
 function setGw(rows, docs){ gwAll = rows || []; gwMap = Object.fromEntries(gwAll.map(r => [r.key, r])); if(docs) gwReportDocs = docs; try { localStorage.gw_rows = JSON.stringify(gwAll); localStorage.gw_rdocs = JSON.stringify(gwReportDocs); } catch(e){ /* 저장 공간 없음 */ } }
 try { if(localStorage.gw_rows) setGw(JSON.parse(localStorage.gw_rows), JSON.parse(localStorage.gw_rdocs || '[]')); } catch(e){ /* 캐시 없음 */ }   // 지난 결과를 먼저 보여주고 뒤에서 갱신
 function renderOrphans(trips, shown = new Set()){
   if(!gwMap){ $('#gwOrphans').classList.add('hidden'); return; }
   const linked = new Set(trips.flatMap(t => [t.gwApply, t.gwReport].filter(Boolean).map(l => l.key)));
-  const rows = gwAll.filter(r => !r.locked && !linked.has(r.key) && !shown.has(r.key) && (r.trip || /출장/.test(r.memo || '')));   // 결재가 걸린 품의는 못 지우니 안 보여 줌   // 출장 관련(결재양식·적요)인데 위 목록에 안 붙은 품의만. 적요 없는 다른 품의는 건드리지 않음
+  const rows = gwAll.filter(r => !r.locked && !linked.has(r.key) && !shown.has(r.key) && (r.trip !== undefined ? !!r.trip : /출장/.test(r.memo || '')));   // 결재가 걸린 품의는 못 지우니 안 보여 줌   // 출장 관련(결재양식·적요)인데 위 목록에 안 붙은 품의만. 적요 없는 다른 품의는 건드리지 않음
   $('#gwOrphans').classList.toggle('hidden', !rows.length);
   const box = $('#gwRows'); gwRows = rows;
   box.innerHTML = '<table class="gw"><thead><tr><th style="width:28px"><input type="checkbox" id="gwAllCb" style="width:auto"></th><th>품의일</th><th>순번</th><th>적요</th><th class="num">총금액</th><th>결재상태</th></tr></thead><tbody></tbody></table>';
@@ -753,9 +785,9 @@ async function autoGwCheck(force){   // 탭을 열 때 그룹웨어 상태를 �
   const cur = await rpc('/api/job').catch(() => null);
   if(cur && (cur.state === 'running' || cur.state === 'waiting')) return;
   gwAutoAt = Date.now();
-  runJob('그룹웨어 상태 확인', '/api/job/gw-list', gwRange(), r => { setGw(r.rows, r.reportDocs); showVia(r); loadTrips(); refundCheckOnce(); }, {quiet: true});
+  runJob('그룹웨어 상태 확인', '/api/job/gw-list', gwRange(), r => { setGw(r.rows, r.reportDocs); showVia(r); loadTrips(); refundCheckOnce(); }, {quiet: true, onEnd: () => { if(gwAgain){ gwAgain = false; setTimeout(gwRefresh, 300); } }});
 }
-$('#btnGwList').onclick = () => runJob('그룹웨어 상태 확인', '/api/job/gw-list', gwRange(), r => { setGw(r.rows, r.reportDocs); showVia(r); loadTrips(); refundCheckOnce(); }, {quiet: true});
+$('#btnGwList').onclick = () => runJob('그룹웨어 상태 확인', '/api/job/gw-list', gwRange(), r => { setGw(r.rows, r.reportDocs); showVia(r); loadTrips(); refundCheckOnce(); }, {quiet: true, onEnd: () => { if(gwAgain){ gwAgain = false; setTimeout(gwRefresh, 300); } }});
 /* 조회 기간(날짜): 기본 오늘부터 3개월 전까지, 최대 1년. 바꾸면 바로 다시 읽고, 선택은 이 PC에 기억.
    끝 날짜는 기본으로 '오늘'을 따라온다 (gw_follow). 끝을 직접 지난 날로 고른 기간만 그 날에 고정.
    예전엔 '저장한 날 = 끝 날짜'인지로 따라올지 정했는데, 조회할 때마다 저장한 날을 오늘로 덮어써서 앱을 켜 둔 채 날이 바뀌면
@@ -764,7 +796,7 @@ const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')
 const gwFollow = () => { try { return localStorage.gw_follow !== '0'; } catch(e){ return true; } };   // 표시가 없으면(예전 버전에서 넘어옴) 따라옴
 const setGwFollow = on => { try { localStorage.gw_follow = on ? '1' : '0'; } catch(e){ /* */ } };
 function gwRange(){
-  const today = new Date(), def = new Date(today); def.setMonth(def.getMonth() - 3);
+  const today = new Date(), def = monthsAgo(today, 3);
   let from = $('#gwFrom').value || ymd(def), to = $('#gwTo').value || ymd(today);
   if(gwFollow() && to !== ymd(today)){   // 날짜가 바뀌었으면 같은 길이로 오늘까지 밈
     const nf = new Date(`${from}T00:00:00`); nf.setDate(nf.getDate() + Math.round((new Date(`${ymd(today)}T00:00:00`) - new Date(`${to}T00:00:00`)) / 864e5)); from = ymd(nf); to = ymd(today);
@@ -775,14 +807,17 @@ function gwRange(){
   $('#gwFrom').value = from; $('#gwTo').value = to;
   try { localStorage.gw_from = from; localStorage.gw_to = to; } catch(e){ /* */ }
   // 빠른 버튼 표시: 끝이 오늘이고 시작이 정확히 n개월 전이면 그 버튼을 켬
-  $$('#gwRange .quickr .btn').forEach(b => { const d = new Date(today); d.setMonth(d.getMonth() - Number(b.dataset.m)); b.classList.toggle('on', to === ymd(today) && from === ymd(d)); });
+  $$('#gwRange .quickr .btn').forEach(b => { const d = monthsAgo(today, Number(b.dataset.m)); b.classList.toggle('on', to === ymd(today) && from === ymd(d)); });
   return {from, to};
 }
-$$('#gwRange .quickr .btn').forEach(b => b.onclick = () => { const today = new Date(), d = new Date(today); d.setMonth(d.getMonth() - Number(b.dataset.m)); $('#gwFrom').value = ymd(d); $('#gwTo').value = ymd(today); setGwFollow(true); gwRange(); $('#btnGwList').click(); });
+let gwAgain = false;   // 목록을 읽는 중에 기간을 바꾸면 끝난 뒤 새 기간으로 한 번 더 (버튼이 꺼져 있어 click() 이 무시됐음)
+let gwRetry = 0;
+const gwRefresh = () => { clearTimeout(gwRetry); if($('#btnGwList').disabled) gwRetry = setTimeout(gwRefresh, 1000); else $('#btnGwList').click(); };   // 다른 숨은 작업(환원 점검 등) 중이어도 끝나면 새 기간으로
+$$('#gwRange .quickr .btn').forEach(b => b.onclick = () => { const today = new Date(), d = monthsAgo(today, Number(b.dataset.m)); $('#gwFrom').value = ymd(d); $('#gwTo').value = ymd(today); setGwFollow(true); gwRange(); gwRefresh(); });
 try { const f = localStorage.gw_from, t = localStorage.gw_to; if(f && t){ $('#gwFrom').value = f; $('#gwTo').value = t; } } catch(e){ /* */ }   // 저장한 기간 되살리기 (끝이 오늘을 따라오면 gwRange 가 밀어 줌)
 gwRange();
-$('#gwTo').onchange = () => { setGwFollow($('#gwTo').value >= ymd(new Date())); gwRange(); $('#btnGwList').click(); };   // 끝을 지난 날로 고르면 고정, 오늘로 돌리면 다시 따라옴
-$('#gwFrom').onchange = () => { if(gwFollow()) $('#gwTo').value = ymd(new Date()); gwRange(); $('#btnGwList').click(); };   // 시작만 바꿈: 방금 고른 시작 날짜는 밀지 않게 끝부터 오늘로
+$('#gwTo').onchange = () => { setGwFollow($('#gwTo').value >= ymd(new Date())); gwRange(); gwRefresh(); };   // 끝을 지난 날로 고르면 고정, 오늘로 돌리면 다시 따라옴
+$('#gwFrom').onchange = () => { if(gwFollow()) $('#gwTo').value = ymd(new Date()); gwRange(); gwRefresh(); };   // 시작만 바꿈: 방금 고른 시작 날짜는 밀지 않게 끝부터 오늘로
 function deleteGwRows(pick){
   if(!pick.length) return;
   const keys = pick.map(r => r.key);
@@ -794,8 +829,12 @@ function deleteGwRows(pick){
 async function repeatTrip(id, keep = false){
   const {data} = await rpc('/api/repeat', {id, keep});
   $$('nav button')[0].click();
-  fillApply(data); markNeed(keep ? [] : ['날짜']); showMealPlan(null);
-  if(keep) recalcExpenses();
+  quickSeq++; fillApply(data); markNeed(keep ? [] : ['날짜']); showMealPlan(null);   // quickSeq: 늦게 온 [자동 작성] 답이 불러온 신청을 덮지 않게
+  if(keep && isOverseas()) for (const tr of $$('#a_exp tbody tr')) {   /* 해외: 저장된 견적 줄 금액을 입력칸으로 되살림 (비어 있으면 다시 계산 때 항공·보험이 빠졌음) */
+    const it = tr.querySelector('.item').value, m = tr.querySelector('.memo').value, v = tr.querySelector('.amt').value;
+    if(it === 'airfare') $('#a_air').value = v; else if(it === 'overseas_lodging' && !/한도/.test(m)) $('#a_hotel').value = v;
+    else if(it === 'travel_etc') $(/보험/.test(m) ? '#a_ins' : '#a_roam').value = v; else if(it === 'overseas_transport'){ const u = /\$([\d.]+)\s*x/.exec(m); if(u) $('#a_uber').value = u[1]; } }
+  if(keep){ $$('#a_exp tbody tr').forEach(tr => { tr.dataset.user = 'kept'; }); recalcExpenses(); }   /* 'kept' = 날짜·견적을 바꾸면 다시 규정대로 */   // 반려 신청의 경비 줄은 그대로 (규정 줄로 보고 다시 계산해 고친 금액·해외 견적이 사라졌음)
   $('#q_status').textContent = keep ? '반려된 신청을 그대로 불러왔어요. 반려 사유대로 고친 뒤 [그룹웨어에 입력하기]를 누르세요. 반려된 품의는 목록에서 [삭제]로 지울 수 있어요.' : '지난 출장 내용을 불러왔어요. 날짜만 고르면 경비는 규정대로 다시 계산돼요.';
   $('#a_start').focus();
   lookupFare(false);   // 교통비는 다시 조회 (최근 30일 조회값 있으면 바로, 없으면 네이버 지도)
@@ -817,9 +856,8 @@ const refreshReport = () => {
 };
 let reportPrompt = '';
 function fillReport(d){
-  $$('input[name=r_category]').forEach(x => x.checked = x.value === d.category);   // 출장구분은 기본값 없이 사람이 고름 (필수, 사용자 요청 2026-11-10)
-  $$('input[name=r_fund]').forEach(x => x.checked = x.value === d.fund);   // 자금과목: 출장마다 사람이 고름
-  for(const k of ['project','period','destination','visit_org','purpose','report']) $('#r_'+k).value = d[k]||'';
+  $('#r_category').value = d.category || ''; $('#r_project').value = d.project || ''; $('#r_fund').value = d.fund || '';   // 출장구분·자금과목은 기본값 없이 [보내기] 때 창으로 고름 (연구과제 출장만 정부과제 미리)
+  for(const k of ['period','destination','visit_org','purpose','report']) $('#r_'+k).value = d[k]||'';
   $('#r_companions').value = (d.companions||[]).join(', ');
   $('#r_sched tbody').innerHTML = ''; (d.schedule||[]).forEach(schedRow);
   $('#r_exp tbody').innerHTML = ''; (d.expenses||[]).forEach(e => expRow($('#r_exp tbody'), e, refreshReport));
@@ -836,7 +874,7 @@ let reportTransport = null;   // 신청 때 교통편 (자차면 유류대 = 네
 $('#btnFuel').onclick = () => lookupFuel();
 /** 자차면 유류대(네이버 지도 8km/L 캡처)를 조회. 이미 증빙 캡처가 붙은 교통비 줄이 있으면 안 함 */
 function maybeFuel(){
-  const hasFuel = [...$('#r_exp tbody').querySelectorAll('tr')].some(tr => tr.querySelector('.item').value === 'domestic_transport' && JSON.parse(tr.dataset.proofs || '[]').length);
+  const hasFuel = [...$('#r_exp tbody').querySelectorAll('tr')].some(tr => tr.querySelector('.item').value === 'domestic_transport' && (/^출장 유류비 \(/.test(tr.querySelector('.memo').value.trim()) || JSON.parse(tr.dataset.proofs || '[]').some(p => /^교통비_car/.test(String(p).split(/[\\/]/).pop()))));   // 통행료·주차 영수증은 유류비 줄이 아님 (그걸 보고 유류대 조회를 건너뛰었음)
   if(reportTransport && reportTransport.mode === 'car' && !hasFuel) lookupFuel();
 }
 function revealReport(){ const v = $('#reportView'); if(!v.classList.contains('pre')) return; v.classList.remove('pre'); v.classList.add('reveal'); setTimeout(() => v.classList.remove('reveal'), 600); }
@@ -846,8 +884,9 @@ function lookupFuel(){
   const t = reportTransport || {}, dest = $('#r_destination').value.trim(), addr = (/\(([^)]*)\)\s*$/.exec(dest) || [])[1];
   const to = t.to || (addr && /\d/.test(addr) ? addr : dest);
   if(!to) return alertErr('출장지를 먼저 적어 주세요. 그 이름으로 네이버 지도에서 찾아요.');
+  const tid = currentTrip && currentTrip.trip_id;
   runJob('유류대 조회 (네이버 지도)', '/api/job/fare', {mode: 'car', to, from: t.from, place: t.place || null, force: true, fuelOnly: true}, r => {   // fuelOnly: 읽은 값을 묻지 않고 유류비만 바로 넣음
-    if(!r || !r.total) return;
+    if(!r || r.fuel == null || !currentTrip || currentTrip.trip_id !== tid) return;   // 0원도 값. 묻는 사이 다른 출장을 열었으면 넣지 않음
     const tb = $('#r_exp tbody');
     const proofName = tr => (JSON.parse(tr.dataset.proofs || '[]')[0] || '').split(/[\\/]/).pop();
     // 이전 지도 캡처 줄·신청 때 예상 유류비 줄(증빙 없음, '출장 유류비…')만 새 값으로. 영수증 붙은 줄, 사람이 직접 쓴 통행료·택시 줄(증빙 없어도)은 그대로
@@ -878,7 +917,7 @@ async function showReport(id, r, extra = ''){
   if(r.resumed) maybeFuel();
 }
 function reportData(keepEmpty = false){
-  return {...currentTrip, category: radio('r_category'), fund: radio('r_fund') || '', project: $('#r_project').value.trim(),
+  return {...currentTrip, category: $('#r_category').value, fund: $('#r_fund').value, project: $('#r_project').value,
     period: $('#r_period').value.trim(), destination: $('#r_destination').value.trim(),
     visit_org: $('#r_visit_org').value.trim(), companions: list($('#r_companions').value),
     purpose: $('#r_purpose').value.trim(), report: $('#r_report').value.trim(),
@@ -894,7 +933,7 @@ function keepReport(force = false){   // force: 화면을 떠난 뒤 끝난 영�
   rpc('/api/report/keep', {id: currentTrip.trip_id, data: reportData(true)}).catch(() => {});
 }
 window.addEventListener('beforeunload', keepReport);
-const RQ_EXT = /\.(png|jpe?g|gif|webp|bmp|tiff?|pdf)$/i;   // rules.js PROOF_EXT 와 같게
+const RQ_EXT = /\.(png|jpe?g|jfif|gif|webp|bmp|tiff?|pdf)$/i;   // rules.js PROOF_EXT 와 같게
 function renderRqFiles(){
   const box = $('#rq_files'); box.innerHTML = '';
   rqFiles.forEach((f, i) => {
@@ -908,7 +947,10 @@ function renderRqFiles(){
 }
 function addRqFiles(paths){
   const bad = paths.filter(p => p && !RQ_EXT.test(p));
-  rqFiles = [...new Set([...rqFiles, ...paths.filter(p => p && RQ_EXT.test(p))])];
+  const attached = new Set([...$$('#r_exp tbody tr')].flatMap(tr => JSON.parse(tr.dataset.proofs || '[]')));   /* 이미 경비 줄에 붙은 영수증을 또 읽으면 같은 영수증이 두 번 청구됐음 */
+  const again = paths.filter(p => p && attached.has(p));
+  rqFiles = [...new Set([...rqFiles, ...paths.filter(p => p && RQ_EXT.test(p) && !attached.has(p))])];
+  if(again.length) $('#rq_status').textContent = `이미 경비 줄에 붙은 영수증 ${again.length}개는 다시 읽지 않아요.`;
   renderRqFiles();
   if(bad.length) $('#rq_status').textContent = `${bad.some(b => /\.hei[cf]$/i.test(b)) ? 'HEIC 사진은 받지 않아요. JPG·PNG로 바꿔서 넣어 주세요' : '이미지·PDF만 넣을 수 있어요'} (뺀 파일: ${bad.map(b => b.split(/[\\/]/).pop()).join(', ')})`;
 }
@@ -926,9 +968,11 @@ $('#btnRQuick').onclick = async () => {
   if(!rqFiles.length && !hasProofs() && !confirmNoProof()) return;   // 전에 읽어 경비 줄에 붙은 증빙이 있으면 안 물음
   const btn = $('#btnRQuick'); btn.disabled = true; btn.dataset.busy = '1'; $('#rq_status').textContent = '보고사항 작성 중…';
   try {
-    const r = await rpc('/api/report-quick', {id: currentTrip.trip_id, memo: $('#rq_memo').value});
-    const cur = reportData(true);
-    fillReport({...cur, ...r.data, expenses: cur.expenses.some(e => e.amount !== '' || (e.proofs || []).length) ? cur.expenses : r.data.expenses, attachments: cur.attachments});   // 화면에서 고친 경비·증빙은 유지
+    const tid0 = currentTrip.trip_id;
+    const r = await rpc('/api/report-quick', {id: tid0, memo: $('#rq_memo').value});
+    if(!currentTrip || currentTrip.trip_id !== tid0) return;   // 기다리는 사이 다른 출장을 열었으면 버림 (그 출장에 이 출장 내용이 들어갔음)
+    const cur = reportData(true), keep = k => (Array.isArray(cur[k]) ? cur[k].length : String(cur[k] || '').trim()) ? cur[k] : r.data[k];   // 화면에서 고친 기간·출장지 등은 그대로
+    fillReport({...r.data, ...Object.fromEntries(['period', 'destination', 'visit_org', 'companions', 'project', 'category', 'fund', 'purpose'].map(k => [k, keep(k)])), report: r.data.report || cur.report, schedule: (r.data.schedule || []).length ? r.data.schedule : cur.schedule, expenses: cur.expenses.some(e => e.amount !== '' || (e.proofs || []).length) ? cur.expenses : r.data.expenses, attachments: cur.attachments});   // 화면에서 고친 경비·증빙은 유지
     revealReport();
     const how = (r.source === 'template' ? '템플릿으로 작성' : `${r.source}로 작성`) + (r.note ? ` · ${r.note}` : '');
     $('#rq_status').textContent = how + ' · 영수증 읽는 중…';
@@ -978,15 +1022,17 @@ function applyReceipts(got){
   rowsOf().filter(r => (items.has(r.item) || !claimableTr(r.tr)) && !r.proofs.length && !r.tr.dataset.touched).forEach(r => r.tr.remove());   // 예상 금액 줄 → 실제 영수증으로 대체. 영수증이 안 온 과목의 예상 줄도 지움 (영수증 없이는 정산 못 함 — 자차 유류비 줄만 남김). 사람이 손댄 줄은 둠
   got.forEach(g => {
     const proofs = g.proofs || [];
-    const memo = g.failed ? '' : [g.date && g.date.slice(5).split('-').map(Number).join('/'), g.memo || g.vendor].filter(Boolean).join(' ');   // 거래처비고 형식 "10/2 1인 조식"
+    const odd = g.refund ? '(취소·환불)' : g.currency && g.currency !== 'KRW' ? `(${g.currency} ${g.amount} — 원화로)` : '';   // 외화·취소 영수증은 금액을 비워 사람이 넣게 (외화 숫자가 원으로, 취소가 결제로 들어갔음)
+    const memo = g.failed ? '' : [g.date && g.date.slice(5).split('-').map(Number).join('/'), g.memo || g.vendor, odd].filter(Boolean).join(' ');   // 거래처비고 형식 "10/2 1인 조식"
     const people = (g.item || 'meal') === 'meal' && !g.failed ? (g.people || guessPeople(g.amount, g.memo || '')) : 0;
-    expRow(tb, { item: g.item || 'meal', amount: g.amount || '', memo: people ? withPeople(memo, people) : memo, people, proofs, date: g.failed ? '' : g.date, meal: g.failed ? '' : g.meal, kind: g.failed ? '' : (g.kind || '') }, refreshReport);
+    const noAmt = g.failed || !!odd || g.amount === '' || g.amount == null || isNaN(Number(g.amount));   // 0원 영수증도 금액 (빈 것만 못 읽음)
+    expRow(tb, { item: g.item || 'meal', amount: noAmt ? '' : g.amount, memo: people ? withPeople(memo, people) : memo, people, proofs, date: g.failed ? '' : g.date, meal: g.failed ? '' : g.meal, kind: g.failed ? '' : (g.kind || '') }, refreshReport);
     const tr = tb.lastElementChild; tr.classList.add('fromai');
-    if(g.failed || !g.item || !g.amount) tr.querySelectorAll('select,input').forEach(x => x.classList.add('need'));
+    if(g.failed || !g.item || noAmt) tr.querySelectorAll('select,input').forEach(x => x.classList.add('need'));
   });
   refreshReport();
   confirmMealCaps();   // 한도 넘은 식대가 있으면 끼니·인원 확인 모달
-  const bad = got.filter(g => g.failed || !g.item || !g.amount).length;
+  const bad = got.filter(g => g.failed || !g.item || g.amount === '' || g.amount == null || g.refund || (g.currency && g.currency !== 'KRW')).length;
   $('#r_err').textContent = bad ? `영수증 ${bad}개는 제대로 못 읽었어요 (주황색 칸). 과목·금액을 확인해 주세요.` : '';
   $('#r_exp').scrollIntoView({ block: 'center', behavior: 'smooth' });
 }
@@ -1000,17 +1046,13 @@ function applyReceipts(got){
   ['dragover', 'drop'].forEach(ev => window.addEventListener(ev, e => { if(!e.target.closest || !e.target.closest('#r_drop, #po_drop, #pq_drop, #ac_drop')) e.preventDefault(); }));
 }
 $('#reportView').addEventListener('input', e => { if(e.target.classList) e.target.classList.remove('need'); });   // 입력 시작하면 빈 칸 표시 해제
-$$('input[name=r_fund]').forEach(x => x.addEventListener('change', () => $('#r_fund').classList.remove('need')));
-$$('input[name=r_category]').forEach(x => x.addEventListener('change', () => $('#r_category').classList.remove('need')));
 $('#btnReport').onclick = async () => {
   $('#r_err').textContent = '';
-  const d = reportData();
+  let d = reportData();
   for(const [k, id, label] of [['destination', '#r_destination', '출장지'], ['period', '#r_period', '출장일시']]) if(!String(d[k] || '').trim()){ $('#r_err').textContent = `${label}을(를) 넣어 주세요.`; $(id).classList.add('need'); if(typeof revealIn === 'function') revealIn($(id)); $(id).scrollIntoView({block: 'center'}); return; }   // 엔진의 '보고서: 출장지을…' 대신 칸을 보여 줌
   if(!d.report){ $('#r_err').textContent = '담당업무 및 보고사항을 입력해 주세요.'; $('#r_report').classList.add('need'); return; }
   $$('#r_sched textarea').forEach(x => x.classList.toggle('need', !x.value.trim()));
   if(!d.schedule.length || d.schedule.some(r => !r.detail)){ $('#r_err').textContent = '출장일정의 세부 활동 내용을 날짜마다 적어 주세요.'; return; }
-  if(!d.category){ $('#r_err').textContent = '출장구분을 골라 주세요.'; $('#r_category').classList.add('need'); $('#r_category').scrollIntoView({block: 'center'}); return; }
-  if(!d.fund){ $('#r_err').textContent = '자금과목(일반경비·제조경비)을 골라 주세요.'; $('#r_fund').classList.add('need'); return; }
   // 금액 빈 칸은 0원이 아니다 (영수증을 못 읽은 줄 등) — 0원은 그대로 보낼 수 있음
   const noAmt = [...$$('#r_exp tbody tr')].filter(tr => !tr.querySelector('.amt').value.trim());
   if(noAmt.length){ noAmt.forEach(tr => tr.querySelector('.amt').classList.add('need')); $('#r_err').textContent = `금액이 빈 경비 ${noAmt.length}줄이 있어요. 금액을 넣거나 그 줄을 지워 주세요 (0원이면 0).`; return; }
@@ -1019,7 +1061,7 @@ $('#btnReport').onclick = async () => {
   if(![...$$('#r_exp tbody tr')].some(claimableTr) && !confirm('정산할 경비가 없어요. 신청한 금액을 전부 환원하고 보고서만 올릴까요?')) return;
   // 식대 인원이 빈 줄: 금액으로 짐작해 넣고 적요의 "N인"도 맞춘 뒤 확인받는다
   const noPpl = [...$$('#r_exp tbody tr')].filter(claimableTr).filter(tr => tr.querySelector('.item').value === 'meal' && tr.querySelector('.ppl') && !tr.querySelector('.ppl').value && tr.querySelector('.memo').value.trim());
-  noPpl.forEach(tr => { const n = guessPeople(num(tr.querySelector('.amt').value), tr.querySelector('.memo').value); tr.querySelector('.ppl').value = n; tr.querySelector('.memo').value = withPeople(tr.querySelector('.memo').value, n); tr.querySelector('.ppl').classList.add('need'); });
+  noPpl.forEach(tr => { const said = (/(\d+)\s*인/.exec(tr.querySelector('.memo').value) || [])[1], n = said ? Number(said) : guessPeople(num(tr.querySelector('.amt').value), tr.querySelector('.memo').value);   /* 적요에 'N인'을 썼으면 그대로 */ tr.querySelector('.ppl').value = n; tr.querySelector('.memo').value = withPeople(tr.querySelector('.memo').value, n); tr.querySelector('.ppl').classList.add('need'); });
   const empty = [...$$('#r_exp tbody tr')].filter(claimableTr).filter(tr => !tr.querySelector('.memo').value.trim());   // 빠지는 줄은 적요를 안 채워도 됨
   if(noPpl.length && !empty.length){ $('#r_err').textContent = `식대 ${noPpl.length}줄의 인원을 금액으로 짐작해 넣었어요(주황색). 맞는지 보고 다시 눌러 주세요.`; return; }
   if(empty.length){   // 적요(= 거래처비고) 빈 줄은 AI 가 영수증으로 채우고 확인받는다
@@ -1031,9 +1073,13 @@ $('#btnReport').onclick = async () => {
     return;
   }
   if(!(await confirmMealCaps())){ $('#r_err').textContent = '식대 한도 확인을 닫았어요. 금액·인원을 확인하고 다시 눌러 주세요.'; return; }
+  // 출장구분(+ 정부과제면 과제)·자금과목은 출장 신청처럼 보낼 때 창으로 묻는다 — 다른 빈 칸을 먼저 막은 뒤
+  const meta = await askMeta(d, { cats: ['로봇', '천문', '생산', '기타', '정부과제'], projCat: '정부과제', etcCat: '기타', fund: true }); if(!meta) return;
+  $('#r_category').value = meta.category; $('#r_project').value = meta.project; $('#r_fund').value = meta.fund;
+  d = { ...d, ...meta };
   d.expenses = reportData().expenses;   // 모달에서 맞춘 금액·인원 반영
   // 보낼 내용 확인: 채주에 실제로 들어갈 줄 (같은 날 식대는 한 줄로 묶인 모양 그대로)
-  let pre; try { pre = (await rpc('/api/report-preview', {data: d})).lines; } catch(e){ $('#r_err').textContent = e.message; return; }
+  let pre, bItem = ''; try { const pv = await rpc('/api/report-preview', {data: d}); pre = pv.lines; bItem = pv.budgetItem || ''; } catch(e){ $('#r_err').textContent = e.message; return; }
   const sumR = pre.reduce((a, e) => a + e.amount, 0), PAY = { personal: '개인', card: '법인카드' };
   const okR = await confirmSubmit({ title: '출장보고서·정산, 이대로 보낼까요?', html: `
     <div class="cf-title">${escH($('#r_title').textContent)}</div>
@@ -1042,11 +1088,11 @@ $('#btnReport').onclick = async () => {
       <dt>보고사항</dt><dd>${escH(d.report)}</dd><dt>일정</dt><dd>${d.schedule.map(x => `${escH(x.date)} ${escH(x.place)} — ${escH(x.detail)}`).join('<br>')}</dd></dl>
     <div class="cf-sec">채주로 들어갈 내용${pre.some(e => e.dup) ? ' <span class="sub">(같은 날 식대는 한 줄로)</span>' : ''}</div>
     ${pre.length ? `<table class="cf-tbl"><thead><tr><th>예산과목</th><th>거래처비고</th><th>결제</th><th>증빙</th><th style="text-align:right">금액</th></tr></thead>
-      <tbody>${pre.map(e => `<tr><td>${escH(itemName(e.item))}</td><td>${escH(e.memo)}</td><td>${PAY[e.pay] || '개인'}${e.pay === 'card' ? (e.noVat ? ' · 면세' : ` · 부가세 ${won(Math.floor(e.amount / 11))}`) : ''}</td><td>${e.proofs ? `<span class="cf-ok">✓${e.proofs > 1 ? ' ' + e.proofs : ''}</span>` : '<span class="cf-no">없음</span>'}</td><td class="n">${won(e.amount)}</td></tr>`).join('')}</tbody>
+      <tbody>${pre.map(e => `<tr><td>${bItem ? escH(bItem) + "<br><span class=sub>" + escH(itemName(e.item)) + "</span>" : escH(itemName(e.item))}</td><td>${escH(e.memo)}</td><td>${PAY[e.pay] || '개인'}${e.pay === 'card' ? (e.noVat ? ' · 면세' : ` · 부가세 ${won(Math.floor(e.amount / 11))}`) : ''}</td><td>${e.proofs ? `<span class="cf-ok">✓${e.proofs > 1 ? ' ' + e.proofs : ''}</span>` : '<span class="cf-no">없음</span>'}</td><td class="n">${won(e.amount)}</td></tr>`).join('')}</tbody>
       <tfoot><tr><td colspan="4">합계</td><td class="n">${won(sumR)}</td></tr></tfoot></table>` : '<p class="sub">정산할 경비가 없어요 — 신청 금액 전액을 환원해요.</p>'}`,
     note: '보내면 결의서전송(채주·첨부·환원) → <b>[전송]까지 앱이 해요</b> → 결재상신 → 본문까지 채우고 작성 창을 띄워요. <b>상신은 직접</b>. 품의 한도를 넘는 금액은 한도까지만 청구돼요.' });
   if(!okR) return;
-  runJob('출장보고서 입력', '/api/job/report', {data: d}, () => { loadTrips(); gwMap = null; });
+  runJob('출장보고서 입력', '/api/job/report', {data: d}, () => { gwMap = null; loadTrips(); autoGwCheck(true); });   // 옛 상태는 버리고 바로 다시 읽음 (안 읽으면 목록이 '확인하는 중'에 멈춤)
 };
 
 /* ---------- 설정 ---------- */
@@ -1070,30 +1116,6 @@ function drawProjects(){   // 고른 건 강조
   $('#pm_project_list').innerHTML = hits.length ? hits.map(n => `<div class="${n === cur ? 'sel' : ''}" data-v="${escH(n)}">${escH(n)}</div>`).join('')
     : `<p>${projNames.length ? '검색 결과가 없어요' : projEmpty()}</p>`;
 }
-/** 글자 칸에 과제 목록을 붙인다: 누르거나 치면 바로 아래에 검색되는 목록, 고르면 칸에 들어감. 목록에 없는 이름도 그대로 쓸 수 있음 */
-function attachProjectList(input){
-  const wrap = document.createElement('div'); wrap.className = 'pj-wrap'; input.replaceWith(wrap); wrap.append(input);
-  const pop = document.createElement('div'); pop.className = 'pm-list pj-pop hidden'; wrap.append(pop);
-  const hide = () => pop.classList.add('hidden');
-  const show = () => {
-    if(document.activeElement !== input) return hide();
-    const names = projectNames(META.config), cur = input.value.trim();
-    const hits = matchNames(names, names.includes(cur) ? '' : cur);   // 이미 고른 이름이면 전체를 보여 줌 (다른 걸로 바꾸기 쉽게)
-    pop.innerHTML = hits.length ? hits.map(n => `<div class="${n === cur ? 'sel' : ''}" data-v="${escH(n)}">${escH(n)}</div>`).join('')
-      : `<p>${names.length ? '목록에 없어요 — 적은 이름 그대로 써요' : projEmpty()}</p>`;
-    pop.classList.remove('hidden');
-  };
-  input.autocomplete = 'off';
-  input.addEventListener('focus', () => { show(); ensureProjects(show); });
-  input.addEventListener('input', show);
-  input.addEventListener('blur', hide);
-  input.addEventListener('keydown', e => { if(e.key === 'Escape') hide(); });
-  pop.addEventListener('mousedown', e => {   // mousedown: 칸에서 포커스가 빠지기 전에
-    e.preventDefault(); const d = e.target.closest('[data-v]'); if(!d) return;
-    input.value = d.dataset.v; ['input', 'change'].forEach(t => input.dispatchEvent(new Event(t, {bubbles: true}))); hide();
-  });
-}
-attachProjectList($('#r_project'));   // 출장보고서 과제명
 $('#pm_project_q').oninput = drawProjects;
 $('#pm_project_list').onclick = e => { const d = e.target.closest('[data-v]'); if(d){ $('#pm_project').value = d.dataset.v; drawProjects(); } };
 /** 예산 부서 선택: 그룹웨어 사업코드 목록 (없으면 지금 값만) */
@@ -1127,7 +1149,7 @@ function renderSettings(){
 let lastOrigin = '';
 function syncApplyDefaults(){
   const now = META.config.defaultOrigin || '', cur = $('#a_from').value.trim();
-  if(!cur || cur === lastOrigin) $('#a_from').value = now;
+  if((!cur || cur === lastOrigin) && cur !== now){ $('#a_from').value = now; if(cur){ $('#a_fare').value = ''; fareShot = ''; $('#a_fare_desc').textContent = ''; refreshApply(); } }   // 출발지가 바뀌면 옛 경로 교통비·캡처는 버림
   lastOrigin = now;
 }
 const aiKeyRow = () => { const cli = ($('#s_ai').value === 'claude_cli'); $('#s_key').closest('.row').classList.toggle('hidden', cli); $('#btnAiClear').classList.toggle('hidden', cli); };   // Claude Code 는 키 없이 그 PC 로그인으로
@@ -1139,7 +1161,7 @@ function loadAiSettings(clearKey = false){   // clearKey: 저장·삭제 뒤에�
   $('#s_model').placeholder = META.providers[sel.value] ? `기본: ${META.providers[sel.value].model}` : '비우면 기본 모델';
   const keyHint = () => { const k = $('#s_ai').value; $('#s_key').placeholder = c.aiKeySet && !c.aiBuiltin && c.aiProvider && k !== c.aiProvider && k !== 'none' ? '이 회사의 API 키를 넣어 주세요 (예전 회사 키는 이 회사에 쓰지 않아요)' : c.aiKeySet && !c.aiBuiltin ? '저장됨 (바꾸려면 새 키 입력)' : k === 'gemini' && c.aiBuiltin ? '팀 공용 Gemini 키 사용 중 (개인 키를 넣으면 그게 우선)' : k === 'none' ? '' : 'API 키 붙여넣기 (필수)'; };
   $('#btnAiClear').hidden = !(c.aiKeySet && !c.aiBuiltin);   // 개인 키가 있을 때만. 팀 공용 키는 앱에 들어 있어 지울 수 없음
-  if(clearKey) $('#s_key').value = ''; keyHint(); aiKeyRow(); sel.oninput = () => { keyHint(); aiKeyRow(); };   // 설정을 열 때마다 리스너가 쌓이지 않게 (덮어쓰기)
+  if(clearKey) $('#s_key').value = ''; keyHint(); aiKeyRow(); sel.oninput = () => { $('#s_key').value = ''; keyHint(); aiKeyRow(); };   // 설정을 열 때마다 리스너가 쌓이지 않게 (덮어쓰기)
 
   const r = c.rates; $('#s_lodging').value = r.lodgingPerNight; $('#s_breakfast').value = r.breakfast; $('#s_lunch').value = r.lunch; $('#s_dinner').value = r.dinner; $('#s_fare_margin').value = r.fareMargin ?? 20000;
   $('#s_rank').value = c.rank || 'staff'; $('#s_car_fuel').value = c.carFuel || 'gasoline'; $('#s_car_type').value = c.carType || '1'; $('#s_has_car').value = c.hasCar === false ? 'no' : 'yes';
@@ -1155,10 +1177,12 @@ $('#btnAiTest').onclick = async () => {
   $('#s_ai_msg').textContent = '확인 중…';
   try { const r = await rpc('/api/ai/test'); $('#s_ai_msg').textContent = `연결됨: "${r.reply}"`; } catch(e){ $('#s_ai_msg').textContent = e.message; }
 };
+$('#s_has_car').addEventListener('change', () => { $('#s_has_car').dataset.touched = '1'; });
 $('#btnRateSave').onclick = async () => {
   const old = META.config.rates, rv = (id, k) => $(id).value.trim() === '' ? old[k] : num($(id).value);   // 비운 칸은 그대로 (0 은 넣은 값, 빈 칸은 안 넣은 것)
   const rates = {...old, lodgingPerNight: rv('#s_lodging', 'lodgingPerNight'), breakfast: rv('#s_breakfast', 'breakfast'), lunch: rv('#s_lunch', 'lunch'), dinner: rv('#s_dinner', 'dinner'), fareMargin: rv('#s_fare_margin', 'fareMargin')};
-  await rpc('/api/config', {rates, rank: $('#s_rank').value, carFuel: $('#s_car_fuel').value, carType: $('#s_car_type').value, hasCar: $('#s_has_car').value === 'yes'}); META = await rpc('/api/meta'); applyCarRule(); $('#s_rate_msg').textContent = '저장됨';
+  const carSaid = META.config.hasCar != null || $('#s_has_car').dataset.touched;   // 아직 안 물어본 '자차 있음'을 규정 저장이 '있음'으로 정해 버리지 않게 (첫 로그인 질문이 사라졌음)
+  await rpc('/api/config', {rates, rank: $('#s_rank').value, carFuel: $('#s_car_fuel').value, carType: $('#s_car_type').value, ...(carSaid ? {hasCar: $('#s_has_car').value === 'yes'} : {})}); META = await rpc('/api/meta'); applyCarRule(); $('#s_rate_msg').textContent = '저장됨';
 };
 
 /* ---------- 구매 의뢰 (구매의뢰서) ---------- */
@@ -1180,7 +1204,7 @@ function loadPurchaseList(){
       el.querySelector('b').textContent = x.title.replace(/^\[[^\]]*\]\s*/, '');
       el.querySelector('.sub').textContent = `${x.date || ''}${x.docNo ? ' · ' + x.docNo : ''}${x.local ? ` · 이 PC에서 작성` : ''}`;
       const btns = el.querySelector('.inline');
-      if(x.local && x.local.data){ const b = document.createElement('button'); b.className = 'btn small'; b.textContent = '다시 불러오기'; b.title = '그때 입력한 내용을 아래 칸에 다시 채워요'; b.onclick = () => { puView('new'); fillPurchase(x.local.data); puRead = (x.local.data.link && x.local.data.link.url) || x.local.data.file || ''; revealPurchase(); $('#pu_status').textContent = '전에 작성한 내용을 불러왔어요.'; }; btns.appendChild(b); }
+      if(x.local && x.local.data){ const b = document.createElement('button'); b.className = 'btn small'; b.textContent = '다시 불러오기'; b.title = '그때 입력한 내용을 아래 칸에 다시 채워요'; b.onclick = () => { puView('new'); restorePurchase(x.local.data); puRead = (x.local.data.link && x.local.data.link.url) || x.local.data.file || ''; revealPurchase(); $('#pu_status').textContent = '전에 작성한 내용을 불러왔어요.'; }; btns.appendChild(b); }
       if(x.local && !x.docNo){ const d = document.createElement('button'); d.className = 'btn small danger'; d.textContent = '기록 삭제'; d.onclick = async () => { await rpc('/api/purchase/forget', {created: x.local.created}); loadPurchaseList(); }; btns.appendChild(d); }
       box.appendChild(el);
     });
@@ -1194,7 +1218,7 @@ function initPurchase(){
   loadPurchaseList();
   const opt = (sel, list) => { sel.innerHTML = '<option value="">고르세요</option>' + list.map(v => `<option>${escH(v)}</option>`).join(''); };
   opt($('#pu_purpose'), META.purchase.purposes); opt($('#pu_project'), META.purchase.projects);
-  try { const d = JSON.parse(localStorage.pu_draft || 'null'); if(d){ fillPurchase(d); if(d.items && d.items.some(i => i.name)){ puRead = (d.link && d.link.url) || d.file || ''; revealPurchase(); } } } catch(e){ /* 없음 */ }
+  try { const d = JSON.parse(localStorage.pu_draft || 'null'); if(d){ puDesc = d.desc || ''; $('#pu_title').dataset.manual = d.manual ? '1' : ''; fillPurchase(d); if(d.items && d.items.some(i => i.name)){ puRead = (d.link && d.link.url) || d.file || ''; revealPurchase(); } } } catch(e){ /* 없음 */ }
   puRender();
 }
 function puItemRow(it = {}){
@@ -1217,6 +1241,8 @@ function purchaseData(){
     vendor: { name: $('#pu_vendor').value.trim(), contact: $('#pu_contact').value.trim(), phone: $('#pu_phone').value.trim(), email: $('#pu_email').value.trim() },
     title: $('#pu_title').value.trim(), reason: $('#pu_reason').value.trim() };
 }
+// 저장해 둔 구매를 다시 채울 때: 그때 제목을 그대로 (puDesc 가 없으면 puRender 가 다른 구매의 설명이나 메모로 제목을 다시 만들었음)
+function restorePurchase(d){ $('#pu_title').dataset.manual = d.title ? '1' : ''; puDesc = ''; fillPurchase(d); }
 function fillPurchase(d){
   puFile = d.file || ''; renderPoChip(); puLink = d.link && d.link.url ? d.link : null; renderUrlCard(); puSummary = Array.isArray(d.summary) ? d.summary : [];
   setRadio('pu_src', puLink ? 'url' : 'file'); puSrcToggle();
@@ -1235,7 +1261,7 @@ function puRender(){
   $('#pu_project_etc').placeholder = DETAIL_REQ.includes($('#pu_project').value) ? '세부 프로젝트명 (필수 — 제목에 들어가요)' : '세부 프로젝트명 (선택 — 제목에 들어가요)';
   const online = puOnlineVatIn();   // 온라인 판매가가 부가세 포함이면 그대로 (VAT 별도 가격인 쇼핑몰은 발주서처럼 +10%)
   if(online){ $('#pu_vat').checked = true; $('#pu_vat').disabled = true; } else $('#pu_vat').disabled = false;
-  const items = puItems(), supply = items.reduce((a, i) => a + (i.amount === '' ? i.qty * i.unit_price : i.amount), 0), total = $('#pu_vat').checked && !online ? Math.round(supply * 1.1) : supply;
+  const items = puItems(), supply = items.reduce((a, i) => a + (i.amount === '' ? i.qty * i.unit_price : i.amount), 0), total = $('#pu_vat').checked && !online ? supply + Math.floor(supply / 10) : supply;
   $('#pu_total').textContent = `합계 ${won(total)}${online ? ' (온라인 판매가 · 부가세 포함)' : $('#pu_vat').checked ? ` (공급가액 ${won(supply)} + 부가세)` : ''}`;
   // 제목 설명: AI 가 메모로 쓴 짧은 설명 → 없으면 메모 그대로 → 없으면 첫 품명(짧게). 긴 모델명 그대로 쓰지 않음
   if(!$('#pu_title').dataset.manual){ const memo = $('#pu_memo').value.trim().replace(/\s*(구매|요청|구입)(\s*요청)?(의\s*건)?\s*$/, ''), first = items[0] && items[0].name ? items[0].name.replace(/\s*\(.*\)\s*$/, '').slice(0, 30) : '';
@@ -1255,7 +1281,7 @@ function puRender(){
     { label: '구매 상세 사유', ok: !!d.reason.split(SUM_HEAD)[0].trim(), focus: '#pu_memo' },   // 요약만 있고 사유 글이 없으면 미완
     { label: '제목', ok: !!d.title, focus: '#pu_title' },
   ], '#btnPurchase', '그룹웨어에 입력하기');
-  try { localStorage.pu_draft = JSON.stringify(d); } catch(e){ /* 저장 공간 없음 */ }
+  try { localStorage.pu_draft = JSON.stringify({ ...d, desc: puDesc, manual: !!$('#pu_title').dataset.manual }); } catch(e){ /* 저장 공간 없음 */ }   // 제목 설명·직접 고침 여부도 (다시 켜면 메모로 제목을 다시 만들었음)
 }
 ['#pu_purpose', '#pu_project', '#pu_purpose_etc', '#pu_project_etc', '#pu_vat', '#pu_vendor', '#pu_contact', '#pu_phone', '#pu_email', '#pu_reason', '#pu_memo'].forEach(id => ['input', 'change'].forEach(ev => $(id).addEventListener(ev, puRender)));
 $$('input[name=pu_urgency],input[name=pu_sub]').forEach(r => r.addEventListener('change', puRender));
@@ -1275,7 +1301,7 @@ function renderPoChip(busy = false){
 }
 function usePoFile(f){
   if(!f) return;
-  if(!/\.(pdf|docx|xlsx|png|jpe?g|webp)$/i.test(f)) return alertErr('발주서는 PDF·워드(.docx)·엑셀(.xlsx)·이미지 파일이어야 해요.');
+  if(!/\.(pdf|docx|xlsx|png|jpe?g|jfif|webp)$/i.test(f)) return alertErr('발주서는 PDF·워드(.docx)·엑셀(.xlsx)·이미지 파일이어야 해요.');
   puFile = f; poInfo = '[✦ 자동 작성]을 누르면 읽어요'; puRead = ''; puLink = null; renderUrlCard(); $('#pu_url').value = ''; renderPoChip(); puRender();   // 발주서 파일과 제품 페이지는 둘 중 하나만
 }
 let puRead = '';   // 마지막으로 읽은 발주서 파일·제품 주소 (같은 걸 다시 읽지 않음)
@@ -1283,7 +1309,7 @@ let puRead = '';   // 마지막으로 읽은 발주서 파일·제품 주소 (�
 function readPo(next){
   runJob('발주서 읽기', '/api/job/po-read', {path: puFile}, po => {
     puRead = puFile;
-    poInfo = `${po.vendor.name || '거래처 ?'} · 품목 ${po.items.length}건 · 합계 ${won(po.total || po.supply)}${po.vat > 0 ? ' (부가세 포함)' : ''}`;
+    poInfo = `${po.vendor.name || '거래처 ?'} · 품목 ${po.items.length}건 · 합계 ${po.total === '' && po.supply === '' ? '?' : won(po.total || po.supply)}${po.vat > 0 ? ' (부가세 포함)' : ''}`;
     const cur = purchaseData();
     fillPurchase({ ...cur, file: puFile, vendor: { ...cur.vendor, ...Object.fromEntries(Object.entries(po.vendor).filter(([k, v]) => v && k !== 'address')) },
       items: po.items.map(i => ({ ...i, due: $('#pu_due_all').value })),   // 문서의 납품·발송 예정일은 업체 날짜 → 납기 요청일자는 사람이 (선택)
@@ -1315,9 +1341,9 @@ function readUrl(next){
   runJob('제품 페이지 읽기', '/api/job/url-read', {url}, r => {
     puRead = url;
     const cur = purchaseData();
-    puLink = { url: r.url, title: r.title, shot: r.shot, priceVat: r.price_vat, info: `${r.name || '제품 ?'} · ${won(r.unit_price)}${r.vendor.name ? ' · ' + r.vendor.name : ''}` };
+    puLink = { url: r.url, title: r.title, shot: r.shot, priceVat: r.price_vat, info: `${r.name || '제품 ?'} · ${r.unit_price === '' ? '가격 ?' : won(r.unit_price)}${r.vendor.name ? ' · ' + r.vendor.name : ''}` };
     puFile = ''; poInfo = ''; renderPoChip();   // 둘 중 하나만
-    const item = { name: r.name, part_no: r.part_no, unit: r.unit, qty: r.qty, unit_price: r.unit_price, amount: Math.round(r.qty * r.unit_price), due: $('#pu_due_all').value, note: r.note || '' };
+    const item = { name: r.name, part_no: r.part_no, unit: r.unit, qty: r.qty, unit_price: r.unit_price, amount: r.unit_price === '' ? '' : Math.round(r.qty * r.unit_price), due: $('#pu_due_all').value, note: r.note || '' };
     if(r.price_vat === 'excl') cur.vat_included = true;   // 'VAT 별도' 가격 → 합계는 부가세 더해서 VAT포함
     fillPurchase({ ...cur, file: '', link: puLink, items: [...cur.items.filter(i => i.name), item], vendor: { name: cur.vendor.name || r.vendor.name, contact: cur.vendor.contact || r.vendor.name, phone: cur.vendor.phone || r.vendor.phone, email: cur.vendor.email || r.vendor.email },
       memo: cur.memo || r.note, vat_included: cur.vat_included });
@@ -1367,11 +1393,12 @@ $('#btnPurchase').onclick = async () => {
   const need = [];
   if(radio('pu_src') === 'url' ? !puLink : !puFile) need.push(radio('pu_src') === 'url' ? '제품 페이지 (주소를 넣고 [페이지 읽기])' : '발주서');
   if(!d.items.length) need.push('구매 요청 내역'); if(d.items.some(i => !i.name)) need.push('품명');
+  if(d.items.some(i => i.unit_price === '' && i.amount === '')) need.push('단가 또는 금액 (0원이면 0)');   // 빈 칸이 0원으로 올라갔음
   if(!d.purpose || (d.purpose === '기타' && !d.purpose_etc)) need.push('구매목적'); if(!d.project) need.push('프로젝트명'); else if(DETAIL_REQ.includes(d.project) && !d.project_etc) need.push(`세부 프로젝트명 (${d.project})`);
   if(!d.vendor.name) need.push('거래처'); if(!d.reason.split(SUM_HEAD)[0].trim()) need.push('구매 상세 사유 (한 줄 메모 쓰고 [✦ 자동 작성])'); if(!d.title) need.push('제목');
   if(need.length){ $('#pu_err').textContent = '빠진 것: ' + need.join(', '); return; }
 
-  const supply = d.items.reduce((a, i) => a + (i.amount === '' ? i.qty * i.unit_price : i.amount), 0), total = d.vat_included && !d.price_vat ? Math.round(supply * 1.1) : supply;
+  const supply = d.items.reduce((a, i) => a + (i.amount === '' ? i.qty * i.unit_price : i.amount), 0), total = d.vat_included && !d.price_vat ? supply + Math.floor(supply / 10) : supply;
   const html = `<div class="cf-title">${escH(d.title)}</div>
     <dl class="cf-grid"><dt>거래처</dt><dd>${escH([d.vendor.name, d.vendor.contact].filter((x, i, a) => x && a.indexOf(x) === i).join(' / '))}</dd><dt>구매목적</dt><dd>${escH(d.purpose === '기타' ? d.purpose_etc : d.purpose)}</dd><dt>프로젝트</dt><dd>${escH(puTag())}</dd><dt>긴급도</dt><dd>${escH(d.urgency)} · ${d.substitutable ? '대체 가능' : '대체 불가'}</dd><dt>첨부</dt><dd>${[d.file && escH(d.file.split(/[\\/]/).pop()), puLink && '제품 페이지 캡처'].filter(Boolean).join(', ') || '없음'}</dd></dl>
     <table class="cf-tbl pu-cf"><colgroup><col><col style="width:64px"><col style="width:110px"><col style="width:92px"></colgroup><thead><tr><th>품명</th><th>수량</th><th class="n">공급가액</th><th>납기</th></tr></thead><tbody>${d.items.map(i => `<tr><td>${escH(i.name)}${i.part_no ? ' <span class="sub">' + escH(i.part_no) + '</span>' : ''}</td><td>${i.qty}${escH(i.unit)}</td><td class="n">${won(i.amount === '' ? i.qty * i.unit_price : i.amount)}</td><td>${escH(i.due || '-')}</td></tr>`).join('')}</tbody><tfoot><tr><td colspan="2">합계 (${d.vat_included ? 'VAT 포함' : 'VAT 미포함'})</td><td class="n">${won(total)}</td><td></td></tr></tfoot></table>`;
@@ -1442,11 +1469,12 @@ const readStExp = () => [...$('#st_exp tbody').querySelectorAll('tr')].map(tr =>
 })).filter(e => e.amount || e.memo || e.file);
 /* 📋 지출 결의: 올린 지출 품의 목록 (출장 보고처럼). 승인된 품의 → [지출 결의서 작성] */
 let stListed = false;
-function stSetRange(m){ const t = new Date(), f = new Date(t); f.setMonth(f.getMonth() - m); $('#stFrom').value = ymd(f); $('#stTo').value = ymd(t); $$('#stRange .quickr .btn').forEach(b => b.classList.toggle('on', Number(b.dataset.m) === m)); }
+function stSetRange(m){ const t = new Date(), f = monthsAgo(t, m); $('#stFrom').value = ymd(f); $('#stTo').value = ymd(t); $$('#stRange .quickr .btn').forEach(b => b.classList.toggle('on', Number(b.dataset.m) === m)); }
 function openStForm(x){
-  $('#st_pui').value = `${x.ym}|${x.day}|${x.seq}`;
+  const key = `${x.ym}|${x.day}|${x.seq}`, other = $('#st_pui').value && $('#st_pui').value !== key;
+  $('#st_pui').value = key;
   $('#st_pui_name').textContent = (x.docTitle || x.memo || '').replace(/^\[[^\]]*\]\s*/, '');
-  if(!$('#st_purpose').value.trim()) $('#st_purpose').value = x.memo || '';
+  if(other || !$('#st_purpose').value.trim()) $('#st_purpose').value = x.memo || '';   // 다른 품의를 고르면 집행용도도 그 품의 것으로 (앞 품의 용도가 남았음)
   $('#st_err').textContent = ''; $('#stForm').classList.remove('hidden'); $('#stForm').scrollIntoView({block: 'start', behavior: 'smooth'});
 }
 function loadStList(){
@@ -1470,7 +1498,7 @@ function loadStList(){
       };
       box.appendChild(el);
     });
-  }, {quiet: true, userAction: true});
+  }, {quiet: true, userAction: true, onSkip: () => { stListed = false; }});
 }
 /* 지출 품의 (지출 결의 앞 단계) */
 /** 예산과목 드롭다운: 그룹웨어 API 목록(pqItems)을 분류별로. sel: 고른 코드 (목록에 없으면 그 줄만 따로 보여 줌) */
@@ -1566,7 +1594,7 @@ function renderPqFile(busy = false){
 }
 function usePqFiles(list){
   const ok = (list || []).filter(Boolean);
-  if(ok.some(f => !/\.(pdf|docx|xlsx|png|jpe?g|webp)$/i.test(f))) return alertErr('청구서 및 견적서는 PDF·워드(.docx)·엑셀(.xlsx)·이미지 파일이어야 해요.');
+  if(ok.some(f => !/\.(pdf|docx|xlsx|png|jpe?g|jfif|webp)$/i.test(f))) return alertErr('청구서 및 견적서는 PDF·워드(.docx)·엑셀(.xlsx)·이미지 파일이어야 해요.');
   if(!ok.length) return;
   pqFiles = [...new Set([...pqFiles, ...ok])]; pqInfo = ''; pqFx = null; pqAiTool = false; renderPqFile();
 }
@@ -1578,7 +1606,10 @@ function pqRead(){
     : lines.some(l => !l.memo) ? '모든 줄에 적요를 적어 주세요.' : !lines.some(l => l.amount > 0) ? '품의 금액을 한 줄 이상 넣어 주세요 (지금은 전부 0원이에요).' : '';
   return err ? { err } : { data: { memo, title: $('#pq_title').value.trim(), purpose, detail: $('#pq_detail').value.trim(), lines, files: pqFiles, proofs: pqFx ? [pqFx.shot] : [], fx: pqFx && lines.some(l => l.usd !== '') ? { rate: pqFx.rate, date: pqFx.date } : null } };
 }
+function resetPui(){ ['#pq_cmd', '#pq_memo', '#pq_title', '#pq_purpose', '#pq_detail'].forEach(s => $(s).value = ''); $('#pq_lines tbody').replaceChildren(); addPqRow(); $('#pq_err').textContent = $('#pq_status').textContent = ''; pqDrafted = pqInfo = ''; pqFiles = []; pqFx = null; pqAiTool = false; pqTpl = null; renderPqFile(); $('#pqNew').classList.add('pre'); }
 async function submitPui(){
+  // 자동 작성 뒤 청구서를 바꿨으면 환율·AI 도구 판단이 지워져 있음 → 그대로 올리면 환율 증빙·지원 한도가 빠짐
+  if(pqDrafted && pqDrafted.split('\n')[0] !== pqFiles.join('|')){ $('#pq_err').textContent = '청구서 및 견적서를 바꿨어요. [✦ 자동 작성]으로 다시 채운 뒤 올려 주세요.'; return; }
   const { data, err } = pqRead();
   $('#pq_err').textContent = err || '';
   if(err && !pqFiles.length){ $('#pq_drop').scrollIntoView({block: 'center'}); return alertErr(err); }
@@ -1614,6 +1645,7 @@ async function submitPui(){
     $('#pq_status').textContent = $('#pq_err').textContent = '지출 품의를 보관했어요. 작성 창에서 결재선을 지정하고 직접 [상신]하세요. 승인되면 [📋 지출 결의]에서 지출 결의서를 써요.';
     if(from) { await rpc('/api/pui/repeat-done', {id: from.id}).catch(() => {}); pqTpl = null; loadPqRepeats(); }   // 알림 받고 올림 → 배지 끔
     if(repeat){ try { await rpc('/api/pui/repeat-add', {data: {...data, cmd: $('#pq_cmd').value.trim()}, day}); loadPqRepeats(); } catch(e){ alertErr(`매달 알림을 저장하지 못했어요: ${e.message}`); } }
+    const msg = $('#pq_status').textContent; resetPui(); $('#pq_status').textContent = msg;   // 올린 내용은 비움 — 남아 있으면 [보내기] 한 번에 같은 품의가 또 올라가고 다음 달 청구서에 이번 달 것이 붙음
   }, {userAction: true});
 }
 /* 🔔 매달 알림 목록: [지금 올리기]·켜기·끄기·삭제 */
@@ -1622,7 +1654,7 @@ async function loadPqRepeats(){
   const list = await rpc('/api/pui/repeats').catch(() => []), box = $('#pqRepeatRows'), d = new Date(), ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
   $('#pqRepeats').classList.toggle('hidden', !list.length); box.innerHTML = '';
   list.forEach(r => {
-    const el = document.createElement('div'); el.className = 'item'; const due = r.on && r.last === ym && r.done !== ym;
+    const el = document.createElement('div'); el.className = 'item'; const due = r.on && r.last > (r.done || '');   // 알림 온 달을 아직 안 올림 (다음 달 1일이 돼도 카드가 남음)
     el.innerHTML = `<div><b></b>${due ? ' <span class="pill bad">이번 달 올릴 차례</span>' : r.done === ym ? ' <span class="pill ok">이번 달 올림</span>' : ''}<div class="sub" style="margin:2px 0 0"></div></div>
       <div class="inline" style="gap:10px"><button class="btn ${due ? 'primary' : 'small'} go">지금 올리기</button><label class="inline" style="gap:6px;font-size:13px"><input type="checkbox" class="on" style="width:auto"> 켜짐</label><button class="btn small danger del">삭제</button></div>`;
     el.querySelector('b').textContent = r.data.memo;
@@ -1694,7 +1726,7 @@ function initSettle(){
     ['dragenter', 'dragover'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.add('over'); }));
     ['dragleave', 'drop'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.remove('over'); }));
     dz.addEventListener('drop', e => usePqFiles([...e.dataTransfer.files].map(f => window.api.pathForFile(f)))); }   // 여러 개 한꺼번에
-  $('#btnNewPui').onclick = () => { if(!confirm('입력 중인 지출 품의 내용을 모두 비울까요?')) return; ['#pq_cmd', '#pq_memo', '#pq_title', '#pq_purpose', '#pq_detail'].forEach(s => $(s).value = ''); $('#pq_lines tbody').innerHTML = ''; addPqRow(); $('#pq_err').textContent = $('#pq_status').textContent = ''; pqDrafted = pqInfo = ''; pqFiles = []; pqFx = null; pqAiTool = false; pqTpl = null; renderPqFile(); $('#pqNew').classList.add('pre'); };
+  $('#btnNewPui').onclick = () => { if(!confirm('입력 중인 지출 품의 내용을 모두 비울까요?')) return; resetPui(); };
   if(!$('#st_exp tbody').children.length) addStRow();
   $('#btnStAdd').onclick = () => addStRow();
   $('#btnNewSettle').onclick = () => { if(!confirm('입력 중인 지출 결의 내용을 모두 비울까요?')) return; $('#st_purpose').value = ''; $('#st_exp tbody').innerHTML = ''; addStRow(); $('#st_err').textContent = ''; };
@@ -1708,17 +1740,24 @@ function submitSettle(){
   if(!purpose){ err.textContent = '집행용도(적요)를 적어 주세요.'; return; }
   const expenses = readStExp();
   if(!expenses.length){ err.textContent = '지출 줄을 한 줄 이상 넣어 주세요.'; return; }
+  const noAmt = [...$$('#st_exp tbody tr')].filter(tr => !tr.querySelector('.amt').value.trim() && (tr.querySelector('.memo').value.trim() || tr.dataset.file));   // 빈 칸 ≠ 0원
+  if(noAmt.length){ noAmt.forEach(tr => tr.querySelector('.amt').classList.add('need')); err.textContent = `금액이 빈 줄 ${noAmt.length}개가 있어요. 금액을 넣거나 그 줄을 지워 주세요 (0원이면 0).`; return; }
   if(expenses.some(e => !e.memo)){ err.textContent = '모든 줄에 비용 세부내역(거래처비고)을 적어 주세요.'; return; }
   if(!expenses.some(e => e.amount > 0)){ err.textContent = '지출 금액을 한 줄 이상 넣어 주세요 (지금은 전부 0원이에요).'; return; }
   if(expenses.some(e => e.amount > 0 && !e.file) && !confirmNoProof('영수증')) return;
   const [ym, day, seq] = pui.split('|');
   const data = { pui: {ym, day, seq}, purpose, fund: stFund(), expenses };
-  runJob('지출 결의서 작성', '/api/job/settle', {data}, () => { $('#st_err').textContent = '결의서를 전송하고 결의서 작성 창을 띄웠어요. 본문·결재선 확인하고 [상신]은 직접 하세요.'; }, {userAction: true});
+  runJob('지출 결의서 작성', '/api/job/settle', {data}, r => { if(!r || !r.resolutionNo) return;   // [전송] 전에 멈췄으면 쓰던 내용 그대로
+    $('#st_pui').value = ''; $('#st_pui_name').textContent = ''; $('#st_purpose').value = ''; $('#st_exp tbody').replaceChildren(); addStRow();   // 다음 품의에 이 결의 내용·영수증이 남지 않게
+    $('#st_err').textContent = '결의서를 전송하고 결의서 작성 창을 띄웠어요. 본문·결재선 확인하고 [상신]은 직접 하세요.'; }, {userAction: true});
 }
 /* 방문 시간: 시작·끝 시각 칸 두 개 ↔ 엔진·본문은 "14:00~16:00" 한 줄. 끝을 안 골랐으면 빈 값(=빠진 것) */
 const vsTimeOf = () => $('#vs_t1').value && $('#vs_t2').value ? `${$('#vs_t1').value}~${$('#vs_t2').value}` : '';
 function vsSetTime(s){   // "14:00~16:00", "14~16", "9:30-11" (AI·예전 초안) → 두 칸. 못 읽으면 비움
-  const t = [...String(s || '').matchAll(/(\d{1,2})(?:\s*[:시]\s*(\d{2}))?/g)].map(m => Number(m[1]) < 24 ? `${m[1].padStart(2, '0')}:${m[2] || '00'}` : '');
+  const str = String(s || ''); let pm = false;   /* 시각마다 앞(또는 뒤 PM)의 오전·오후. 표시가 없으면 앞 시각 것 ('오후 2시~4시', '오전 10시~오후 2시') */
+  const t = [...str.matchAll(/(\d{1,2})(?:\s*[:시]\s*(\d{2}))?/g)].map(m => { const before = str.slice(Math.max(0, m.index - 4), m.index), after = str.slice(m.index + m[0].length, m.index + m[0].length + 4);
+    if(/오후|저녁|pm/i.test(before) || /^\s*pm/i.test(after)) pm = true; else if(/오전|아침|am/i.test(before) || /^\s*am/i.test(after)) pm = false;
+    const h = Number(m[1]) + (pm && Number(m[1]) < 12 ? 12 : 0); return h < 24 ? `${String(h).padStart(2, '0')}:${m[2] || '00'}` : ''; });
   $('#vs_t1').value = t[0] || ''; $('#vs_t2').value = t[1] || '';
 }
 $('#vs_t1').addEventListener('change', () => {   // 시작을 고르면 끝이 비었거나 시작보다 이르면 1시간 뒤로
@@ -1770,7 +1809,7 @@ function vsRender(){
   const ready = [
     // rows: 보낼 때 모달로 옮겨 묻는 칸 · confirm: AI 가 채웠어도 사람이 한 번 보는 칸 (결재선·출입 구역이 갈림)
     { label: '방문 유형', ok: !!d.type, focus: '#vs_type_seg', rows: ['#vs_type_seg'], confirm: true },
-    { label: '방문자 성명·소속', ok: !!(d.name && d.org), focus: d.name ? '#vs_org' : '#vs_name', rows: ['#vs_name', '#vs_org', '#vs_position', '#vs_count'] },
+    { label: '방문자 성명·소속', ok: !!(d.name && d.org && /^\d{1,3}$/.test(String(d.count).trim()) && Number(d.count) >= 1), focus: d.name ? '#vs_org' : '#vs_name', rows: ['#vs_name', '#vs_org', '#vs_position', '#vs_count'] },
     { label: '방문 일정', ok: !!d.date, focus: '#vs_date', rows: ['#vs_date'], confirm: true },   // 날짜로 긴급 사유가 갈리고, 메모에 없어도 AI 가 오늘로 짐작할 때가 있음
     { label: '방문 시간', ok: !!d.time, focus: $('#vs_t1').value ? '#vs_t2' : '#vs_t1', rows: ['#vs_t1'] },
     { label: '방문 목적', ok: !!d.purpose, focus: '#vs_purpose', rows: ['#vs_purpose'] },
@@ -1824,11 +1863,12 @@ async function vsDraft(memo){
     const cur = $('#vsNew').classList.contains('pre') ? { ...vsBlank(), dept: $('#vs_dept').value.trim(), host: $('#vs_host').value.trim(), memo } : visitorData(), pick = (a, b) => a === '' || a == null ? b : a;
     vsDrafted = memo; vsConfirmed.clear();   // 새로 채웠으면 확인도 다시
     fillVisitor({ ...cur, ...Object.fromEntries(VS_TEXT.map(k => [k, pick(r[k], cur[k])])), count: r.count || cur.count, type: r.type || cur.type, time: pick(r.time, cur.time),
-      areas: r.areas.length ? r.areas : cur.areas, shoot: r.shoot.length ? r.shoot : cur.shoot, urgent_reason: pick(r.urgent_reason, cur.urgent_reason), title: $('#vs_title').dataset.manual ? cur.title : '' });
+      areas: r.areas.length ? r.areas : cur.areas, shoot: r.shoot.length ? r.shoot : cur.shoot, urgent_reason: pick(r.urgent_reason, cur.urgent_reason), title: $('#vs_title').dataset.manual ? cur.title : '', manual: !!$('#vs_title').dataset.manual });
     await vsCheckUrgent();
     $('#vs_status').textContent = '';
     return true;
-  } catch(e){ $('#vs_status').textContent = `메모로 못 채웠어요 (${e.message}) — 칸을 하나씩 물어볼게요.`; return true; }   // AI 가 없거나 실패해도 모달로 다 물으면 됨
+  } catch(e){ vsDrafted = memo; vsConfirmed.clear(); if($('#vsNew').classList.contains('pre')) fillVisitor({ ...vsBlank(), dept: $('#vs_dept').value.trim(), host: $('#vs_host').value.trim(), memo });   /* 실패해도 새 메모면 앞 방문 값으로 넘어가지 않게 */
+    $('#vs_status').textContent = `메모로 못 채웠어요 (${e.message}) — 칸을 하나씩 물어볼게요.`; return true; }   // AI 가 없거나 실패해도 모달로 다 물으면 됨
 }
 // 빠졌거나 사람이 볼 칸을 하나씩 모달로: 폼의 그 칸을 잠깐 모달로 옮겼다가 돌려놓음 (체크·시간·조건부 칸이 폼과 똑같이 동작)
 function vsAsk(){
@@ -1846,8 +1886,11 @@ function vsAsk(){
       $('#vsAskNext').textContent = list.length > 1 ? '다음' : '확인 ✦';
       m.classList.add('on'); setTimeout(() => { const f = $('#vsAskRows').querySelector('input:not([type=checkbox]):not([type=radio])'); (f && !cur.ok ? f : $('#vsAskNext')).focus(); }, 50);
     };
+    let nexting = false;
     const next = async () => {
-      await vsCheckUrgent();   // 날짜를 고쳤으면 긴급 사유가 필요해질 수 있음
+      if(nexting) return; nexting = true;   /* 확인 중 두 번 누르면 안 본 항목이 확인됐음 */
+      try { await vsCheckUrgent(); } finally { nexting = false; }
+      if(!$('#vsAskModal').classList.contains('on')) return;   // 날짜를 고쳤으면 긴급 사유가 필요해질 수 있음
       const it = vsReady.find(x => x.label === cur.label);
       if(it && !it.ok) return $('#vsAskErr').textContent = '이 칸을 채워야 넘어가요.';
       vsConfirmed.add(cur.label); show();
@@ -1883,7 +1926,7 @@ let jobTimer = null, jobSince = 0;
 async function runJob(title, path, body, onDone, opt = {}){
   // skipped: 다른 작업 중이라 뒤에서 하는 확인은 건너뜀 (사람이 누른 거면 알림). 시작 못 했으면 opt.onEnd 도 불러 기다리던 쪽이 멈추지 않게
   let r;
-  try { r = await rpc(path, {...body, title}); if(r && r.skipped){ if(opt.userAction) alertErr('다른 작업이 진행 중이에요. 끝난 뒤 다시 눌러 주세요.'); if(opt.onEnd) opt.onEnd(); return; } } catch(e){ alertErr(e.message); if(opt.onEnd) opt.onEnd(); return; }
+  try { r = await rpc(path, {...body, title}); if(r && r.skipped){ if(opt.userAction) alertErr('다른 작업이 진행 중이에요. 끝난 뒤 다시 눌러 주세요.'); if(opt.onSkip) opt.onSkip(); if(opt.onEnd) opt.onEnd(); return; } } catch(e){ alertErr(e.message); if(opt.onEnd) opt.onEnd(); return; }
   watchJob(title, onDone, {...opt, id: r && r.id});
 }
 /** 진행 중인 작업 화면에 붙기 (새 작업 시작, 또는 새로고침 후 이어보기) */
@@ -1938,28 +1981,30 @@ function watchJob(title, onDone, {quiet = false, onEnd = null, id = 0} = {}){   
 }
 async function answer(v){ $('#jobAsk').style.display='none'; await rpc('/api/job/answer', {value: v, id: watchedJobId}); }
 $('#jobYes').onclick = () => {
-  if(!$('#jobInput').classList.contains('hidden')){ const raw = $('#jobInput').value; if(!/\d/.test(raw)) return; const n = num(raw); $('#jobInput').value=''; return answer(n); }   // '0원'·' 0' 도 0 으로 답함
+  if(!$('#jobInput').classList.contains('hidden')){ const raw = $('#jobInput').value.normalize('NFKC'); if(!/^\s*\d[\d,]*\s*원?\s*$/.test(raw)){ $('#jobInput').classList.add('need'); return; } $('#jobInput').classList.remove('need'); const n = num(raw);   /* 숫자만 ('3만'이 3원이 됐음) */ $('#jobInput').value=''; return answer(n); }   // '0원'·' 0' 도 0 으로 답함
   answer(true);
 };
 $('#jobNo').onclick = () => answer(false);
+$('#jobInput').addEventListener('keydown', e => { if(e.key === 'Enter' && !e.isComposing){ e.preventDefault(); $('#jobYes').click(); } });
 function openAsk(q, job){
-  const choice = q.type === 'choice', fare = !job || job.kind === 'fare';
+  const choice = q.type === 'choice', fare = !job || job.kind === 'fare' || /네이버 지도/.test(q.text || '');   // 신청 작업 안의 교통비 조회 질문도 지도 질문
   // 제목에 어떤 작업이 묻는지 같이 (갑자기 떠서 왜 묻는지 몰랐음). 거래처 고르기처럼 지도가 아닌 질문엔 '어디로 가나요?' 를 쓰지 않음
   $('#askTitle').textContent = (fare ? '📍 ' : '') + (job && job.title ? `${job.title} — ` : '') + (!fare ? '골라 주세요' : choice ? '어디로 가나요?' : '출장지를 다시 알려 주세요');
   $('#askQ').textContent = q.text; $('#askInput').classList.toggle('hidden', choice); $('#askChoices').classList.toggle('hidden', !choice); $('#askGo').classList.toggle('hidden', choice);
-  $('#askSkip').textContent = choice ? '다른 이름으로 다시 찾기' : '금액 직접 입력';
+  $('#askSkip').textContent = !fare ? '작업 취소' : choice ? '다른 이름으로 다시 찾기' : '금액 직접 입력'; $('#askSkip').dataset.cancel = fare ? '' : '1';   // 지도 아닌 고르기는 '다시 찾기'가 없음 — 누르면 작업이 오류로 끝났고 창을 닫을 길도 없었음
   if(choice){ $('#askChoices').innerHTML = ''; (q.def || []).forEach((label, i) => { const b = document.createElement('button'); b.type = 'button'; const [name, addr] = String(label).split(' — '); b.textContent = name; if(addr){ const sm = document.createElement('small'); sm.textContent = addr; b.appendChild(sm); } b.onclick = () => askDone(i); $('#askChoices').appendChild(b); }); }
   else { $('#askInput').value = q.def || ''; }
   $('#askModal').classList.add('on'); if(!choice){ $('#askInput').focus(); $('#askInput').select(); }
 }
 const askDone = v => { $('#askModal').classList.remove('on'); answer(v); };
 $('#askGo').onclick = () => { const v = $('#askInput').value.trim(); if(v) askDone(v); else $('#askInput').focus(); };
-$('#askSkip').onclick = () => askDone('');
+$('#askSkip').onclick = () => { if($('#askSkip').dataset.cancel){ $('#askModal').classList.remove('on'); rpc('/api/job/cancel'); } else askDone(''); };
 attachAc($('#askInput'), $('#askAc'), { onPick: pl => { $('#askInput').value = pl.name; askDone(pl.name); } });
 $('#askInput').addEventListener('keydown', e => { if(e.key === 'Enter' && !e.isComposing && !e.defaultPrevented) $('#askGo').click(); });
 $('#jobClose').onclick = async () => {   // 닫기 = 진행 중이던 작업 취소(그룹웨어 품의도 삭제) → 진행 중이면 한 번 물어봄 (패널 치우려다 작업이 날아갔음)
   const cur = await rpc('/api/job').catch(() => null);
-  if(cur && (cur.state === 'running' || cur.state === 'waiting') && !confirm('진행 중인 작업을 취소할까요?\n만들던 그룹웨어 품의도 지워요. (작업은 두고 패널만 치우려면 [취소]를 누르세요)')) return;
+  const busy = cur && (cur.state === 'running' || cur.state === 'waiting');
+  if(busy && !confirm('진행 중인 작업을 취소할까요?\n만들던 그룹웨어 품의도 지워요. (작업을 계속하려면 [취소])')) return;   // 패널만 치우면 딤이 다시 덮어 아무것도 못 눌렀음
   rpc('/api/job/cancel'); $('#jobPanel').style.display = 'none'; $('#dim').classList.remove('on'); };
 $('#jobCancel').onclick = () => rpc('/api/job/cancel');
 $('#jobShow').onclick = () => rpc($('#jobShow').dataset.hide ? '/api/gw/hide' : '/api/gw/show');
@@ -1974,7 +2019,7 @@ async function afterLogin(){
   if(firstLoginDone) return; firstLoginDone = true;
   await whenJobIdle();
   META = await rpc('/api/meta');   // 로그인 창에서 다른 계정으로 들어왔을 수 있으니 새로
-  const c = META.config, who = c.lastLoginId || c.gwId, other = !!(who && c.profileOf && who !== c.profileOf);   // 내 정보가 다른 계정 것
+  const c = META.config, who = c.lastLoginId || c.gwId, other = !!(who && c.profileOf && who.toLowerCase() !== String(c.profileOf).toLowerCase());   // 내 정보가 다른 계정 것
   if(!c.name || !c.budgetDept || other){ await new Promise(done => runJob('내 정보 불러오기', '/api/job/gw-profile', {force: other}, async () => { META = await rpc('/api/meta'); renderSettings(); }, {quiet: true, onEnd: done})); }   // 실패·건너뜀이어도 다음 단계로
   if(META.config.hasCar == null) askCar();
 }
@@ -2022,7 +2067,7 @@ $('#loginForm').onsubmit = async e => {
   $('#lg_ok').disabled = true; $('#lg_ok').textContent = '로그인 중…'; $('#lg_err').textContent = '';
   try {
     const r = await rpc('/api/gw/login', { id: $('#lg_id').value, pw: $('#lg_pw').value, save: $('#lg_save').checked });
-    if(r.loggedIn){ closeLogin(); setGwPill('ok'); META = await rpc('/api/meta'); showGwSaved(); if(r.note) alertErr(r.note); if(!$('#tab-trips').classList.contains('hidden')) autoGwCheck(true); }   // 출장 보고 탭에서 로그인했으면 바로 목록 읽기 ('확인하는 중' 글만 남았음 — 2026-11-10)
+    if(r.loggedIn){ closeLogin(); firstLoginDone = false; setGwPill('ok');   /* 다른 계정일 수 있어 내 정보 확인을 다시 (전 사람 이름·부서로 문서가 채워졌음) */ META = await rpc('/api/meta'); showGwSaved(); if(r.note) alertErr(r.note); if(!$('#tab-trips').classList.contains('hidden')) autoGwCheck(true); }   // 출장 보고 탭에서 로그인했으면 바로 목록 읽기 ('확인하는 중' 글만 남았음 — 2026-11-10)
     else $('#lg_err').textContent = r.error;
   } catch(err){ $('#lg_err').textContent = err.message; }
   finally { $('#lg_ok').disabled = false; $('#lg_ok').textContent = '로그인'; }

@@ -83,7 +83,7 @@ const fillForm = (payload) => {
     if (!head) { result.missing.push(s.heading); continue; }
     let slot = head.nextElementSibling;
     if (!slot || slot.tagName !== 'P' || !/^-?$/.test(norm(slot.textContent))) { slot = doc.createElement('p'); head.after(slot); }   // 자리 문단이 없거나 이미 글이 있으면 새 문단
-    const lines = String(s.text ?? '').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    const lines = String(s.text ?? '').split(/\r?\n/).map(l => l.trim().replace(/^[-•·]\s+/, '')).filter(Boolean);   // 사람이 쓴 '- ' 는 떼고 붙임 ('- - A' 가 됐음)
     slot.innerHTML = lines.map(l => `&nbsp;&nbsp;&nbsp;- ${esc(l)}`).join('<br />') || '&nbsp;&nbsp;&nbsp;- ';
     result.filled.push(s.heading);
   }
@@ -182,8 +182,8 @@ function applyPayload(a) {
     { label: '구분', check: [a.category] },
     ...(overseas ? [] : [{ label: '교통편', check: t.check }]),
     { label: '동행자', text: a.companions.join(', ') },
-    { label: '동행목적', text: a.companion_purpose },
-    { label: ['출장목적(상세기입)', '출장목적'], text: a.purpose },
+    { label: '동행목적', text: a.companions.length ? a.companion_purpose : '' },   // 동행자를 지웠으면 남은 목적도 안 씀
+    { label: ['출장목적(상세기입)', '출장목적'], text: overseas && a.destination && !a.purpose.includes(a.destination) ? `출장지: ${a.destination}\n${a.purpose}` : a.purpose },   // 해외는 출장지 칸이 없어 목적에 (안 쓰면 문서 어디에도 없었음)
   ];
   if (a.category === '연구과제' && a.project) fields.push({ label: '구분', replace: ['과제명', a.project] });
   if (t.mode === 'corporate' && t.corporate_car) fields.push({ label: '법인차량이용시', check: [t.corporate_car] });
@@ -195,7 +195,8 @@ function applyPayload(a) {
 function puiPayload(p) {
   const won = n => Math.round(Number(n) || 0).toLocaleString('ko-KR');
   const fx = p.fx ? [`환율: USD ${Number(p.fx.rate).toLocaleString('ko-KR')}원 (${p.fx.date} 수출입은행 매매기준율, 조회 결과 첨부)`] : [];
-  const detail = p.detail || [...p.lines.map(l => `${(l.label || l.code).split('_').pop()} ${won(l.amount)}원 (${l.memo}${l.usd !== '' && l.usd != null ? `, $${Number(l.usd).toFixed(2)}` : ''})`), ...fx].join('\n');
+  const line = l => `${(l.label || l.code).split('_').pop()} ${won(l.amount)}원 (${l.memo}${l.usd !== '' && l.usd != null ? `, $${Number(l.usd).toFixed(2)}` : ''}${l.capped ? `, 지원 한도로 ${won(l.capped)}원에서 깎음` : ''})`;
+  const detail = [p.detail || p.lines.map(line).join('\n'), ...fx].filter(Boolean).join('\n');   // 환율 줄은 직접 쓴 세부내역에도 붙임
   return { fields: [], paras: [{ heading: '1. 품의목적', text: p.purpose }, { heading: '2. 지출 세부내역', text: detail }] };
 }
 
@@ -210,7 +211,7 @@ function reportPayload(r) {
     { label: '출장목적', text: r.purpose },
     { label: '출장시담당업무및보고사항', text: r.report },
   ];
-  if (r.project) fields.push({ label: '과제구분', text: r.project });
+  fields.push({ label: '과제구분', text: r.project || '' });   // 비어도 써야 양식 안내 글(빨간 '과제명 기입 필수')이 지워짐
   const payload = { fields };
   if (r.schedule.length) payload.table = { header: '일자', rows: r.schedule.map(s => [s.date, s.place, s.detail]) };
   return payload;

@@ -18,7 +18,7 @@ function zipEntries(file) {
       const cd = centralSizes(buf).get(name); if (!cd) break; csize = cd.csize; usize = cd.usize;
     }
     const raw = buf.subarray(start, start + csize);
-    out.set(name, method === 8 ? zlib.inflateRawSync(raw) : raw);
+    out.set(name, method === 8 ? zlib.inflateRawSync(raw, { maxOutputLength: 200 * 1024 * 1024 }) : raw);   // 압축 폭탄 막기
     p = start + csize + ((flags & 8) ? 16 : 0);
     if (flags & 8 && buf.readUInt32LE(p - 16) !== 0x08074b50) p -= 4;   // 서술자 서명 없는 변종
   }
@@ -37,7 +37,7 @@ function centralSizes(buf) {
   return m;
 }
 
-const unesc = s => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&#(\d+);/g, (_, d) => String.fromCharCode(d)).replace(/&amp;/g, '&');
+const unesc = s => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&#(x[\da-f]+|\d+);/gi, (_, d) => (c => c <= 0x10ffff ? String.fromCodePoint(c) : '')(d[0].toLowerCase() === 'x' ? parseInt(d.slice(1), 16) : Number(d))).replace(/&amp;/g, '&');
 // 변경 추적으로 지운 글자(w:del)·필드 코드(w:instrText)는 빼고, 줄바꿈(w:br)은 살림
 const xmlText = (xml, cellBreak) => unesc(String(xml).replace(/<w:del\b[^>]*\/>|<w:del\b[^>]*>[\s\S]*?<\/w:del>/g, '').replace(/<w:instrText\b[^>]*\/>|<w:instrText\b[^>]*>[\s\S]*?<\/w:instrText>/g, '').replace(/<w:br\s*\/>/g, '\n').replace(/(<\/w:p>\s*)+<\/w:tc>/g, cellBreak).replace(/<\/w:tr>/g, '\n').replace(/<\/w:p>/g, '\n').replace(/<w:tab\/>/g, '\t').replace(/<[^>]+>/g, '')).replace(/\t+\n/g, '\n');
 
@@ -53,7 +53,7 @@ function officeText(file) {
   if (ext === 'xlsx') {
     const ss = []; const sx = z.get('xl/sharedStrings.xml');
     if (sx) for (const m of sx.toString('utf8').matchAll(/<si>([\s\S]*?)<\/si>/g)) ss.push(unesc(m[1].replace(/<[^>]+>/g, '')));
-    const sheets = [...z.keys()].filter(k => /^xl\/worksheets\/sheet\d+\.xml$/.test(k)).sort();
+    const sheets = [...z.keys()].filter(k => /^xl\/worksheets\/sheet\d+\.xml$/.test(k)).sort((a, b) => a.localeCompare(b, 'en', { numeric: true }));   // sheet10 이 sheet2 앞에 오지 않게
     const lines = [];
     for (const k of sheets) {
       for (const row of z.get(k).toString('utf8').matchAll(/<row[^>]*>([\s\S]*?)<\/row>/g)) {

@@ -21,19 +21,21 @@ function planApply(data, cfg) {
 }
 
 /** 최근 조회값(30일): 자차는 지금 설정한 내 차 기준(차종·연료)으로 조회한 것만 — [자동 작성]도 같은 기준 */
-const cachedFare = (store, cfg, mode, from, to) => { const c = store.getFare(mode, from, to); return c && (mode !== 'car' || c.basis === carBasis({ type: cfg.carType, fuel: cfg.carFuel })) ? c : null; };
+const cachedFare = (store, cfg, mode, from, to, place = null) => { const c = store.getFare(mode, from, to);
+  if (c && place && Number(place.lng) && c.place && Number(c.place.lng) && (Math.abs(c.place.lng - place.lng) > 1e-4 || Math.abs(c.place.lat - place.lat) > 1e-4)) return null;   // 같은 이름 다른 곳 ('사천' = 공항/KAI)
+  return c && (mode !== 'car' || c.basis === carBasis({ type: cfg.carType, fuel: cfg.carFuel })) ? c : null; };
 async function runFare(env, { mode, to, from, place = null, fuelOnly = false }) {
   const { cfg, store, ui, log } = env;
   if (mode !== 'car' && mode !== 'transit') return { total: 0, describe: '법인차량은 교통비를 자동 계산하지 않습니다.' };
   if (!to) throw new R.InputError('도착지를 입력해 주세요.');
   const origin = from || cfg.defaultOrigin;
   if (!origin) throw new R.InputError('출발지가 없어요. 설정의 기본 출발지나 교통·경비의 출발지를 넣어 주세요.');
-  const cached = cachedFare(store, cfg, mode, origin, to);
+  const cached = cachedFare(store, cfg, mode, origin, to, place);
   if (cached && !env.force) { log(`교통비(최근 조회값): ${cached.describe}`); return { ...cached, source: 'cache' }; }   // 자차는 연비 8km/L 로 조회한 값만
   const shot = path.join(store.tripsDir, '_fare', `교통비_${mode}_${Date.now()}.png`);
   const r = await lookupFare({ makeWindow: env.makeNaverWindow, mode, origin, dest: to, shotPath: shot, ui, log, debugDir: env.debugDir, creds: env.creds, car: { type: cfg.carType, fuel: cfg.carFuel },
     destPlace: place, fuelOnly: Boolean(fuelOnly) && mode === 'car', places: env.naverKeys ? q => searchPlaces(q, { keys: env.naverKeys, fetch: env.fetch }) : null });
-  if (r.source !== 'manual') store.putFare(mode, origin, to, r);   // 사람이 직접 넣은 값은 다음 출장에 '최근 조회값'(증빙)으로 쓰지 않는다
+  if (r.source !== 'manual' && !fuelOnly) store.putFare(mode, origin, to, r);   // 보고서 유류대는 읽은 값을 확인받지 않아 신청 쪽 '최근 조회값'으로 쓰지 않음   // 사람이 직접 넣은 값은 다음 출장에 '최근 조회값'(증빙)으로 쓰지 않는다
   log(`교통비: ${r.describe}`);
   return r;
 }
@@ -45,6 +47,7 @@ async function runPurchase(env, data) {
   log(`[구매의뢰서] ${pu.title}`);
   const gw = new Amaranth({ win: env.gwWindow(), baseUrl: cfg.baseUrl, ui, log, debugDir: env.debugDir, creds: env.creds });
   await gw.ensureLogin();
+  await gw.closeOldPopups();   // 앞 작성 창을 닫을지 먼저 묻기 (품의를 만든 뒤 물으면 [아니오]에 만든 품의가 지워짐)
   const popup = await gw.openForm(R.PURCHASE_FORM);
   const fs = require('fs');
   const shotDataUrl = pu.link && pu.link.shot && fs.existsSync(pu.link.shot) ? `data:image/png;base64,${fs.readFileSync(pu.link.shot).toString('base64')}` : '';   // 페이지 캡처는 본문에 그림으로도, 첨부로도
@@ -61,6 +64,7 @@ async function runVisitor(env, data) {
   log(`[방문객 신청] 유형 ${v.type} · ${v.title}`);
   const gw = new Amaranth({ win: env.gwWindow(), baseUrl: cfg.baseUrl, ui, log, debugDir: env.debugDir, creds: env.creds });
   await gw.ensureLogin();
+  await gw.closeOldPopups();   // 앞 작성 창을 닫을지 먼저 묻기 (품의를 만든 뒤 물으면 [아니오]에 만든 품의가 지워짐)
   const popup = await gw.openForm(R.VISITOR_FORM);
   await gw.fillAndKeep(popup, { title: v.title, probe: '방문자 성명', payload: visitorPayload(v), save: false,
     beforeShow: () => gw.addRecipients(popup, R.VISITOR_RECIPIENTS) });
@@ -77,7 +81,9 @@ async function runVisitor(env, data) {
 async function runVisitorList(env, { from = '', to = '' } = {}) {
   const gw = new Amaranth({ win: env.gwWindow(), baseUrl: env.cfg.baseUrl, ui: env.ui, log: env.log, debugDir: env.debugDir, creds: env.creds });
   const r = listRange(from, to);
-  const docs = (await gw.apiApprovalDocs(r.from.replace(/-/g, ''), r.to.replace(/-/g, ''))).filter(d => d.form === R.VISITOR_FORM);
+  let docs = [];
+  try { docs = (await gw.apiApprovalDocs(r.from.replace(/-/g, ''), r.to.replace(/-/g, ''))).filter(d => d.form === R.VISITOR_FORM); }
+  catch (e) { env.log(`(결재 문서 목록 못 읽음: ${String(e.message).slice(0, 120)})`); throw new Error('그룹웨어에서 방문 신청 목록을 못 읽었어요. 로그인 확인 후 [새로고침]을 눌러 주세요.'); }
   const rows = [];
   for (const d of docs) {
     let info = null;
@@ -88,11 +94,12 @@ async function runVisitorList(env, { from = '', to = '' } = {}) {
   return { rows, from: r.from, to: r.to };
 }
 
+const localDay = iso => { const d = new Date(iso); return isNaN(d) ? String(iso || '').slice(0, 10) : `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };   // created 는 UTC — 한국 오전 9시 전 기록이 전날로 보였음
 /** 신청한 구매의뢰 목록: 그룹웨어 결재 문서(양식 '구매의뢰서') + 이 PC 기록(아직 상신 안 한 것) */
 async function runPurchaseList(env, { from = '', to = '' } = {}) {
   const gw = new Amaranth({ win: env.gwWindow(), baseUrl: env.cfg.baseUrl, ui: env.ui, log: env.log, debugDir: env.debugDir, creds: env.creds });
   const r = listRange(from, to);
-  const nz = x => String(x || '').replace(/\s/g, '');
+  const nz = x => String(x || '').replace(/\s/g, ''), dn = x => String(x || '').replace(/\D/g, '').slice(0, 8);   // 날짜는 숫자 8자로 비교 (그룹웨어 날짜 꼴이 달라도)
   let docs = [];
   try { docs = (await gw.apiApprovalDocs(r.from.replace(/-/g, ''), r.to.replace(/-/g, ''))).filter(d => d.form === R.PURCHASE_FORM); }
   catch (e) { env.log(`(결재 문서 목록 못 읽음: ${String(e.message).slice(0, 120)})`); }
@@ -100,7 +107,7 @@ async function runPurchaseList(env, { from = '', to = '' } = {}) {
   // 결재 문서 ↔ 이 PC 기록: 전에 맞춘 문서번호가 있으면 그것, 없으면 같은 제목이면서 문서 날짜 이전에 만든 기록 중 가장 최근 것 (한 기록은 한 문서에만)
   const used = new Set();
   // 문서번호 없는 문서는 번호로 맞추지 않음 ('' 끼리 같다고 보면 엉뚱한 기록이 붙음)
-  const pick = d => (d.docNo && mine.find(m => m.docNo === d.docNo)) || mine.filter(m => !m.docNo && !used.has(m) && nz(m.title) === nz(d.title) && String(m.created).slice(0, 10) <= String(d.date || '9999'))
+  const pick = d => (d.docNo && mine.find(m => m.docNo === d.docNo)) || mine.filter(m => !m.docNo && !used.has(m) && nz(m.title) === nz(d.title) && dn(m.created) <= (dn(d.date) || '99999999'))
     .sort((a, b) => String(b.created).localeCompare(String(a.created)))[0] || null;
   const localOf = new Map();
   for (const d of [...docs].sort((a, b) => String(a.date).localeCompare(String(b.date)))) {   // 오래된 문서부터 맞춰야 예전 기록이 예전 문서로
@@ -108,7 +115,7 @@ async function runPurchaseList(env, { from = '', to = '' } = {}) {
     if (!m.docNo && d.docNo) try { env.store.linkPurchase(m.created, d.docNo); } catch (e) { /* 다음에 다시 맞춤 */ }
   }
   const rows = docs.map(d => ({ docNo: d.docNo, title: d.title, status: d.status, date: d.date, local: localOf.get(d) || null }));
-  for (const m of mine) if (!rows.some(x => x.local === m)) rows.push({ docNo: m.docNo || '', title: m.title, status: '', date: m.created.slice(0, 10), local: m });   // 작성 창만 열고 아직 상신 안 함 (문서번호가 있으면 조회 기간 밖)
+  for (const m of mine) if (!rows.some(x => x.local === m)) rows.push({ docNo: m.docNo || '', title: m.title, status: '', date: localDay(m.created), local: m });   // 작성 창만 열고 아직 상신 안 함 (문서번호가 있으면 조회 기간 밖)
   env.log(`구매의뢰서 ${docs.length}건 (그룹웨어) · 이 PC 기록 ${mine.length}건`);
   return { rows: rows.map(x => ({ ...x, local: x.local ? { created: x.local.created, data: x.local.data } : null })), from: r.from, to: r.to };
 }
@@ -140,6 +147,7 @@ async function runApply(env, data, { save = true } = {}) {
   const gw = new Amaranth({ win: env.gwWindow(), baseUrl: cfg.baseUrl, ui, log, debugDir: env.debugDir, creds: env.creds });
   try {
     await gw.ensureLogin();
+    await gw.closeOldPopups();   // 앞 작성 창을 닫을지 먼저 묻기 (품의를 만든 뒤 물으면 [아니오]에 만든 품의가 지워짐)
     const project = a.category === '연구과제' ? a.project : '';   // 연구과제: 사업=과제, 예산과목=선급과제비(연구활동비) — 코드는 그룹웨어 예산과목 API 목록에서 (2026: 1260003)
     const projectItem = project ? (await budgetItems(env, gw)).find(x => x.name === R.PROJECT_ITEM) : null;
     if (project) log(projectItem ? `연구과제 예산과목: ${projectItem.code} ${projectItem.name}` : `(예산과목 목록에 ${R.PROJECT_ITEM}이 없어 이름으로 찾아요)`);
@@ -147,7 +155,7 @@ async function runApply(env, data, { save = true } = {}) {
     if (gw.lastBudget) { rec.gwApply = gw.lastBudget; store.save(id, rec); }   // 그룹웨어 품의와 연결 (목록·삭제용)
     const popup = await gw.openApproval(R.APPLY_FORM, title);
     await gw.fillAndKeep(popup, { title, probe: '출장일', payload: applyPayload(a), attachments: a.overseas && a.overseas.rateShot ? [a.overseas.rateShot] : [], save });   // 해외: 수출입은행 환율 조회 결과 이미지 첨부 필수
-  } catch (e) { await abort(env, gw); if (ui.cancelled) store.remove(id); throw e; }
+  } catch (e) { await abort(env, gw); if (ui.cancelled && !gw.leftBehind) store.remove(id); throw e; }   // 품의가 남았으면(보관·결재 진행) 연결 기록은 둠
   rec.status = save ? '보관됨' : '입력됨(미보관)';
   store.save(id, rec);
   log(`완료. 출장 ID: ${id}`);
@@ -161,8 +169,9 @@ function reportDraft(store, cfg, id) {
   for (let d = new Date(a.start + 'T00:00:00'); d <= new Date(a.end + 'T00:00:00'); d.setDate(d.getDate() + 1))
     days.push(`${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`);
   return {
-    trip_id: id, reason: a.reason, name: cfg.name, companions: a.companions,   // 출장구분(category)은 넣지 않음 — 사람이 고름 (기본값 로봇을 모르고 올렸음, 사용자 요청 2026-11-10)
-    project: a.project || '', destination: a.destination, visit_org: a.destination.replace(/\s*\([^)]*\)\s*$/, ''),   // 방문기관 = 출장지에서 (주소) 뺀 이름
+    trip_id: id, reason: a.reason, name: cfg.name, companions: a.companions,   // 출장구분은 기본값 없이 사람이 고름 (2026-11-10). 연구과제로 신청한 출장만 정부과제 + 그 과제
+    ...(a.category === '연구과제' && a.project ? { category: '정부과제' } : {}),
+    project: a.category === '연구과제' ? a.project || '' : '', destination: a.destination, visit_org: a.destination.replace(/\s*\([^)]*\)\s*$/, ''),   // 방문기관 = 출장지에서 (주소) 뺀 이름
     period: `${a.start.replace(/-/g, '.')} ${a.start_time || R.DEFAULT_TIMES.start} - ${a.end.replace(/-/g, '.')} ${a.end_time || R.DEFAULT_TIMES.end}`,
     purpose: a.purpose, report: '',
     schedule: days.map(date => ({ date, place: a.destination, detail: '' })),
@@ -197,8 +206,7 @@ function settleLines(rep, cfg, log = () => {}) {
   const merged = R.mergeMealRows(capped).sort((a, b) => (a.date || '').localeCompare(b.date || ''));   // 품의 한도는 앞 날짜부터 채움 (뒤 날짜가 깎이거나 빠짐)
   merged.filter(e => e.dup).forEach(e => log(`${e.date} 식대 ${e.dup}건 → 채주 한 줄로 묶음 (${e.amount.toLocaleString('ko-KR')}원, 증빙 ${e.proofs.length}개)`));
   // 모아찍기(한 사진에 영수증 여러 장): 같은 파일은 처음 쓰는 채주 줄에만 — 채주 첨부가 결재문서로 그대로 올라가서 줄마다 붙이면 여러 장이 됨
-  const seen = new Set();
-  return merged.map(e => ({ ...e, proofs: (e.proofs || []).filter(p => !seen.has(p) && seen.add(p)) })).map(e => ({ item: e.item, kind: e.kind || '', dup: e.dup || 0, label: e.label, pay: e.pay, noVat: e.noVat, amount: e.amount, date: e.date, supply: R.supplyAmount(e.amount, e.pay, e.noVat), vat: R.vatAmount(e.amount, e.pay, e.noVat), memo: e.memo, planDate: R.fundPlanDate(e.pay, { usedOn: e.date || usedOn }) /* 법인카드: 그 영수증을 쓴 달 기준 (10/30~11/2 출장의 11/1 영수증 = 12/23) */, proofs: e.proofs || [] }));
+  return merged.map(e => ({ item: e.item, kind: e.kind || '', dup: e.dup || 0, label: e.label, pay: e.pay, noVat: e.noVat, amount: e.amount, date: e.date, supply: R.supplyAmount(e.amount, e.pay, e.noVat), vat: R.vatAmount(e.amount, e.pay, e.noVat), memo: e.memo, planDate: R.fundPlanDate(e.pay, { usedOn: e.date || usedOn }) /* 법인카드: 그 영수증을 쓴 달 기준 (10/30~11/2 출장의 11/1 영수증 = 12/23) */, proofs: e.proofs || [] }));
 }
 
 /** 출장보고서(정산). 새 품의를 만들지 않고, 승인된 신청 품의로 지출 결의를 한다 (사용자가 알려 준 회사 절차):
@@ -217,6 +225,7 @@ async function runReport(env, data) {
   const lines = settleLines(rep, cfg, log);
   const gw = new Amaranth({ win: env.gwWindow(), baseUrl: cfg.baseUrl, ui, log, debugDir: env.debugDir, creds: env.creds });
   await gw.ensureLogin();
+  await gw.closeOldPopups();   // 앞 작성 창을 닫을지 먼저 묻기 (품의를 만든 뒤 물으면 [아니오]에 만든 품의가 지워짐)
   // 1~2단계: 결의서전송 (이미 전송한 출장이면 건너뜀 — 다시 돌릴 때)
   // 이미 전송했어도 결의서전송 창은 한 번 연다: 그 안에서 전송 여부를 보고, 환원이 빠져 있으면 다시 [환원]만 한다 (기록에 기대지 않음)
   let resNo = '';
@@ -253,6 +262,7 @@ async function runSettle(env, data) {
   log(`[지출 결의] 품의 ${s.pui.ym}-${s.pui.day} 순번 ${s.pui.seq} · ${s.purpose}`);
   const gw = new Amaranth({ win: env.gwWindow(), baseUrl: cfg.baseUrl, ui, log, debugDir: env.debugDir, creds: env.creds });
   await gw.ensureLogin();
+  await gw.closeOldPopups();   // 앞 작성 창을 닫을지 먼저 묻기 (품의를 만든 뒤 물으면 [아니오]에 만든 품의가 지워짐)
   // 출장 보고와 같은 길 (사용자 2026-11-16): 결의서전송(채주·환원·[전송]) → 결의서입력 → [결재상신] → 결의서 작성 창
   await gw.openApprovedBudget(s.pui);
   const st = await gw.settleTransfer({ purpose: s.purpose, payee, fund: s.fund, lines: s.lines });
@@ -276,6 +286,7 @@ async function runPui(env, data) {
   const gw = new Amaranth({ win: env.gwWindow(), baseUrl: cfg.baseUrl, ui, log, debugDir: env.debugDir, creds: env.creds });
   try {
     await gw.ensureLogin();
+    await gw.closeOldPopups();   // 앞 작성 창을 닫을지 먼저 묻기 (품의를 만든 뒤 물으면 [아니오]에 만든 품의가 지워짐)
     await gw.enterBudget(cfg.budgetDept, p.lines, { memo: p.memo });
     const popup = await gw.openApproval(R.PUI_FORM, p.title);
     await gw.fillAndKeep(popup, { title: p.title, probe: '1. 품의목적', payload: puiPayload(p), attachments: [...p.files, ...p.proofs] });
@@ -349,7 +360,7 @@ async function runPuiDraft(env, memo, invoices, prev = null) {
   d.title = R.puiTitle(d.subject, d.lines.map(l => l.date).filter(Boolean).sort().pop() || new Date());   // 연월은 청구서 날짜 기준
   // 줄마다 청구 통화: USD 는 원화로, 그 밖의 외화는 사람이 (금액 비움)
   const other = d.lines.filter(l => l.currency !== 'KRW' && l.currency !== 'USD');
-  if (other.length) env.log(`${[...new Set(other.map(l => l.currency))].join(', ')} 청구서는 원화 금액을 직접 넣어 주세요.`);
+  if (other.length) env.log(`${[...new Set(other.map(l => l.currency || '통화를 모르는'))].join(', ')} 청구서는 원화 금액을 직접 넣어 주세요.`);
   d.lines = d.lines.map(l => l.currency === 'USD' && l.amount !== '' ? { ...l, usd: l.amount } : l.currency === 'KRW' ? { ...l, amount: l.amount === '' ? '' : Math.round(l.amount) } : { ...l, amount: '' });
   let fx = null;
   if (d.lines.some(l => l.usd !== '' && l.usd != null)) {   // ponytail: 외화 청구서가 여러 장이면 가장 늦은 청구일 환율 하나로 — 장마다 다른 환율이 필요하면 줄별로
@@ -396,7 +407,7 @@ async function attachApprovalDocs(gw, rows, log, range = null) {
   const ymd = d => `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
   const r = range || listRange('', '');
   let docs = [];
-  try { docs = await gw.apiApprovalDocs(r.from.replace(/-/g, ''), r.to.replace(/-/g, '')); } catch (e) { log(`(결재문서 목록 못 읽음: ${String(e.message).slice(0, 120)} — 적요로 판단해요)`); }
+  try { docs = await gw.apiApprovalDocs(r.from.replace(/-/g, ''), r.to.replace(/-/g, '')); } catch (e) { docs.failed = true; log(`(결재문서 목록 못 읽음: ${String(e.message).slice(0, 120)} — 적요로 판단해요)`); }
   const reps = docs.filter(d => d.form === R.REPORT_FORM);   // 목록과 보고서 짝짓기가 어긋날 때 볼 수 있게 남김
   log(`결재 문서 ${docs.length}건 (${r.from} ~ ${r.to}) · 출장보고서 ${reps.length}건${reps.length ? ': ' + reps.slice(0, 5).map(d => `${d.title} [${d.status} ${d.date}]`).join(' / ') : ''}`);
   const byNo = Object.fromEntries(docs.filter(d => d.docNo).map(d => [d.docNo, d]));
@@ -423,7 +434,7 @@ async function runLoadReport(env, id) {
   try { await gw.ensureLogin(); lines = await gw.budgetLines(rec.gwReport.key); }
   catch (e) { log(`(경비를 못 불러왔어요: ${e.message} — 직접 넣어 주세요)`); return { draft, resumed: false, fromGw: 0 }; }
   const byLabel = Object.entries(R.BUDGET_ITEMS);
-  const expenses = lines.filter(l => l.amount > 0).map(l => { const hit = byLabel.find(([, [code, label]]) => l.code === code || l.label.includes(label) || l.label.includes(code));
+  const expenses = lines.map(l => { const hit = byLabel.find(([, [code, label]]) => l.code === code || l.label.includes(label) || l.label.includes(code));
     return hit ? { item: hit[0], amount: l.amount, memo: l.memo, proofs: [] } : null; }).filter(Boolean);
   log(`경비 ${expenses.length}줄 불러옴 (증빙은 다시 붙여 주세요)`);
   return { draft: { ...draft, expenses: expenses.length ? expenses : draft.expenses }, resumed: false, fromGw: expenses.length };
@@ -454,7 +465,7 @@ async function runProfile(env, { force = false } = {}) {
 function listRange(from, to) {
   const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   const ok = v => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
-  const today = new Date(); const def = new Date(today); def.setMonth(def.getMonth() - 3);
+  const today = new Date(); const def = new Date(today.getFullYear(), today.getMonth() - 3, 1); def.setDate(Math.min(today.getDate(), new Date(def.getFullYear(), def.getMonth() + 1, 0).getDate()));   // 5/31 의 3달 전 = 2/28 (setMonth 는 3/3)
   to = ok(to) ? to : ymd(today); from = ok(from) ? from : ymd(def);
   if (from > to) [from, to] = [to, from];
   const lim = new Date(`${to}T00:00:00`); lim.setFullYear(lim.getFullYear() - 1);
@@ -495,7 +506,7 @@ async function runListBudget(env, { from = '', to = '' } = {}) {
     if (env.dev && env.debugDir) await gw.diagApprovalList().catch(() => {});
     if (env.dev && env.debugDir) await gw.diagReportFlow().catch(() => {});
     if (env.dev && env.debugDir) await gw.diagResolutionInput().catch(() => {});   // 한 번만: 결의서입력 화면 구조 기록 (보고서 3단계 개발용, 읽기만)   // 한 번만: 결의서전송 화면 구조 기록 (보고서 자동화 개발용, 읽기만)   // 한 번만(파일 없을 때): 전자결재 상신문서 목록 API 기록 (결재양식으로 출장 판별하기 위함, 10초쯤)
-    return { rows, reportDocs: reportDocsOf(docs), via: 'api', ms: Date.now() - t0 };
+    return { rows, reportDocs: docs.failed ? null : reportDocsOf(docs), via: 'api', ms: Date.now() - t0 };   // 못 읽었으면 null — 화면이 전 짝짓기를 유지 (빈 목록이면 보고한 출장에 [보고서 작성]이 다시 떴음)
   } catch (e) {
     try { require('fs').mkdirSync(env.debugDir, { recursive: true }); require('fs').appendFileSync(require('path').join(env.debugDir, 'api-error.log'), `${new Date().toISOString()} ${e.message}\n`); } catch (e2) { /* */ }
     throw new Error(`품의 목록을 API 로 못 읽었어요: ${String(e.message).slice(0, 160)}`);   // 화면 읽기로 후퇴하지 않는다 (느리고 불안정)
@@ -515,7 +526,7 @@ async function runRefundCheck(env) {
     env.log(`정산 점검: ${t.reason || t.title} (결의 ${t.resolutionNo}) 환원 확인`);
     try { if (await gw.repairRefund(t.gwApply)) { rec.refundChecked = new Date().toISOString(); n++; } }
     catch (e) { rec.refundCheckTries = (rec.refundCheckTries || 0) + 1; env.log(`(환원 점검 실패: ${e.message} — 다음에 다시 확인해요)`); }
-    env.store.save(t.id, rec);
+    try { const now = env.store.load(t.id); env.store.save(t.id, { ...now, refundChecked: rec.refundChecked, refundCheckTries: rec.refundCheckTries }); } catch (e) { /* 기록이 지워짐 */ }   // 점검하는 동안 화면이 저장한 보고서를 옛 기록으로 덮지 않게
   }
   return { checked: n };
 }
@@ -542,7 +553,7 @@ async function runDeleteTrip(env, id) {
     const linked = now.filter(r => keys.includes(r.key));
     const locked = linked.filter(r => r.locked);
     if (locked.length) throw new Error(`결재가 진행 중인 품의가 있어 삭제하지 않았어요 (순번 ${locked.map(r => r.seq).join(', ')}: ${locked.map(r => r.status).join(', ')}).`);
-    if (linked.length) rows = (await gw.deleteBudgetRows(linked.map(r => r.key))).rows;
+    if (linked.length) { const d = await gw.deleteBudgetRows(linked.map(r => r.key)); rows = d.rows; if ((d.deleted || 0) < linked.length) throw new Error('연결된 품의를 다 지우지 못해 출장 기록은 남겨 뒀어요. 그룹웨어에서 확인한 뒤 다시 해 주세요.'); }   // 못 지웠는데 기록부터 지우면 품의만 고아로 남음
     else { log('그룹웨어에서 연결된 품의를 찾지 못했어요 (이미 지워졌을 수 있음).'); rows = now; }
   }
   store.remove(id);

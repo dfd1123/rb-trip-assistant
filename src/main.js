@@ -31,6 +31,7 @@ function reloadEngine() {
 
 const ICON = path.join(__dirname, '..', 'assets', 'icon-512.png');
 app.setName('와니의 결재 도우미');   // 개발 모드에서도 메뉴·알림에 앱 이름
+if (process.platform === 'win32') app.setAppUserModelId('com.rainbowrobotics.tripassistant');   // 설치 바로가기와 같은 ID 여야 윈도우가 알림을 띄움 (package.json build.appId)
 let mainWin = null, gwWin = null, store = null;
 
 // 데이터 폴더는 앱 이름과 무관하게 고정 (이름을 바꿔도 설정·로그인 유지). 예전 이름 폴더가 있으면 옮겨온다.
@@ -42,9 +43,15 @@ let mainWin = null, gwWin = null, store = null;
   app.setPath('userData', dataDir);
 }
 
-if (!app.requestSingleInstanceLock()) app.quit();
+if (!app.requestSingleInstanceLock()) app.exit(0);   // quit() 은 ready 뒤 시작 코드를 그대로 돌려 창·트레이·설정 파일을 두 번 만짐
 app.on('second-instance', () => showMain());   // 트레이에만 있을 때 다시 켜면 창을 띄움
 
+/** 결재 작성 창을 사람이 쓰는 중이면 그 창을 닫을 때까지 기다렸다 종료 (메인 창만 닫아도 보관 안 한 작성 창이 같이 사라졌음) */
+function quitWhenPopupsClosed() {
+  const open = () => [...gwPopups, viewWin].filter(w => w && !w.isDestroyed() && w.isVisible() && w.getBounds().x > -10000);
+  if (!open().length) return app.quit();
+  const t = setInterval(() => { if (mainWin) return clearInterval(t); if (!open().length) { clearInterval(t); app.quit(); } }, 1000);   // 윈도우·리눅스는 닫거나 내리면 화면 밖으로 옮길 뿐이라 이벤트가 없음 → 1초마다 봄
+}
 function createMain() {
   mainWin = new BrowserWindow({
     width: 1200, height: 880, minWidth: 900, minHeight: 640, icon: ICON, title: '와니의 결재 도우미',
@@ -52,7 +59,7 @@ function createMain() {
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
   mainWin.loadFile(path.join(__dirname, 'renderer', 'index.html'));
-  mainWin.on('closed', () => { mainWin = null; if (process.platform !== 'darwin' && !keepInBackground()) app.quit(); });   // 숨긴 그룹웨어 창이 있어도 종료 (자동 반복이 켜져 있으면 트레이에 남음)
+  mainWin.on('closed', () => { mainWin = null; if (process.platform !== 'darwin' && !keepInBackground()) quitWhenPopupsClosed(); });   // 숨긴 그룹웨어 창이 있어도 종료 (자동 반복이 켜져 있으면 트레이에 남음)
   if (process.env.TRIP_ASSISTANT_SMOKE) {           // CI/개발용: 화면 캡처 후 종료
     mainWin.webContents.on('console-message', (...a) => { const m = a[0] && a[0].message !== undefined ? a[0].message : a[2]; console.log('[renderer]', m); });
     mainWin.webContents.once('did-finish-load', async () => {
@@ -92,6 +99,9 @@ app.on('before-quit', e => {
   quitting = true;
 });
 function gwWindow(show = false) {
+  GW.Amaranth.show = w => { if (w !== gwWin) { unpark(w); w.focus(); return null; } if (gwShown) { showGw(); return null; }
+    const parked = [...gwPopups].filter(p => !p.isDestroyed() && (!p.isVisible() || p.getBounds().x <= -10000)); showGw();
+    return () => { gwShown = false; for (const p of parked) if (!p.isDestroyed()) park(p); if (gwWin && !gwWin.isDestroyed()) park(gwWin); syncGwLock(); }; };   // 다시 숨기기: 숨어 있던 창만 (사람이 쓰던 작성 창까지 숨기면 다음 작업이 묻지 않고 닫았음)   // 로그인 등 사람이 해야 할 때 엔진이 창을 띄우는 길 (엔진을 다시 읽어도 여기서 다시 붙음)
   if (gwWin && !gwWin.isDestroyed()) { if (show) showGw(); else if (gwWin.isMinimized()) { if (gwShown) gwWin.restore(); else park(gwWin); } return gwWin; }   // 작업 시작 때 최소화돼 있으면 되살림
   gwWin = new BrowserWindow({
     show: false, width: 1500, height: 950, icon: ICON, title: '아마란스 — 와니의 결재 도우미가 입력 중', autoHideMenuBar: true,
@@ -164,14 +174,17 @@ function watchPwPrompt(win) {
   const p = new Page(win);
   // 그룹웨어 주소일 때만 — 창에서 링크를 따라 다른 사이트로 가면 거기 '비밀번호 입력' 창에 회사 비밀번호를 넣을 뻔 (자가 테스트 2026-10-28)
   const onGw = () => { try { return new URL(win.webContents.getURL()).origin === new URL(store.config().baseUrl).origin; } catch (e) { return false; } };
-  let busy = false;
+  let busy = false, tried = false;   // tried: 이번에 뜬 창에 이미 한 번 넣음 — 틀린 저장 비밀번호를 1초마다 넣으면 계정이 잠김
   const timer = setInterval(async () => {
     if (win.isDestroyed()) return clearInterval(timer);
     if (busy) return; busy = true;
     try {
       const c = gwCreds();
       const field = () => { const d = dialog('비밀번호 입력'); return d ? all('input[type=password]', d).find(vis) : null; };
-      if (!c || !c.pw || !onGw() || !(await p.eval(`() => { const field = ${field}; return !!field(); }`).catch(() => false))) return;
+      const shown = await p.eval(`() => { const field = ${field}; return !!field(); }`).catch(() => false);
+      if (!shown) { tried = false; return; }
+      if (!c || !c.pw || !onGw() || tried) return;
+      tried = true;
       await p.clickWhere(`() => { const field = ${field}; return field(); }`);
       await p.eval(`() => { const el = (${field})(); el.focus(); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, ''); el.dispatchEvent(new Event('input', { bubbles: true })); }`);
       if (!onGw()) return;   // 넣기 직전에 한 번 더 (그사이 다른 사이트로 넘어갔을 수 있음)
@@ -213,7 +226,7 @@ class Job {
     this.state = 'waiting'; this.question = { type, text, def };
     return new Promise((r, j) => {
       this._resolve = v => { this.question = null; this.state = 'running'; r(v); };
-      this._reject = e => { this.question = null; j(e); };
+      this._reject = e => { this.question = null; this.state = 'running'; j(e); };   // 취소 뒤 정리(품의 삭제) 동안 창 잠금 유지
     });
   }
   cancel() {
@@ -235,7 +248,9 @@ let job = null;
 // 화면에 안 보이게 도는 작업(목록 갱신·환원 점검 등). 사람이 시킨 작업이 오면 양보한다 — 전엔 "작업창의 [취소]를 누르라"고 했는데 숨은 작업이라 누를 곳이 없었음
 // 끊어도 되돌릴 게 없는 작업(그룹웨어에 아무것도 안 만듦): 사람 확인을 기다리던 중이어도 새 작업이 오면 취소하고 넘어감
 const PREEMPTIBLE_JOBS = new Set(['fare', 'login', 'receipts', 'po-read', 'url-read']);
-const BACKGROUND_JOBS = new Set(['gw-list', 'gw-profile', 'refund-check', 'purchase-list', 'report-load', 'settle-approvals', 'pui-draft', 'pui-items']);
+const BACKGROUND_JOBS = new Set(['gw-list', 'gw-profile', 'refund-check', 'purchase-list', 'visitor-list', 'report-load', 'settle-approvals', 'pui-draft', 'pui-items']);
+// 그중 다른 '뒤 작업'이 끊으면 안 되는 것 (사람이 누른 초안·보고서 불러오기 — 끊기면 결과가 말없이 사라짐). 사람이 시킨 작업은 끊을 수 있음
+const NO_PREEMPT = new Set(['pui-draft', 'report-load', 'gw-profile']);
 // 시작 요청은 하나씩 차례로: 앞 작업이 멈추길 기다리는 사이 두 번째 요청이 오면 둘 다 새 작업을 만들어 같은 창을 동시에 만졌음 (자가 테스트 2026-10-28).
 // 차례로 처리하면 뒤 요청은 앞 요청이 시작한 작업을 보고 판단한다 (교통비 조회는 마지막 것이 이김)
 let startChain = Promise.resolve();
@@ -244,10 +259,10 @@ async function startJobNow(kind, fn, title) {
   if (quitAfterJob) throw new Error('앱을 끄는 중이에요.');
   const bg = BACKGROUND_JOBS.has(kind), busy = job && (job.state === 'running' || job.state === 'waiting');
   // 뒤에서 하는 확인은 사람이 시킨 작업을 절대 끊지 않는다: 도움을 기다리던 신청 작업을 구매 목록 새로고침이 취소해 품의가 지워질 뻔함
-  if (bg && busy && !BACKGROUND_JOBS.has(job.kind)) return { ok: false, skipped: true };
+  if (bg && busy && (!BACKGROUND_JOBS.has(job.kind) || NO_PREEMPT.has(job.kind))) return { ok: false, skipped: true };
   // 사람 확인을 기다리는 사람 작업도 다른 작업이 끊지 않는다 (취소되면 만들던 품의를 지움). 되돌릴 게 없는 작업만 끊음
   if (busy && job.state === 'waiting' && !job.cancelled && !BACKGROUND_JOBS.has(job.kind) && !PREEMPTIBLE_JOBS.has(job.kind)) throw new Error('작업창에서 확인을 기다리는 작업이 있어요. 그 작업을 [계속]하거나 [취소]한 뒤 다시 해 주세요.');
-  const yieldTo = busy && (job.cancelled || job.state === 'waiting' || job.kind === 'fare' || (BACKGROUND_JOBS.has(job.kind) && kind !== job.kind));   // 뒤 작업끼리도 다른 종류면 새 것이 이김 (목록 읽는 사이 [보고서 작성]을 누르면 '진행 중' 오류가 났음 — 2026-11-10)
+  const yieldTo = busy && (job.cancelled || job.state === 'waiting' || job.kind === 'fare' || (BACKGROUND_JOBS.has(job.kind) && kind !== job.kind && (!bg || !NO_PREEMPT.has(job.kind))));   // 사람이 시킨 작업은 숨은 작업을 끊고 감 (숨은 작업엔 [취소]가 안 보임)   // 뒤 작업끼리도 다른 종류면 새 것이 이김 (목록 읽는 사이 [보고서 작성]을 누르면 '진행 중' 오류가 났음 — 2026-11-10)
   if (yieldTo) {   // 교통비 조회(새 조회가 덮어씀)·뒤에서 돌던 작업·취소한 작업은 멈출 때까지 기다림 (같은 창을 동시에 만지지 않게)
     const old = job; old.cancel();
     const stopped = await Promise.race([old.done.then(() => true), new Promise(r => setTimeout(() => r(false), 20000))]);
@@ -325,7 +340,7 @@ async function reportDone(j) {
 }
 
 // ---------- 영수증 자동 분류 ----------
-const PROOF_MIME = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', pdf: 'application/pdf' };
+const PROOF_MIME = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', jfif: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', pdf: 'application/pdf' };   // jfif: 윈도우 크롬·엣지가 JPEG 를 저장하는 확장자
 /** 고른 뒤 옮기거나 지운 파일: 작업을 시작하기 전에 이름을 알려 준다 ("ENOENT: no such file…" 대신) */
 function assertFilesExist(paths, what) {
   const fs = require('fs');
@@ -421,13 +436,14 @@ function aiSettings(cfg) {
   if (!own) return !cfg.aiProvider || cfg.aiProvider === 'gemini' ? builtinAi() : null;   // 팀 공용 키는 Gemini 만. Claude·OpenAI 는 개인 키 필요
   if (!cfg.aiProvider) return null;
   try {
-    const buf = Buffer.from(cfg.aiKeyEnc, 'base64');
-    const key = safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(buf) : buf.toString('utf8');
+    const enc = String(cfg.aiKeyEnc), buf = Buffer.from(enc.replace(/^p:/, ''), 'base64');
+    const plain = buf.toString('utf8'), key = enc.startsWith('p:') ? plain : safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(buf) : /^[\x20-\x7e]+$/.test(plain) ? plain : null;   // 암호문을 키로 보내지 않음 (예전 평문 값은 글자로 알아봄)
+    if (!key) return null;
     return { provider: cfg.aiProvider, model, key };
   } catch (e) { return null; }
 }
 function encryptKey(key) {
-  return (safeStorage.isEncryptionAvailable() ? safeStorage.encryptString(key) : Buffer.from(key, 'utf8')).toString('base64');
+  return safeStorage.isEncryptionAvailable() ? safeStorage.encryptString(key).toString('base64') : `p:${Buffer.from(key, 'utf8').toString('base64')}`;   // p: = 암호화 못 한 값 (나중에 암호화가 켜져도 구별)
 }
 // 한국수출입은행 환율 키: 개발 중엔 .env 의 OPEN_API_KEY, 배포본엔 빌드 때 builtin-key.json 에 내장 (팀 공용)
 const fxKey = () => (process.env.OPEN_API_KEY || (() => { try { return require('./engine/builtin-key.json').fxKey; } catch (e) { return ''; } })() || '').trim();
@@ -572,7 +588,9 @@ async function route(p, body = {}) {
     case '/api/trips': return { trips: store.list().map(t => ({ ...t, reportMemo: R.budgetMemo(R.reportTitle(t.reason || '')), reportDocTitle: R.reportTitle(t.reason || '') })) };   // reportDocTitle: 출장보고서 결재 문서 제목 (목록에서 보고 상태 찾기)   // reportMemo: 보고 품의 적요 (연결이 끊긴 보고 품의를 찾는 데 씀)
     case '/api/report-preview': {   // 보내기 전 확인 화면: 실제로 채주에 들어갈 줄 (같은 날 식대 묶음·식대 한도 반영 — runReport 와 같은 계산)
       const rep = R.parseReport(body.data || {});
-      return { lines: runner.settleLines(rep, cfg).map(l => ({ item: l.item, label: l.label, memo: l.memo, amount: l.amount, pay: l.pay, noVat: l.noVat, proofs: (l.proofs || []).length, dup: l.dup })) };
+      let budgetItem = '';   // 연구과제 출장 품의는 줄이 다 선급과제비(연구활동비) → 확인 화면에도 그 과목으로
+      try { if (store.load(body.data.trip_id).apply.category === '연구과제') budgetItem = R.PROJECT_ITEM; } catch (e) { /* 기록 없음 */ }
+      return { budgetItem, lines: runner.settleLines(rep, cfg).map(l => ({ item: l.item, label: l.label, memo: l.memo, amount: l.amount, pay: l.pay, noVat: l.noVat, proofs: (l.proofs || []).length, dup: l.dup })) };
     }
     case '/api/draft': {   // 전에 작성한 보고서가 있으면 그대로, 없으면 신청 내용으로 초안
       const base = runner.reportDraft(store, cfg, body.id); const saved = body.fresh ? null : store.load(body.id).report;   // fresh: 작성하던 내용 무시하고 신청 내용으로 새로
@@ -583,7 +601,7 @@ async function route(p, body = {}) {
     case '/api/trip/link-report': { const rec = store.load(body.id); const r = body.row; rec.gwReport = { key: r.key, ym: r.ym, day: String(r.day), seq: String(r.seq) }; store.save(body.id, rec); return { ok: true }; }
     case '/api/update': return { ...updater.state, current: app.getVersion(), platform: process.platform };
     case '/api/update/check': return { ...(await updater.check(!!body.force)), current: app.getVersion() };
-    case '/api/update/install': return await updater.install();
+    case '/api/update/install': if (jobBusy() && !BACKGROUND_JOBS.has(job.kind)) throw new Error('작업이 진행 중이에요. 끝난 뒤 업데이트해 주세요.'); return await updater.install();
     case '/api/copy': clipboard.writeText(String(body.text || '')); return { ok: true };
     case '/api/open': {   // 증빙·발주서·캡처 보기만 — 실행 파일 등 다른 건 열지 않음 (화면이 보낸 경로를 그대로 실행하지 않게)
       const f = String(body.path || ''), ext = path.extname(f).slice(1).toLowerCase();
@@ -592,12 +610,12 @@ async function route(p, body = {}) {
     }
     case '/api/pick-po': {   // 발주서 1개: PDF·워드·엑셀·이미지
       const what = body.what === 'invoice' ? '청구서 및 견적서' : body.what === 'consent' ? R.AI_CONSENT : '발주서·견적서';
-      const r = await dialog.showOpenDialog(mainWin, { title: `${what} 선택 (PDF·워드·엑셀·이미지${body.many ? ', 여러 개 가능' : ' 1개'})`, properties: body.many ? ['openFile', 'multiSelections'] : ['openFile'], filters: [{ name: what, extensions: ['pdf', 'docx', 'xlsx', 'png', 'jpg', 'jpeg', 'webp'] }] });
+      const r = await dialog.showOpenDialog(mainWin, { title: `${what} 선택 (PDF·워드·엑셀·이미지${body.many ? ', 여러 개 가능' : ' 1개'})`, properties: body.many ? ['openFile', 'multiSelections'] : ['openFile'], filters: [{ name: what, extensions: ['pdf', 'docx', 'xlsx', 'png', 'jpg', 'jpeg', 'jfif', 'webp'] }] });
       return { path: r.canceled ? '' : r.filePaths[0], paths: r.canceled ? [] : r.filePaths };
     }
     case '/api/pick-proofs': {   // 정산 증빙: 이미지·PDF 1개
       const r = await dialog.showOpenDialog(mainWin, { title: body.many ? '영수증·증빙 선택 (여러 개)' : '증빙 자료 선택 (이미지·PDF 1개)', properties: body.many ? ['openFile', 'multiSelections'] : ['openFile'],
-        filters: [{ name: '이미지·PDF', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'tif', 'tiff', 'pdf'] }] });
+        filters: [{ name: '이미지·PDF', extensions: ['png', 'jpg', 'jpeg', 'jfif', 'gif', 'webp', 'bmp', 'tif', 'tiff', 'pdf'] }] });
       return { paths: r.canceled ? [] : r.filePaths };
     }
     case '/api/gw/status': return gwStatus();
@@ -607,7 +625,8 @@ async function route(p, body = {}) {
       if (jobBusy()) throw new Error('작업이 진행 중이에요. 끝난 뒤 로그아웃해 주세요.');
       for (const w of gwPopups) if (!w.isDestroyed()) w.destroy();
       if (gwWin && !gwWin.isDestroyed()) gwWin.destroy();
-      gwWin = null;
+      gwWin = null; gwShown = false;   // 남아 있으면 새 작업 창이 '보는 중'으로 잠기고 팝업이 튀어나옴
+      if (viewWin && !viewWin.isDestroyed()) viewWin.destroy();
       const ses = session.fromPartition('persist:gw');
       await ses.clearStorageData(); await ses.clearCache();
       sessionCreds = null;
@@ -637,7 +656,7 @@ async function route(p, body = {}) {
       return startJob('po-read', async env => {
         env.log(`발주서 읽는 중: ${path.basename(f)}`);
         const po = office ? await AI.readPurchaseOrder(ai, null, require('./engine/office').officeText(f)) : await AI.readPurchaseOrder(ai, { mime, data: require('fs').readFileSync(f).toString('base64') });
-        env.log(`거래처 ${po.vendor.name || '?'} · 품목 ${po.items.length}건 · 합계 ${po.total.toLocaleString('ko-KR')}원`); return { ...po, file: f };
+        env.log(`거래처 ${po.vendor.name || '?'} · 품목 ${po.items.length}건 · 합계 ${po.total === '' ? '?' : po.total.toLocaleString('ko-KR')}원`); return { ...po, file: f };
       }, body.title);
     }
     case '/api/job/url-read': {   // 제품 페이지 주소 → 숨긴 창에서 열어 캡처·글자 → AI 가 품목·가격·판매처
@@ -647,7 +666,7 @@ async function route(p, body = {}) {
         env.log(`페이지 여는 중: ${url}`);
         const w = new BrowserWindow({ show: false, width: 1200, height: 1400, webPreferences: { partition: 'persist:web', contextIsolation: true, sandbox: true, backgroundThrottling: false } });
         // 쇼핑몰 페이지가 알림창(alert)·창 닫기·새 창을 띄워도 멈추지 않게: 알림은 바로 닫고, 닫기·새 창은 막는다
-        let done = false; w.on('close', e => { if (!done) e.preventDefault(); });
+        let done = false; w.on('close', e => { if (!done && !quitting) e.preventDefault(); });   // 앱 끌 땐 막지 않음 (막으면 종료가 통째로 취소돼 앱이 안 꺼졌음)
         w.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
         const dbg = w.webContents.debugger; let alerts = [];
         try {
@@ -669,7 +688,7 @@ async function route(p, body = {}) {
           fs.writeFileSync(shot, (await w.webContents.capturePage()).toPNG());
           env.log('캡처 완료 · AI 가 읽는 중');
           const r = await AI.readProductPage(ai, { url, title: info.title, text: info.text, shot: { mime: 'image/png', data: fs.readFileSync(shot).toString('base64') } });
-          env.log(`${r.name || '제품 ?'} · ${r.unit_price.toLocaleString('ko-KR')}원 · 판매처 ${r.vendor.name || '?'}`);
+          env.log(`${r.name || '제품 ?'} · ${r.unit_price === '' ? '?' : r.unit_price.toLocaleString('ko-KR')}원 · 판매처 ${r.vendor.name || '?'}`);
           return { ...r, url, title: info.title, shot };
         } finally { done = true; try { dbg.detach(); } catch (e) { /* */ } if (!w.isDestroyed()) w.destroy(); }
       }, body.title);
@@ -697,6 +716,7 @@ async function route(p, body = {}) {
       } finally { w.destroy(); }
     }
     case '/api/visitor/print-doc': {   // 올라간 신청서: 그룹웨어 문서 창을 그대로 띄우고 [인쇄 › 결재문서] (결재란·품의번호 포함, 창은 사람이 닫음)
+      if (jobBusy()) throw new Error('다른 작업이 그룹웨어 창을 쓰는 중이에요. 끝난 뒤 다시 눌러 주세요.');   // 같은 창을 동시에 만지면 서로의 팝업을 가로챔
       const gw = gwFor(false); await gw.ensureLogin();
       return { clicked: await gw.printApprovalDoc(String(body.docId || ''), String(body.formId || '')) };
     }
@@ -740,7 +760,7 @@ async function route(p, body = {}) {
     case '/api/job/login': return startJob('login', env => runner.runLogin(env), body.title);
     case '/api/job/fare': return startJob('fare', env => runner.runFare({ ...env, force: Boolean(body.force) }, body), body.title);
     case '/api/job/apply': runner.planApply(body.data, cfg); return startJob('apply', env => runner.runApply(env, body.data, { save: false }), body.title);     // 보관·상신은 사람이
-    case '/api/job/report': { const rep = R.parseReport(body.data); assertFilesExist(rep.expenses.flatMap(e => e.proofs || []), '증빙'); } return startJob('report', env => runner.runReport(env, body.data), body.title);
+    case '/api/job/report': { const rep = R.parseReport(body.data); let sent = false; try { sent = !!store.load(rep.trip_id).resolutionNo; } catch (e) { /* 기록 없음 */ } if (!sent) assertFilesExist(rep.expenses.flatMap(e => e.proofs || []), '증빙'); }   /* 이미 [전송]한 결의를 이어 할 땐 영수증 파일이 필요 없음 (정리해 지웠으면 막혔음) */ return startJob('report', env => runner.runReport(env, body.data), body.title);
     case '/api/job/settle-approvals': return startJob('settle-approvals', env => runner.runSettleApprovals(env, { from: String(body.from || ''), to: String(body.to || ''), all: !!body.all }), body.title);
     case '/api/job/pui-items': return startJob('pui-items', env => runner.runBudgetItems(env), body.title);   // 예산과목 드롭다운 (API)
     case '/api/job/pui-draft': {   // 청구서 및 견적서 + 한 줄 메모 → 지출 품의 칸 (비슷한 이전 품의를 틀로)
@@ -764,8 +784,9 @@ async function route(p, body = {}) {
       return list;
     }
     case '/api/pui/notify-test': remindNotify('🔔 지출 품의 올릴 때예요', '알림 시험이에요 — 그날이 되면 이렇게 알려 드려요.', showMain); return { ok: true };
-    case '/api/pui/repeat-done': return saveRepeats(repeats().map(r => r.id === body.id ? { ...r, done: ymOf(new Date()) } : r));   // 알림 받고 이번 달 품의를 올림 → 배지 끔
-    case '/api/pui/repeat-set': return saveRepeats(repeats().map(r => r.id === body.id ? { ...r, on: !!body.on } : r));   // 끄기·켜기
+    case '/api/pui/repeat-done': return saveRepeats(repeats().map(r => r.id === body.id ? { ...r, done: r.last > (r.done || '') ? r.last : ymOf(new Date()) } : r));   // 알림 온 달을 끝냄 (1일에 지난달 알림을 처리하면 이번 달 알림이 꺼졌었음). 알림 전에 올렸으면 이번 달   // 알림 받고 이번 달 품의를 올림 → 배지 끔
+    case '/api/pui/repeat-set': { const p = new Date(); p.setDate(1); p.setMonth(p.getMonth() - 1); const pym = ymOf(p);   // 다시 켜면 꺼져 있던 달 알림은 건너뜀 (켜자마자 지난달 알림이 떴음)
+      return saveRepeats(repeats().map(r => r.id === body.id ? { ...r, on: !!body.on, ...(body.on && !r.on ? { last: r.last < pym ? pym : r.last, done: (r.done || '') < pym ? pym : r.done } : {}) } : r)); }   // 끄기·켜기
     case '/api/pui/repeat-del': return saveRepeats(repeats().filter(r => r.id !== body.id));
     case '/api/job/pui': { const pq = R.parsePui(body.data); assertFilesExist([...pq.files, ...pq.proofs], '청구서 및 견적서'); return startJob('pui', env => runner.runPui(env, body.data), body.title); }   // 결재선·상신은 사람이   // 지출 결의할 수 있는 승인 품의 목록
     case '/api/job/settle': { const s = R.parseSettle(body.data); assertFilesExist(s.lines.flatMap(l => l.proofs || []), '영수증'); return startJob('settle', env => runner.runSettle(env, body.data), body.title); }   // 전송은 사람이
@@ -791,7 +812,7 @@ function openRemind(id) {
 }
 function syncBackground() {
   const on = keepInBackground();
-  if (app.isPackaged) app.setLoginItemSettings({ openAtLogin: on, openAsHidden: on, args: on ? ['--hidden'] : [] });   // 개발 중엔 electron 실행 파일이 등록돼 버려 안 함
+  if (app.isPackaged) app.setLoginItemSettings({ openAtLogin: on, openAsHidden: on, args: on ? ['--hidden'] : [], ...(process.platform === 'win32' ? { name: 'electron.app.와니의 결재 도우미' } : {}) });   // 윈도우 Run 값 이름은 예전(앱 ID 를 정하기 전) 그대로 — 바뀌면 옛 항목이 남아 두 번 켜짐   // 개발 중엔 electron 실행 파일이 등록돼 버려 안 함
   if (on && !tray) {
     tray = new Tray(nativeImage.createFromPath(ICON).resize({ width: 18, height: 18 }));
     tray.setToolTip('와니의 결재 도우미 — 지출 품의 알림 켜짐');
@@ -799,22 +820,33 @@ function syncBackground() {
     tray.on('click', showMain);
   } else if (!on && tray) { tray.destroy(); tray = null; }
   // 슬랙처럼 앱 아이콘에 빨간 숫자: 알림은 왔는데 아직 안 올린 품의 수
-  const ym = ymOf(new Date()), pending = repeats().filter(r => r.on && r.last === ym && r.done !== ym).length;
+  const ym = ymOf(new Date()), pending = repeats().filter(r => r.on && r.last > (r.done || '')).length;   // 알림 보낸 달을 아직 안 올림 (달이 바뀌어도 남음)
   try { app.setBadgeCount(pending); } catch (e) { /* 지원 안 하는 OS */ }
 }
 /** 슬랙처럼 화면 구석 알림 + 소리. 맥 알림 소리는 시스템 설정(앱별 '소리 재생')을 따라 안 날 수 있어 앱이 직접 재생 (Glass) */
+const liveNotes = new Set();
+/** 배포본 진단 파일(그룹웨어 화면 HTML·캡처)은 30일 지나면 지움 — 다른 사람 결재 내용이 쌓여 남았음 */
+function cleanDebug() {
+  if (!app.isPackaged) return;
+  const fs = require('fs'), dir = path.join(app.getPath('userData'), 'debug'), old = Date.now() - 30 * 864e5;
+  try { for (const f of fs.readdirSync(dir)) { const p = path.join(dir, f); try { if (fs.statSync(p).mtimeMs < old) fs.rmSync(p, { recursive: true, force: true }); } catch (e) { /* 다음에 */ } } } catch (e) { /* 폴더 없음 */ }
+}
 function remindNotify(title, body, onClick) {
   const mac = process.platform === 'darwin';
   try {
     // 맥 소리는 아래서 직접(두 번 안 나게). 닫을 때까지 남는 건 배포본 Info.plist 의 alert 스타일 덕 (개발 모드 Electron 은 배너라 사라짐)
     const n = new Notification({ title, body, icon: ICON, silent: mac, timeoutType: 'never', ...(onClick ? { actions: [{ type: 'button', text: '지금 올리기' }], closeButtonText: '나중에' } : {}) });
     if (onClick) { n.on('click', onClick); n.on('action', onClick); }
+    liveNotes.add(n); for (const ev of ['click', 'close', 'action']) n.on(ev, () => liveNotes.delete(n));   // 잡아 두지 않으면 GC 로 사라져 몇 시간 뒤 누른 클릭이 안 먹음
     n.show();
   } catch (e) { /* 알림 못 띄움 — 앱 안 카드·배지로도 보임 */ }
   if (mac) try { require('child_process').spawn('afplay', ['/System/Library/Sounds/Glass.aiff'], { stdio: 'ignore', detached: true }).unref(); } catch (e) { /* 소리 없음 */ }
 }
 function remindDue() {
   if (!store) return;
+  try { remindDueNow(); } catch (e) { /* 설정 파일이 잠깐 잠김(백신) — 다음 차례에 다시. 타이머에서 던지면 main 오류 창이 뜸 */ }
+}
+function remindDueNow() {
   for (let due = R.dueRepeat(repeats()); due; due = R.dueRepeat(repeats())) {
     const { rep, ym } = due;
     saveRepeats(repeats().map(r => r.id === rep.id ? { ...r, last: ym } : r));   // 이번 달 알림 보냄
@@ -828,6 +860,10 @@ ipcMain.handle('api', async (_e, p, body) => {
 });
 
 app.whenReady().then(() => {
+  // 웹 내용이 권한(외부 프로그램 열기·카메라·위치 등)을 자동으로 받지 않게. 쇼핑몰 페이지·지도는 다 거절, 그룹웨어는 쓰는 것만
+  for (const [part, allow] of [['persist:web', []], ['persist:naver', []], ['persist:gw', ['clipboard-read', 'clipboard-sanitized-write', 'fullscreen', 'notifications', 'openExternal']]])
+    session.fromPartition(part).setPermissionRequestHandler((wc, perm, cb) => cb(allow.includes(perm)));
+  setTimeout(cleanDebug, 60 * 1000);
   // macOS Dock 아이콘은 번들 아이콘(build/icon.png, 애플 규격대로 둘레 여백 있음)을 그대로 쓴다.
   // 여기서 setIcon(꽉 찬 icon-512)으로 덮으면 다른 앱보다 크게 보인다. 개발 모드는 brand-dev-electron.js 가 같은 아이콘을 넣어 둔다.
   store = new Store(process.env.TRIP_ASSISTANT_DATA || app.getPath('userData'));

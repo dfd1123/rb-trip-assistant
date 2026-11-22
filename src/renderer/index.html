@@ -65,9 +65,6 @@ input[readonly]{background:var(--bg);color:var(--muted);cursor:default} input[re
 .pm-list div.sel{border-color:var(--accent);background:var(--accent-soft);color:var(--accent);font-weight:600}
 .pm-list div.sel::before{border:4.5px solid var(--accent);background:#fff}
 .pm-list p{margin:0;padding:18px 0;text-align:center;color:var(--muted)}
-.pj-wrap{position:relative;flex:1;min-width:0} .pj-wrap:has(>input.hidden){display:none}
-.pj-pop{position:absolute;left:0;right:0;top:100%;z-index:30;margin-top:4px;padding:6px;background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 12px 32px rgba(15,23,42,.16)}
-.pj-pop div{padding:8px 10px}
 textarea{resize:vertical;min-height:84px}
 .seg{display:flex;gap:6px;flex-wrap:wrap}
 .seg label{border:1px solid var(--line);border-radius:999px;padding:6px 14px;cursor:pointer;user-select:none}
@@ -294,7 +291,7 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
 .tk-break span.need{background:#fff3cd;color:#7a4b00;font-weight:600}
 
 #cfmModal,#aiLimitModal,#aiConsentModal,#askModal,#carModal,#mealModal,#vsAskModal,#preModal{position:fixed;inset:0;background:rgba(15,23,42,.45);display:none;align-items:center;justify-content:center;z-index:70;backdrop-filter:blur(2px)}
-.pm-pick{display:flex;gap:10px}.pm-pick .btn{flex:1;padding:14px;font-size:15px}.pm-pick .btn.sel{border-color:#6d5efc;background:#f3f1ff;font-weight:700}
+.pm-pick{display:flex;flex-wrap:wrap;gap:10px}.pm-pick .btn{flex:1;padding:14px;font-size:15px}.pm-pick .btn.sel{border-color:#6d5efc;background:#f3f1ff;font-weight:700}
 #cfmModal.on,#aiLimitModal.on,#aiConsentModal.on,#askModal.on,#carModal.on,#mealModal.on,#vsAskModal.on,#preModal.on{display:flex;animation:cfFade .18s ease-out}
 @keyframes cfFade{from{opacity:0}to{opacity:1}}
 /* 출장지 자동완성 (네이버 지역 검색) */
@@ -555,13 +552,7 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
     <div class="card">
       <h2 id="r_heading">출장 보고서</h2>
       <p class="sub" id="r_trip"></p>
-      <div class="row"><label>출장구분</label><div class="seg" id="r_category">
-        <label><input type="radio" name="r_category" value="로봇">로봇</label>
-        <label><input type="radio" name="r_category" value="천문">천문</label>
-        <label><input type="radio" name="r_category" value="생산">생산</label>
-        <label><input type="radio" name="r_category" value="기타">기타</label>
-        <label><input type="radio" name="r_category" value="정부과제">정부과제</label></div></div>
-      <div class="row"><label>과제명</label><input id="r_project" placeholder="과제 이름 (목록에서 검색 · 정부과제면 필수)"></div>
+      <input type="hidden" id="r_category"><input type="hidden" id="r_project"><input type="hidden" id="r_fund"><!-- 출장구분·과제·자금과목은 [보내기] 때 창으로 물어봄 -->
       <div class="row"><label>출장일시</label><input id="r_period"></div>
       <div class="row"><label>출장지</label><input id="r_destination"></div>
       <div class="row"><label>방문기관</label><input id="r_visit_org"></div>
@@ -576,7 +567,6 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
     </div>
     <div class="card">
       <div class="h2row"><h2>정산 경비</h2><button class="btn small hidden" id="btnFuel" type="button" title="네이버 지도 자동차 길찾기를 내 차 연료·연비 8km/L 로 조회해 금액과 캡처(증빙)를 넣어요">🚗 유류대 조회</button></div><p class="sub">실제 쓴 금액으로 고쳐 주세요. 영수증은 위 [자동 작성]에 넣으면 AI 가 읽어서 채워요.<span id="r_fuel_hint"></span></p>
-      <div class="row"><label>자금과목 <span style="color:var(--err)">*</span></label><div class="seg" id="r_fund"><label><input type="radio" name="r_fund" value="일반경비">일반경비</label><label><input type="radio" name="r_fund" value="제조경비">제조경비</label></div></div>
       <table class="ed" id="r_exp" style="table-layout:fixed"><thead><tr><th style="width:16%">예산과목</th><th style="width:13%">금액(원)</th><th style="width:11%">결제</th><th style="width:30%">인원 · 적요 <span style="font-weight:400">(= 거래처비고)</span></th><th>증빙 <span style="font-weight:400">(이미지·PDF)</span></th><th style="width:52px"></th></tr></thead><tbody></tbody></table>
       <button class="btn small" id="btnAddRExp" style="margin-top:6px">+ 경비 추가</button>
       <div class="total"><span>정산 합계</span><span id="r_total">0원</span></div>
@@ -892,8 +882,9 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
 <div id="preModal"><div class="box" style="width:480px"><div class="cf-head"><b id="pm_title">출장 구분을 골라 주세요</b><button class="x" type="button" id="pmX">✕</button></div>
   <div class="cf-body">
     <div id="pm_cat">
-      <div class="pm-pick"><button class="btn" type="button" data-cat="일반">일반</button><button class="btn" type="button" data-cat="연구과제">연구과제</button></div>
+      <div class="pm-pick" id="pm_cats"></div>
       <div class="hidden" id="pm_proj_row" style="margin-top:16px"><div class="pm-proj-head"><b>과제</b><span id="pm_proj_info"></span></div><input id="pm_project_q" class="pm-search" placeholder="과제 이름으로 검색 (예: 소방, 휴머노이드)" autocomplete="off"><div id="pm_project_list" class="pm-list"></div><input type="hidden" id="pm_project"></div>
+      <div class="hidden" id="pm_etc_row" style="margin-top:16px"><input id="pm_etc" placeholder="기타 내용 (예: 고객사 데모 지원)" autocomplete="off"></div>
     </div>
     <div id="pm_comp" class="hidden">
       <div class="pm-pick"><button class="btn" type="button" id="pmAlone">없음 (혼자)</button><button class="btn" type="button" id="pmWith">있음</button></div>
@@ -902,6 +893,7 @@ details.more summary{cursor:pointer;color:var(--muted);font-size:13px}
         <div class="row"><label>동행목적</label><input id="pm_companion_purpose" placeholder="예: 셋업 지원"></div>
       </div>
     </div>
+    <div id="pm_fund" class="hidden"><div class="pm-pick"><button class="btn" type="button" data-fund="일반경비">일반경비</button><button class="btn" type="button" data-fund="제조경비">제조경비</button></div></div>
     <div class="err" id="pm_err"></div>
   </div>
   <div class="cf-foot"><button class="btn" type="button" id="pmCancel">취소</button><button class="btn primary glow" type="button" id="pmOk">다음</button></div></div></div>

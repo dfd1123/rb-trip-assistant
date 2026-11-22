@@ -168,7 +168,7 @@ function updateReport(){
   const filled = expAll.map((e, i) => ({ e, ok: claimableTr(expTrs[i]) })).filter(x => x.e.amount !== '');   // 금액 빈 줄은 빼고
   const exps = filled.filter(x => x.ok).map(x => x.e), noProof = filled.length - exps.length;
   const sched = $$('#r_sched textarea'), schedOk = sched.length > 0 && sched.every(x => x.value.trim());
-  const key = JSON.stringify([files, memo, written, exps, noProof, schedOk, radio('r_fund'), $('#r_period').value, $('#r_destination').value]);
+  const key = JSON.stringify([files, memo, written, exps, noProof, schedOk, $('#r_period').value, $('#r_destination').value]);
   if(key === reportKey) return; reportKey = key;
   // 단계
   const st = [files > 0, memo, written];
@@ -192,7 +192,6 @@ function updateReport(){
   const items = [
     { label: '보고사항', ok: written, focus: '#r_report' },
     { label: '일정 세부 내용', ok: schedOk, focus: '#r_sched textarea' },
-    { label: '자금과목', ok: !!radio('r_fund'), focus: '#r_fund input' },
     { label: '출장일시', ok: !!$('#r_period').value.trim(), focus: '#r_period' },
     { label: '출장지', ok: !!$('#r_destination').value.trim(), focus: '#r_destination' },
     { label: '증빙 첨부', ok: exps.length > 0 && !noProof, optional: true, focus: '#r_exp' },
@@ -280,7 +279,7 @@ const seenGuide = k => { try { return localStorage['guide_' + k] === '1'; } catc
 const markGuide = k => { try { localStorage['guide_' + k] = '1'; } catch(e){ /* */ } };
 function gdShow(){
   const visible = sel => [...document.querySelectorAll(sel)].find(el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; });
-  while(gd && gd.i < gd.steps.length && !visible(gd.steps[gd.i][0])) gd.i += gd.dir;   // 지금 안 보이는 칸은 건너뜀
+  while(gd && gd.i >= 0 && gd.i < gd.steps.length && !visible(gd.steps[gd.i][0])) gd.i += gd.dir;   // [이전]으로 가다 앞 칸이 다 안 보이면 -1 (steps[-1] 에서 오류였음)   // 지금 안 보이는 칸은 건너뜀
   if(!gd || gd.i < 0 || gd.i >= gd.steps.length) return gdEnd();
   const [sel, title, text] = gd.steps[gd.i], el = visible(sel);
   const tall = el.getBoundingClientRect().height > innerHeight * 0.55;   // 화면보다 큰 칸은 윗부분만 짚음

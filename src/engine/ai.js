@@ -53,7 +53,8 @@ async function claudeCli(prompt, { model, files = [], timeoutMs = 120000 } = {})
     const shell = /\.cmd$/i.test(bin);
     const out = await new Promise((resolve, reject) => {
       // npm 으로 깐 claude 는 '#!/usr/bin/env node' 스크립트: 로그인 셸에서 찾았어도 앱(독·파인더)의 PATH 엔 node 가 없어 127 로 죽었음 → 실제 파일이 있는 폴더(node 도 거기 있음)를 PATH 앞에
-      const env = { ...process.env }; try { env.PATH = `${path.dirname(fs.realpathSync(bin))}${path.delimiter}${env.PATH || ''}`; } catch (e) { /* 그대로 */ }
+      const env = { ...process.env }, pk = Object.keys(env).find(k => k.toUpperCase() === 'PATH') || 'PATH';   // 윈도우는 'Path' — env.PATH 로 넣으면 원래 Path 가 버려져 node 를 못 찾음
+      try { env[pk] = `${path.dirname(fs.realpathSync(bin))}${path.delimiter}${env[pk] || ''}`; } catch (e) { /* 그대로 */ }
       const cp = spawn(shell ? `"${bin}"` : bin, shell ? args.map(a => `"${a}"`) : args, { cwd: dir, shell, windowsHide: true, env });
       let so = '', se = '';
       const kill = () => { if (shell && process.platform === 'win32') { try { require('child_process').spawn('taskkill', ['/pid', String(cp.pid), '/T', '/F'], { windowsHide: true }); return; } catch (e) { /* 아래 */ } } cp.kill(); };   // 셸로 띄운 claude.cmd 는 cmd.exe 만 죽고 node 가 남아 임시 폴더를 못 지웠음
@@ -61,6 +62,7 @@ async function claudeCli(prompt, { model, files = [], timeoutMs = 120000 } = {})
       cp.stdout.on('data', d => { so += d; }); cp.stderr.on('data', d => { se += d; });
       cp.on('error', e => { clearTimeout(t); reject(new Error(`Claude Code 를 실행하지 못했어요: ${e.message}`)); });
       cp.on('close', code => { clearTimeout(t); resolve({ code, so, se }); });
+      cp.stdin.on('error', () => {});   // claude 가 입력을 안 읽고 먼저 끝나면 EPIPE — 결과는 close 에서 봄 (안 잡으면 main 프로세스 오류 창)
       cp.stdin.end(input);
     });
     let j = null; try { j = JSON.parse(out.so.trim().split('\n').pop()); } catch (e) { /* JSON 이 아님 */ }
@@ -75,8 +77,21 @@ async function claudeCli(prompt, { model, files = [], timeoutMs = 120000 } = {})
 
 // AI 답의 숫자: 글자 속 '첫 번째 수'만 ("1 SET (2EA)" → 1, "1,460,000 (VAT 146,000)" → 1460000). 숫자를 전부 이어 붙이면 12·1460000146000 이 됐음
 const firstNum = v => typeof v === 'number' ? v : (m => m ? Number(m[0].replace(/,/g, '')) : NaN)(/-?\d[\d,]*(?:\.\d+)?/.exec(String(v ?? '')));
+/** AI 답의 JSON: ```json 블록 → 답 전체 → 가장 바깥 [..]·{..} 순으로 (맺음말에 괄호가 있거나 배열 대신 객체 하나로 답해도) */
+function jsonOf(text, want = '{') {   // want: 기대하는 모양 먼저 ('{' 객체 / '[' 배열) — 반대 모양 조각(객체 안의 배열)을 집지 않게
+  const t = String(text || ''), fence = /```(?:json)?\s*\n([\s\S]*?)```/i.exec(t), arr = (/\[[\s\S]*\]/.exec(t) || [])[0], obj = (/\{[\s\S]*\}/.exec(t) || [])[0];
+  for (const c of [fence && fence[1], t, ...(want === '[' ? [arr, obj] : [obj, arr])]) { if (!c) continue; try { return JSON.parse(c.trim()); } catch (e) { /* 다음 */ } }
+  throw new Error('json');
+}
 const qtyOf = v => Math.round((firstNum(v) || 0) * 1000) / 1000;   // 수량은 소수 가능 (1.5m) — 반올림하지 않음
 
+/** Gemini 답 글자. 차단·안전 중단이면 content 가 없음 */
+function geminiText(j) {
+  const c = j && j.candidates && j.candidates[0], parts = c && c.content && c.content.parts;
+  if (parts) return parts.map(x => x.text || '').join('');
+  const why = (j && j.promptFeedback && j.promptFeedback.blockReason) || (c && c.finishReason) || '빈 응답';
+  throw new Error(`Gemini 가 답을 주지 않았어요 (${why}). 내용을 바꾸거나 잠시 뒤 다시 해 주세요.`);
+}
 async function post(url, headers, body, timeoutMs = 45000) {
   // 503(혼잡)·429(한도)·529 는 잠깐 뒤 다시 (최대 3회: 2초, 5초 간격)
   for (let attempt = 0; ; attempt++) {
@@ -84,9 +99,9 @@ async function post(url, headers, body, timeoutMs = 45000) {
     const t = setTimeout(() => ctrl.abort(), timeoutMs);
     try {
       const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body), signal: ctrl.signal });
-      const json = await res.json().catch(() => ({}));
+      const json = await res.json().catch(e => { if (e && e.name === 'AbortError') throw e; return {}; });   // 본문 읽다 시간 초과도 시간 초과로
       if (res.ok) return json;
-      if ([429, 503, 529].includes(res.status) && attempt < 2) { await new Promise(r => setTimeout(r, [2000, 5000][attempt])); continue; }
+      if ([429, 500, 502, 503, 504, 529].includes(res.status) && attempt < 2) { await new Promise(r => setTimeout(r, [2000, 5000][attempt])); continue; }
       const msg = (json.error && (json.error.message || json.error.type)) || res.statusText;
       throw new Error(`AI 호출 실패 (${res.status}): ${msg}${res.status === 404 ? ' — 설정에서 모델 이름을 확인해 주세요.' : ''}`);
     } catch (e) {
@@ -106,7 +121,8 @@ async function complete({ provider, model, key }, prompt) {
   if (provider === 'anthropic') {
     const j = await post('https://api.anthropic.com/v1/messages',
       { 'x-api-key': key, 'anthropic-version': '2023-06-01' },
-      { model, max_tokens: 2000, messages: [{ role: 'user', content: prompt }] });
+      { model, max_tokens: 8000, messages: [{ role: 'user', content: prompt }] });
+    if (j.stop_reason === 'max_tokens') throw new Error('AI 답이 너무 길어 잘렸어요. 내용을 나눠 다시 해 주세요.');
     return (j.content || []).map(c => c.text || '').join('');
   }
   if (provider === 'openai') {
@@ -121,8 +137,8 @@ async function complete({ provider, model, key }, prompt) {
     try {
       const j = await post(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(m)}:generateContent`,
         { 'x-goog-api-key': key }, { contents: [{ parts: [{ text: prompt }] }] });
-      return j.candidates[0].content.parts.map(x => x.text || '').join('');
-    } catch (e) { last = e; if (!e.timeout && !/\(503\)|\(429\)|aborted/.test(e.message)) throw e; }
+      return geminiText(j);
+    } catch (e) { last = e; if (!e.timeout && !/\((?:429|500|502|503|504)\)|aborted/.test(e.message)) throw e; }
   }
   throw last;
 }
@@ -138,7 +154,8 @@ async function completeWithFiles({ provider, model, key }, prompt, files) {
       ? { type: 'document', source: { type: 'base64', media_type: f.mime, data: f.data } }
       : { type: 'image', source: { type: 'base64', media_type: f.mime, data: f.data } });
     const j = await post('https://api.anthropic.com/v1/messages', { 'x-api-key': key, 'anthropic-version': '2023-06-01' },
-      { model, max_tokens: 2000, messages: [{ role: 'user', content: [...blocks, { type: 'text', text: prompt }] }] }, 90000);
+      { model, max_tokens: 8000, messages: [{ role: 'user', content: [...blocks, { type: 'text', text: prompt }] }] }, 90000);
+    if (j.stop_reason === 'max_tokens') throw new Error('AI 답이 너무 길어 잘렸어요 (영수증이 아주 많은 파일). 파일을 나눠 다시 해 주세요.');
     return (j.content || []).map(c => c.text || '').join('');
   }
   if (provider === 'openai') {
@@ -153,8 +170,8 @@ async function completeWithFiles({ provider, model, key }, prompt, files) {
     try {
       const j = await post(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(m)}:generateContent`, { 'x-goog-api-key': key },
         { contents: [{ parts: [...files.map(f => ({ inline_data: { mime_type: f.mime, data: f.data } })), { text: prompt }] }], generationConfig: { responseMimeType: 'application/json' } }, 90000);
-      return j.candidates[0].content.parts.map(x => x.text || '').join('');
-    } catch (e) { last = e; if (!e.timeout && !/\(503\)|\(429\)|aborted/.test(e.message)) throw e; }
+      return geminiText(j);
+    } catch (e) { last = e; if (!e.timeout && !/\((?:429|500|502|503|504)\)|aborted/.test(e.message)) throw e; }
   }
   throw last;
 }
@@ -172,17 +189,21 @@ ${list}
 - travel_etc(기타)는 해외 로밍·여행자 보험뿐. 뭔지 모르겠다고 기타로 두지 마.
 - 네이버페이·카카오페이 같은 간편결제 영수증은 품목이 없어. 상호명·시각·금액으로 판단해: 상호가 식당·주점·카페·편의점(GS25·CU·세븐일레븐)·키오스크·○○정·○○돈·○○집 같으면 meal, 호텔·모텔·료칸·펜션·여기어때·야놀자면 domestic_lodging. memo 에 "온라인 결제" 같은 말은 쓰지 마.
 - 식대 끼니(meal)는 거래 시각으로: 10시 전 조식, 10~15시 중식, 15시 뒤 석식. memo 에도 같은 끼니를 써.
-- 금액은 실제 결제한 총액(부가세 포함). 통화가 원이 아니면 원으로 바꾸지 말고 그 숫자를 넣고 memo 에 통화를 적어.
+- 금액은 실제 결제한 총액(부가세 포함). 통화가 원이 아니면 원으로 바꾸지 말고 그 숫자를 넣고 "currency" 에 통화 코드(USD·JPY·EUR 등, 원이면 KRW). 금액을 못 읽으면 null (0 아님).
 - 식대 인원(people): 영수증에 인원·메뉴 수량이 보이면 그걸로, 안 보이면 금액으로 짐작해 (회사 식대 기준 1인 한 끼: 조식 ${rates.breakfast || 8000}원·중식 ${rates.lunch || 15000}원·석식 ${rates.dinner || 15000}원). memo 의 "N인"도 같은 수로.
 - date 는 실제 결제한 날(거래일시·승인일시·결제일). 출력일·발행일·주문번호 날짜와 다르면 결제한 날로.
 - 한 파일에 영수증이 여러 장이면 각각 따로. 영수증·결제 내역이 아니면 [].
 ${period ? `- 출장 기간: ${period}` : ''}`;
   const text = await completeWithFiles(ai, prompt, [file]);
-  const m = /\[[\s\S]*\]/.exec(text);
-  let arr = []; try { arr = JSON.parse(m ? m[0] : text); } catch (e) { throw new Error('AI 답을 읽지 못했어요'); }
+  let arr = []; try { arr = jsonOf(text, '['); } catch (e) { throw new Error('AI 답을 읽지 못했어요'); }
+  if (arr && !Array.isArray(arr) && typeof arr === 'object') { const inner = Object.values(arr).filter(Array.isArray); if (inner.length === 1) arr = inner[0]; }   // {"receipts": [...]} 꼴
   if (!Array.isArray(arr)) arr = [arr];
-  return arr.map(r => ({ item: items[r.item] ? r.item : '', kind: RECEIPT_KINDS.includes(r.kind) ? r.kind : '', amount: Math.round(Math.abs(firstNum(r.amount)) || 0),
-    date: /^\d{4}-\d{2}-\d{2}$/.test(String(r.date || '')) ? String(r.date) : '', meal: /^(조식|중식|석식)$/.test(String(r.meal || '')) ? String(r.meal) : '', time: /^\d{2}:\d{2}$/.test(String(r.time || '')) ? String(r.time) : '', vendor: String(r.vendor || '').slice(0, 40), memo: String(r.memo || '').slice(0, 40), people: Math.max(0, Math.round(Number(r.people) || 0)) })).filter(r => r.amount > 0 || r.item);
+  arr = arr.filter(r => r && typeof r === 'object');
+  const cur = r => (c => /^[A-Z]{3}$/.test(c) ? c : 'KRW')(String(r.currency || '').trim().toUpperCase());
+  return arr.map(r => ({ item: items[r.item] ? r.item : '', kind: RECEIPT_KINDS.includes(r.kind) ? r.kind : '', currency: cur(r),
+    amount: (n => Number.isFinite(n) && n >= 0 ? Math.round(n) : '')(r.amount == null || r.amount === '' ? NaN : firstNum(r.amount)),   // 못 읽은 금액 '' (0원과 구별). 음수(취소·환불)도 '' — 절댓값이면 같은 금액이 두 번 청구됨
+    refund: Number(firstNum(r.amount)) < 0,
+    date: /^\d{4}-\d{2}-\d{2}$/.test(String(r.date || '')) ? String(r.date) : '', meal: /^(조식|중식|석식)$/.test(String(r.meal || '')) ? String(r.meal) : '', time: /^\d{1,2}:\d{2}$/.test(String(r.time || '')) ? String(r.time).padStart(5, '0') : '', vendor: String(r.vendor || '').slice(0, 40), memo: String(r.memo || '').slice(0, 40), people: Math.max(0, Math.round(firstNum(r.people) || 0)) })).filter(r => r.amount > 0 || r.item);   // '2명' 도
 }
 
 /** 발주서(PDF·이미지 파일, 또는 워드·엑셀에서 뽑은 글자) → 거래처·품목·금액. 못 읽는 값은 빈 글자/0 */
@@ -197,16 +218,16 @@ async function readPurchaseOrder(ai, file, text = '') {
    "amount": 공급가액(원, 숫자), "urgency": "긴급" 또는 "일반" 또는 ""}],
  "supply": 공급가액 합계(원, 숫자), "vat": 부가세(원, 숫자, 없으면 0), "total": 합계(원, 숫자),
  "summary": 구매 결재자가 알아야 할 중요 정보 3~8줄 배열. 한 줄에 하나씩 짧게 "항목: 내용" 꼴 (예: "모델명: 261012_JMD40DRV8350RH_V4.0.0_GERBER", "사양: FR-4 4층 1.6T, 동박 내층 1oz/외층 2oz, PSR 노랑·SILK 검정, 금도금", "수량: 50 PCS (샘플)", "금액: 1,460,000원 (부가세 별도)", "발송 예정: 10/19", "결제 조건: 익월말 현금결제", "견적 유효기간: 작성일로부터 7일"). 문서에 없는 건 쓰지 마}
-규칙: 공급 업체(공급자·판매자) 정보를 vendor 에 넣어. 레인보우로보틱스 쪽(수신자) 담당자는 넣지 마. 숫자는 쉼표·통화 기호 없이. 모르면 "" 또는 0.
+규칙: 공급 업체(공급자·판매자) 정보를 vendor 에 넣어. 레인보우로보틱스 쪽(수신자) 담당자는 넣지 마. 숫자는 쉼표·통화 기호 없이. 모르는 글자는 "", 모르는 금액은 null (0 아님).
 "부가세 별도"면 vat 는 0 이고 total 은 공급가액 합계.`;
   const out = file ? await completeWithFiles(ai, prompt, [file]) : await complete(ai, `${prompt}\n\n--- 발주서 내용 (표는 탭으로 구분) ---\n${text}`);
   const m = /\{[\s\S]*\}/.exec(out);
   let j; try { j = JSON.parse(m ? m[0] : out); } catch (e) { throw new Error('AI 가 발주서를 읽지 못했어요'); }
-  const num = v => Math.round(firstNum(v) || 0), str = (v, n = 80) => String(v || '').trim().slice(0, n);
+  const num = v => (n => Number.isFinite(n) ? Math.round(n) : '')(v == null || v === '' ? NaN : firstNum(v)), str = (v, n = 80) => String(v || '').trim().slice(0, n);   // 못 읽은 금액은 '' (0원과 구별 — 0 으로 오면 빈 단가 확인을 지나쳤음)
   const v = j.vendor || {};
   return { vendor: { name: str(v.name), address: str(v.address, 120), contact: str(v.contact, 40), phone: str(v.phone, 40), email: str(v.email) }, order_date: str(j.order_date, 10),
     items: (Array.isArray(j.items) ? j.items : []).map(i => ({ name: str(i.name), part_no: str(i.part_no), unit: str(i.unit, 10) || 'EA', qty: qtyOf(i.qty) || 1, unit_price: num(i.unit_price), amount: num(i.amount), due: '', urgency: /긴급/.test(String(i.urgency || '')) ? '긴급' : '' })).filter(i => i.name),
-    supply: num(j.supply), vat: num(j.vat), total: num(j.total), summary: (Array.isArray(j.summary) ? j.summary : []).map(x => str(x, 160)).filter(Boolean).slice(0, 10) };
+    supply: num(j.supply), vat: num(j.vat), total: num(j.total), summary: (Array.isArray(j.summary) ? j.summary : []).map(x => str(x && typeof x === 'object' ? Object.entries(x).map(([k, v]) => `${k}: ${v}`).join(', ') : x, 160)).filter(Boolean).slice(0, 10) };
 }
 
 /** 제품 페이지(캡처 이미지 + 글자) → 품목·가격·판매처. 못 읽는 값은 빈 글자/0 */
@@ -217,7 +238,7 @@ async function readProductPage(ai, { url, title, text, shot }) {
  "vendor": {"name": 판매 회사(상호) 이름, "phone": 고객센터·대표 전화 또는 "", "email": 이메일 또는 ""},
  "note": 구매 시 주의할 점·옵션 선택 등 메모 (없으면 ""),
  "summary": 구매 결재자가 알아야 할 중요 정보 3~6줄 배열, "항목: 내용" 꼴 (예: "제품명: …", "옵션: 1.0M", "판매가: 4,000원 (부가세 포함)", "제조사: …", "배송비: 주문 시 결제"). 페이지에 없는 건 쓰지 마}
-규칙: 숫자는 쉼표·통화 기호 없이. 상호·전화·이메일은 보통 페이지 아래쪽 사업자 정보에 있어. 모르면 "" 또는 0.
+규칙: 숫자는 쉼표·통화 기호 없이. 상호·전화·이메일은 보통 페이지 아래쪽 사업자 정보에 있어. 모르는 글자는 "", 모르는 금액은 null (0 아님).
 페이지 주소: ${url}
 페이지 제목: ${title}
 --- 페이지 글자 ---
@@ -225,10 +246,10 @@ ${String(text || '').slice(0, 12000)}`;
   const out = shot ? await completeWithFiles(ai, prompt, [shot]) : await complete(ai, prompt);
   const m = /\{[\s\S]*\}/.exec(out);
   let j; try { j = JSON.parse(m ? m[0] : out); } catch (e) { throw new Error('AI 가 제품 페이지를 읽지 못했어요'); }
-  const num = v => Math.round(firstNum(v) || 0), str = (v, n = 80) => String(v || '').trim().slice(0, n);
+  const num = v => (n => Number.isFinite(n) ? Math.round(n) : '')(v == null || v === '' ? NaN : firstNum(v)), str = (v, n = 80) => String(v || '').trim().slice(0, n);   // 못 읽은 금액은 '' (0원과 구별 — 0 으로 오면 빈 단가 확인을 지나쳤음)
   const v = j.vendor || {};
   return { price_vat: /별도/.test(String(j.price_vat || '')) ? 'excl' : 'incl', name: str(j.name, 120), part_no: str(j.part_no), unit: str(j.unit, 10) || 'EA', unit_price: num(j.unit_price), qty: qtyOf(j.qty) || 1, note: str(j.note, 200),
-    vendor: { name: str(v.name), phone: str(v.phone, 40), email: str(v.email) }, summary: (Array.isArray(j.summary) ? j.summary : []).map(x => str(x, 160)).filter(Boolean).slice(0, 10) };
+    vendor: { name: str(v.name), phone: str(v.phone, 40), email: str(v.email) }, summary: (Array.isArray(j.summary) ? j.summary : []).map(x => str(x && typeof x === 'object' ? Object.entries(x).map(([k, v]) => `${k}: ${v}`).join(', ') : x, 160)).filter(Boolean).slice(0, 10) };
 }
 
 /** 메모 + 발주 내용 → 결재 제목용 짧은 설명, '구매 상세 사유', 그리고 (안 골랐으면) 구매목적·프로젝트명 추천 */
@@ -273,7 +294,7 @@ async function draftVisitor(ai, memo, { today = new Date() } = {}) {
   let j = {}; try { j = JSON.parse(m ? m[0] : text); } catch (e) { throw new Error('AI 답을 못 읽었어요. 다시 눌러 보거나 직접 입력해 주세요.'); }
   const str = (x, n = 80) => String(x ?? '').trim().slice(0, n);
   const date = x => /^\d{4}-\d{2}-\d{2}$/.test(str(x)) ? str(x) : '';
-  return { name: str(j.name, 40), org: str(j.org), position: str(j.position, 30), phone: str(j.phone, 40), count: Math.max(1, Math.round(firstNum(j.count) || 1)), car: str(j.car, 60),
+  return { name: str(j.name, 40), org: str(j.org), position: str(j.position, 30), phone: str(j.phone, 40), count: (n => Number.isFinite(n) && n >= 1 ? Math.round(n) : '')(firstNum(j.count)), car: str(j.car, 60),
     date: date(j.date), date_end: date(j.date_end), time: str(j.time, 40), purpose: str(j.purpose, 200), type: ['A', 'B', 'C'].includes(j.type) ? j.type : '',
     areas: (Array.isArray(j.areas) ? j.areas : []).map(a => ({ area: str(a && a.area, 20), detail: str(a && a.detail, 60) })).filter(a => R.VISITOR_AREAS.includes(a.area)),
     shoot: (Array.isArray(j.shoot) ? j.shoot : []).map(x => str(x, 20)).filter(x => R.VISITOR_SHOOTS.includes(x)), shoot_purpose: str(j.shoot_purpose, 120), urgent_reason: str(j.urgent_reason, 200) };
@@ -281,8 +302,8 @@ async function draftVisitor(ai, memo, { today = new Date() } = {}) {
 
 const askJson = async (ai, prompt, files = []) => {
   const text = files.length ? await completeWithFiles(ai, prompt, files) : await complete(ai, prompt);
-  const m = /\{[\s\S]*\}/.exec(text);
-  try { return JSON.parse(m ? m[0] : text); } catch (e) { throw new Error('AI 답을 못 읽었어요. 다시 눌러 보거나 직접 입력해 주세요.'); }
+  let j; try { j = jsonOf(text); } catch (e) { throw new Error('AI 답을 못 읽었어요. 다시 눌러 보거나 직접 입력해 주세요.'); }
+  return j && typeof j === 'object' && !Array.isArray(j) ? j : {};   // null·배열이면 빈 답 (pickPui 등이 j.index 에서 죽었음)
 };
 
 /** 메모와 가장 비슷한 이전 지출 품의 번호 (rows 인덱스), 없으면 -1 */
@@ -319,7 +340,7 @@ ${tpl}${list}{"memo": 품의 목록에 보일 적요 한 줄 (명사형, 예: "1
     lines: (Array.isArray(j.lines) ? j.lines : []).map(l => { const c = str(l && l.code), code = nameOf[c] ? c : '';   // 목록에 없는 코드는 버림
       const n = l && l.amount != null && l.amount !== '' ? firstNum(l.amount) : NaN;   // 0 은 유효, 없으면 '' (빈 칸 = 미입력)
       const cur = str(l && l.currency, 3).toUpperCase(), date = str(l && l.date, 10);
-      return { code, label: nameOf[code] || '', amount: Number.isFinite(n) ? n : '', memo: str(l && l.memo, 100), currency: /^[A-Z]{3}$/.test(cur) ? cur : 'KRW', date: /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : '' }; }) };
+      return { code, label: nameOf[code] || '', amount: Number.isFinite(n) ? n : '', memo: str(l && l.memo, 100), currency: !cur ? 'KRW' : /^[A-Z]{3}$/.test(cur) ? cur : '', date: /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : '' }; }) };
 }
 
 /** 한 줄 메모 → 신청서 YAML (금액 제외) */

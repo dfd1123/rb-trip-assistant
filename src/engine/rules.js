@@ -62,6 +62,7 @@ function finalConsonant(word) {
     return jong === 8 ? 'ㄹ' : 'o';
   }
   if (/\d/.test(ch)) return DIGIT_FINAL[ch];
+  if (/ng$/i.test(String(word).replace(/[^\p{L}\p{N}]+$/u, ''))) return 'o';   // Meeting·Setup 아님, -ng = ㅇ 받침
   if (/[lL]/.test(ch)) return 'ㄹ';
   if (/[mnMN]/.test(ch)) return 'o';
   return null; // 영문은 대부분 모음으로 끝나게 읽힘 (비, 씨, 디 ...)
@@ -93,7 +94,8 @@ function parseTransitText(text) {
 }
 /** 자차 (연료비+통행료)×2, 대중교통 총요금×2, 원 단위 */
 /** 품의 행 적요: 결재 제목에서 양식 이름과 '의 건'을 뺀 것 (예: "RBY1 정비로 인한 출장") */
-const budgetMemo = title => String(title).replace(/^\[[^\]]*\]\s*/, '').replace(/의 건$/, '').trim();
+const GRID_TEXT_MAX = 100;   // 그룹웨어 그리드 글 칸 maxlength — 넘으면 조용히 잘리고, 저장 확인(같은 글인지)이 계속 실패함
+const budgetMemo = title => String(title).replace(/^\[[^\]]*\]\s*/, '').replace(/의 건$/, '').trim().slice(0, GRID_TEXT_MAX);
 const roundTrip = oneWay => oneWay * 2;
 
 // ---------- 입력 검증 ----------
@@ -120,13 +122,13 @@ function date(v, key) {
 const asList = v => (v == null || v === '') ? [] : (typeof v === 'string' ? v.split(',') : v).map(s => String(s).trim()).filter(Boolean);
 const shortLabel = item => BUDGET_ITEMS[item][1].split('_').pop();
 
-const PROOF_EXT = /\.(png|jpe?g|gif|webp|bmp|tiff?|pdf)$/i;   // HEIC·HEIF(아이폰 사진)는 받지 않음 (사용자 요청 2026-11-10)
+const PROOF_EXT = /\.(png|jpe?g|jfif|gif|webp|bmp|tiff?|pdf)$/i;   // HEIC·HEIF(아이폰 사진)는 받지 않음 (사용자 요청 2026-11-10)
 function parseExpenses(rows, where = 'expenses', reason = '') {
   return (rows || []).map((r, i) => {
     const w = `${where}[${i + 1}]`;
     const item = req(r, 'item', w);
     if (!BUDGET_ITEMS[item]) throw new InputError(`${w}: 알 수 없는 item '${item}'. 가능: ${Object.keys(BUDGET_ITEMS).join(', ')}`);
-    const memo = String(r.memo || '').trim() || `출장 ${shortLabel(item)}`;
+    const memo = (String(r.memo || '').trim() || `출장 ${shortLabel(item)}`).slice(0, GRID_TEXT_MAX);
     return { item, amount: amount(req(r, 'amount', w), w), memo, code: BUDGET_ITEMS[item][0], label: BUDGET_ITEMS[item][1] };
   });
 }
@@ -228,7 +230,7 @@ function overseasExpenses({ start, end, name, people = 1, grade, rate, rank = 's
   if (uberUsd !== null) out.push({ item: 'overseas_transport', amount: Number(uberUsd) * days * r, memo: `${pre} 우버 비용($${Number(uberUsd)} x ${days}일 x ${rf}) - 신청일 환율 기준` });
   if (roaming !== null) out.push({ item: 'travel_etc', amount: Number(roaming), memo: `${pre} 로밍 비용` });
   if (insurance !== null) out.push({ item: 'travel_etc', amount: Number(insurance), memo: `${pre} 여행자 보험 비용` });
-  return { expenses: out, days, nights };
+  return { expenses: out, days, nights, perDiem: g.perDiem, lodgingCap: g.lodging };   // 화면 안내 문구도 직급별 규정으로
 }
 
 /** 정산에 넣는 경비 = 영수증(증빙)이 붙은 줄. 자차 유류대만 예외 — 네이버 지도 기준 금액이라 영수증이 없다 (사용자 요청 2026-11-10: 자차가 아니면 영수증 없는 줄은 집계 안 함). 화면 합계(app.js claimable)도 같은 규칙 */
@@ -244,6 +246,7 @@ function parseReport(data) {
   if (!category) throw new InputError('출장구분을 골라 주세요.');   // 기본값 없음, 필수
   if (!REPORT_CATEGORIES.includes(category)) throw new InputError(`출장구분은 ${REPORT_CATEGORIES.join(', ')} 중 하나입니다.`);
   if (category === '정부과제' && !data.project) throw new InputError('정부과제는 과제명이 필수입니다.');
+  if (category === '기타' && !String(data.project || '').trim()) throw new InputError('출장구분 기타는 내용을 적어 주세요.');   // 양식 '과제구분' 칸에 들어감
   const reason = String(req(data, 'reason', where)).trim();
   const out = {
     trip_id: String(data.trip_id || ''), reason, name: String(req(data, 'name', where)).trim(),
@@ -264,6 +267,7 @@ function parseReport(data) {
     if (bad) throw new InputError(/\.hei[cf]$/i.test(bad) ? `HEIC 사진은 증빙으로 받지 않아요. JPG·PNG로 바꿔서 넣어 주세요: ${bad.split(/[\\/]/).pop()}` : `증빙은 이미지나 PDF만 돼요: ${bad.split(/[\\/]/).pop()}`);
     out.expenses[i].proofs = proofs;
     out.expenses[i].pay = e.pay === 'card' ? 'card' : 'personal';
+    out.expenses[i].kind = RECEIPT_KINDS.includes(e.kind) ? e.kind : '';   // 면세 판단에 쓰니 먼저
     out.expenses[i].noVat = noVatOf({ ...out.expenses[i], noVat: e.noVat });   // 법인카드 면세·불공제 (화면에서 고친 값 우선)
     { const ds = String(e.date || ''); out.expenses[i].date = /^\d{4}-\d{2}-\d{2}$/.test(ds) && new Date(`${ds}T00:00:00`).getDate() === Number(ds.slice(8)) ? ds : ''; }   // 없는 날(10-32)은 날짜 없음으로 (자금계획일이 NaN 이 됐음)   // AI 가 영수증에서 읽은 날짜·끼니 (채주 묶기·예산 줄 맞추기)
     out.expenses[i].meal = /^(조식|중식|석식)$/.test(String(e.meal || '')) ? String(e.meal) : '';
@@ -324,12 +328,16 @@ function planPayees(budgets, lines) {
   const num = v => Number(String(v || '').replace(/[^\d]/g, '')) || 0;
   const md = s => { const m = /^(\d{1,2})\/(\d{1,2})/.exec(String(s || '').trim()); return m ? `${+m[1]}/${+m[2]}` : ''; };
   // 비고의 날짜들: "10/19 숙박" → [10/19], "10/19 ~ 20 숙박 예정"·"10/19~10/21 식대" → 구간의 날마다, "10/19 숙박 (2박)" → 밤 수만큼 (전엔 첫 날짜만 봐서 다음 날 영수증이 버려졌음 — 2026-11-10)
-  const mdList = s => { const t = String(s || '').trim(), m = /^(\d{1,2})\/(\d{1,2})(?:\s*[~\-–]\s*(?:(\d{1,2})\/)?(\d{1,2}))?/.exec(t); if (!m) return [];
+  const mdList = s => { const t = String(s || '').trim(), m = /^(\d{1,2})\/(\d{1,2})(?:\s*[~\-–]\s*(?:(\d{1,2})\/)?(\d{1,2})(?![\d:]|\s*(?:인|명|박|시|회|개|건|일\s*(?:간|동안))))?/.exec(t); if (!m || /해외출장/.test(t)) return [];
+    if (m[4] && !m[3] && /^\d{1,2}\/\d{1,2}\s*[-–]/.test(t) && /^(?:매|장|끼|식|만|천|원|대|병|잔|팀|부)/.test(t.slice(m[0].length))) m[3] = m[4] = undefined;   // 수량 단위가 붙은 수만 ('2매 KTX'). '10/22-24숙박' 은 구간   // '10/22 - 2매 KTX' 의 2 는 끝 날 아님 ('~' 구간은 붙여 써도 구간)   // 끝 날 뒤 '인·박·시…' 이면 날짜 아님 ('10/22 - 2인 중식')   // 해외출장 줄 적요의 기간은 출장 기간일 뿐 (항공권·보험은 출장 전에 삼)
     const n = /(\d+)\s*박(?:\s*(\d+)\s*일)?/.exec(t), a = new Date(2024, +m[1] - 1, +m[2]);   // 2024: 윤년이라 2/29 도 셈
-    const b = m[4] ? new Date(2024, (m[3] ? +m[3] : +m[1]) - 1, +m[4]) : n ? new Date(2024, +m[1] - 1, +m[2] + (n[2] ? +n[2] : +n[1]) - 1) : a;
+    const b = m[4] ? new Date(2024, (m[3] ? +m[3] : +m[1]) - 1, +m[4]) : n ? new Date(2024, +m[1] - 1, +m[2] + (n[2] ? +n[2] - 1 : +n[1])) : a;   // N박 = 체크아웃 날까지 (N박 M일과 같게)
+    if (b < a) { if (m[3] && +m[3] < +m[1]) b.setFullYear(2025); else if (/^\d{1,2}\/\d{1,2}\s*~/.test(t)) b.setMonth(b.getMonth() + 1); }   // 다음 달로는 '~' 구간만 ('10/30~2'). '10/22 - 2매' 같은 건 그 날 하루   // "12/30~1/2" = 해 넘김, "10/30~2" = 다음 달
     const out = []; for (let x = new Date(a); x <= b && out.length < 62; x.setDate(x.getDate() + 1)) out.push(`${x.getMonth() + 1}/${x.getDate()}`); return out.length ? out : [`${+m[1]}/${+m[2]}`]; };
   const lineMd = l => /^\d{4}-\d{2}-\d{2}$/.test(l.date || '') ? `${+l.date.slice(5, 7)}/${+l.date.slice(8, 10)}` : md(l.memo);
-  const rows = budgets.map((b, index) => { const limit = String(b['미지출액'] ?? '').trim() !== '' ? num(b['미지출액']) : num(b['품의금액']);   /* 미지출액 0 = 이미 다 쓴 줄 (0도 값 — 빈 칸만 품의금액) */ return { index, label: b['예산과목'], lab: n(b['예산과목']), mds: mdList(b['예산과목비고']), limit, room: limit, lines: [], dropped: 0 }; });
+  // 연구과제 품의는 예산과목이 다 같아(선급과제비) 비고로 종류를 보고 영수증 종류에 맞는 줄부터 채운다 (안 그러면 앞 줄부터 채워 영수증이 줄 사이로 쪼개짐)
+  const kindOf = s => [/교통|유류|통행|주유|차량|KTX|SRT|택시|버스|기차/i, /숙박/, /식대|식비|조식|중식|석식/].findIndex(re => re.test(String(s || '')));
+  const rows = budgets.map((b, index) => { const limit = String(b['미지출액'] ?? '').trim() !== '' ? num(b['미지출액']) : num(b['품의금액']);   /* 미지출액 0 = 이미 다 쓴 줄 (0도 값 — 빈 칸만 품의금액) */ return { index, label: b['예산과목'], lab: n(b['예산과목']), mds: mdList(b['예산과목비고']), kind: kindOf(b['예산과목비고']), limit, room: limit, lines: [], dropped: 0 }; });
   // 주유·통행료는 품의에 잡힌 줄로: 차량유지비 줄이 없으면 국내교통비 줄, 국내교통비 줄이 없으면 차량유지비 줄 (예전 법인차량 품의는 국내교통비로 잡혀 있음). 택시·대중교통은 차량유지비로 안 감
   const has = lab => rows.some(r => r.lab === n(lab));
   const [TR, VH] = [BUDGET_ITEMS.domestic_transport[1], BUDGET_ITEMS.vehicle[1]];
@@ -337,21 +345,22 @@ function planPayees(budgets, lines) {
   const labOf = l => !has(l.label) && has(PROJECT_ITEM) ? n(PROJECT_ITEM)
     : n(l.label) === n(VH) && !has(VH) && has(TR) ? n(TR)
     : n(l.label) === n(TR) && !has(TR) && has(VH) && CAR_KINDS.includes(l.kind) ? n(VH) : n(l.label);
-  const items = lines.map(l => ({ src: l, left: l.amount, last: null, row: null, lab: labOf(l), md: lineMd(l) })).filter(m => rows.some(r => r.lab === m.lab));
+  const items = lines.map(l => ({ src: l, left: l.amount, last: null, row: null, lab: labOf(l), kind: kindOf(String(l.label || '').split('_').pop()), md: lineMd(l) })).filter(m => rows.some(r => r.lab === m.lab));
   const put = (r, m) => { const amount = Math.min(m.left, r.room); if (amount <= 0) return; m.left -= amount; r.room -= amount;
     r.lines.push(m.last = { ...m.src, amount, supply: supplyAmount(amount, m.src.pay, m.src.noVat), vat: vatAmount(amount, m.src.pay, m.src.noVat), cut: 0, ...(m.last ? { proofs: [], split: true } : {}) }); };
-  for (const m of items) for (const r of m.md ? rows.filter(r => r.lab === m.lab && r.mds.includes(m.md)) : []) { if (m.left <= 0) break; m.row = r; put(r, m); }   // 같은 날짜 줄이 둘이면(조식 줄·중석식 줄) 차례로
-  for (const m of items.filter(m => !m.row)) for (const r of rows.filter(r => r.lab === m.lab && (!m.md || !r.mds.length))) { if (m.left <= 0) break; put(r, m); }
+  for (const m of items) for (const r of m.md ? rows.filter(r => r.lab === m.lab && r.mds.includes(m.md)).sort((x, y) => (y.mds[0] === m.md) - (x.mds[0] === m.md)) : []) {   /* 그 날 시작하는 줄 먼저 (1박 줄이 다음 날까지 덮어도) */ if (m.left <= 0) break; m.row = r; put(r, m); }   // 같은 날짜 줄이 둘이면(조식 줄·중석식 줄) 차례로
+  for (const m of items.filter(m => !m.row)) for (const r of rows.filter(r => r.lab === m.lab && (!m.md || !r.mds.length)).sort((x, y) => (y.kind === m.kind) - (x.kind === m.kind))) { if (m.left <= 0) break; put(r, m); }
   // 못 넣은 금액은 그 영수증의 마지막 조각에 cut 으로, 아예 못 넣은 영수증은 (날짜 줄이면 그 줄, 아니면 그 과목 마지막 줄의) dropped 로
-  for (const m of items) { if (m.left <= 0) continue; if (m.last) m.last.cut = m.left; else if (m.src.amount > 0) (m.row || [...rows].reverse().find(r => r.lab === m.lab)).dropped++; }
+  for (const m of items) { if (m.left <= 0) continue; if (m.last) m.last.cut = m.left; else if (m.src.amount > 0) { const r = m.row || [...rows].reverse().find(r => r.lab === m.lab); r.dropped++;
+    if (!m.row && m.md && !rows.some(x => x.lab === m.lab && !x.mds.length)) (r.missed = r.missed || []).push(`${m.md} ${m.src.memo || ''} ${m.src.amount.toLocaleString('ko-KR')}원`.replace(/\s+/g, ' ')); } }   // missed: 날짜가 품의 날짜 줄과 안 맞아 못 넣은 영수증 (한도와 다른 이유)
   // 같은 예산 줄에 적요·공급가액이 똑같은 채주가 둘이면(같은 날 택시 2번 등) 그룹웨어에서 '이미 넣은 줄'로 보고 하나를 건너뛴다 → 적요 뒤에 (2) 를 붙여 구분
-  for (const r of rows) { const seen = {}; for (const l of r.lines) { const k = `${l.memo}|${l.supply}`; seen[k] = (seen[k] || 0) + 1; if (seen[k] > 1) l.memo = `${l.memo} (${seen[k]})`; } }
+  for (const r of rows) { const seen = {}; for (const l of r.lines) { const k = `${String(l.memo).replace(/\s/g, '')}|${l.supply}`; seen[k] = (seen[k] || 0) + 1; if (seen[k] > 1) l.memo = `${String(l.memo).slice(0, GRID_TEXT_MAX - 5)} (${seen[k]})`; } }   // 띄어쓰기만 다른 적요도 같은 줄로 보임 (줄 찾기가 공백을 무시)
   // 쓴 돈이 없으면(0원 품의·전액 환원) 채주가 0줄이라 그룹웨어가 [전송]을 거부 (환원 줄만 있어도 — 2026-11-20 정효빈) → 첫 예산 줄에 본인 0원 채주
   if (rows.length && !lines.some(l => l.amount > 0)) {
     const zero = budgets.every(b => String(b['품의금액'] ?? '').trim() !== '' && num(b['품의금액']) === 0);
     rows[0].lines.push({ label: rows[0].label, pay: 'personal', amount: 0, supply: 0, vat: 0, cut: 0, memo: zero ? '경비 없음 (0원 품의)' : '경비 없음 (전액 환원)', planDate: fundPlanDate('personal'), proofs: [] });
   }
-  const plan = rows.map(({ index, label, limit, lines, dropped }) => ({ index, label, limit, lines, dropped }));
+  const plan = rows.map(({ index, label, limit, lines, dropped, missed }) => ({ index, label, limit, lines, dropped, missed: missed || [] }));
   const left = lines.filter(l => !rows.some(r => r.lab === labOf(l)));
   return { plan, left };
 }
@@ -363,8 +372,10 @@ function capMealRows(rows, rates = {}) {
   return rows.map(r => {
     if (r.item !== 'meal' || r.failed) return r;
     const kinds = r.meal ? [r.meal] : MEAL_KINDS.filter(([, re]) => re.test(r.memo || '')).map(([k]) => k);   // 직접 쓴 "조식·중식 2건" 은 두 끼 한도의 합 (전엔 첫 끼 한도로 깎았음)
-    const per = kinds.reduce((s, k) => s + (Number(rates[MEAL_RATE_KEY[k]]) || 0), 0);
-    if (!per) return r;
+    const rateOf = k => { const v = rates[MEAL_RATE_KEY[k]]; return v === '' || v == null || isNaN(Number(v)) ? null : Number(v); };   // 0 원 한도도 한도 (빈 값만 모름)
+    if (!kinds.length || kinds.some(k => rateOf(k) === null)) return r;
+    const times = k => r.meal ? 1 : Number((new RegExp(`(?:${MEAL_KINDS.find(([x]) => x === k)[1].source})\\s*(\\d+)\\s*(?:회|끼|번)`, 'i').exec(r.memo || '') || [])[1]) || 1;   // 신청 식대 줄 "아침 2회, 점심 3회"
+    const per = kinds.reduce((s, k) => s + rateOf(k) * times(k), 0);
     const cap = per * Math.max(1, Number(r.people) || Number((/(\d+)\s*인/.exec(r.memo || '') || [])[1]) || 1);   // 인원 필드가 없으면 적요의 "3인"
     return Number(r.amount) > cap ? { ...r, amount: cap, paid: Number(r.amount), capped: true } : r;
   });
@@ -407,7 +418,7 @@ function parseSettle(data) {
   const lines = (Array.isArray(data.expenses) ? data.expenses : []).map((e, i) => {
     const w = `expenses[${i}]`;
     const amt = amount(e.amount === '' || e.amount == null ? 0 : e.amount, w);   // 0 은 유효 (빈 칸만 미입력)
-    const memo = String(e.memo || '').trim();
+    const memo = String(e.memo || '').trim().slice(0, GRID_TEXT_MAX - 4);   // 같은 적요가 두 줄이면 ' (2)' 를 붙임
     if (!memo) throw new InputError(`${w}: 비용 세부내역(거래처비고)을 적어 주세요.`);
     const fund = String(e.fund || fund0).trim();
     if (!FUNDS.includes(fund)) throw new InputError(`${w}: 자금과목은 일반경비·제조경비 중 하나예요.`);
@@ -421,12 +432,12 @@ function parseSettle(data) {
 
 // 지출 결의 앞 단계 품의의 결재양식 (전자결재상신 창에서 고름 — 사용자 화면 2026-11-16)
 const PUI_FORM = '품의서입력(복수)지출';
-const INVOICE_EXT = /\.(pdf|png|jpe?g|webp|docx|xlsx)$/i;
+const INVOICE_EXT = /\.(pdf|png|jpe?g|jfif|webp|docx|xlsx)$/i;
 const AI_CONSENT = 'AI 도구 이용 지원 및 비용 환수에 관한 동의서';
 /** 지출 품의 (지출 결의 앞 단계). 예산과목은 코드로, 코드를 모르면 이름으로 예산과목 코드도움에서 찾는다.
  *  그룹웨어 '복사'는 결재양식·제목·결재선·본문을 안 가져와 쓸모없음 → 앱이 매번 새로 작성 (사용자 확인 2026-11-16) */
 function parsePui(data) {
-  const memo = String(data.memo || '').trim();
+  const memo = String(data.memo || '').trim().slice(0, GRID_TEXT_MAX);
   if (!memo) throw new InputError('품의 적요를 적어 주세요.');
   const purpose = String(data.purpose || '').trim();
   if (!purpose) throw new InputError('품의목적을 적어 주세요.');
@@ -435,7 +446,7 @@ function parsePui(data) {
     const code = String(e.code || '').trim(), label = String(e.label || '').trim();
     if (code && !/^\d+$/.test(code)) throw new InputError(`${w}: 예산과목 코드는 숫자예요 (예: 8120002).`);
     if (!code && !label) throw new InputError(`${w}: 예산과목을 골라 주세요.`);
-    const lineMemo = String(e.memo || '').trim();
+    const lineMemo = String(e.memo || '').trim().slice(0, GRID_TEXT_MAX);
     if (!lineMemo) throw new InputError(`${w}: 적요를 적어 주세요.`);
     if (e.amount === '' || e.amount == null) throw new InputError(`${w}: 품의금액을 넣어 주세요 (0원도 돼요).`);   // 0 은 유효, 빈 칸만 미입력
     const usd = e.usd === '' || e.usd == null || !(Number(e.usd) >= 0) ? '' : Number(e.usd);   // 외화 줄 원금액 (본문·자동 반복 환산용)
@@ -464,7 +475,7 @@ function capTotal(lines, limit) {
 /** 지출 품의 결재 제목: '[품의서] 26년 10월 AI 툴 결제 요청의 건' (사용자가 정한 꼴, 2026-11-16). 연월은 청구서 날짜 기준 */
 function puiTitle(subject, date = new Date()) {
   const d = typeof date === 'string' && /^\d{4}-\d{2}/.test(date) ? new Date(`${date.slice(0, 7)}-01T00:00:00`) : date instanceof Date ? date : new Date();
-  const core = String(subject || '').replace(/^\s*\[[^\]]*\]\s*/, '').replace(/^\s*\d{2,4}년\s*\d{1,2}월\s*/, '').replace(/\s*(요청)?의?\s*건\s*$/, '').trim() || '지출';
+  const core = String(subject || '').replace(/^\s*\[[^\]]*\]\s*/, '').replace(/^\s*(?:\d{2,4}년\s*)?\d{1,2}월\s*/, '').replace(/\s*(?:요청(?:의\s*건)?|(?:의\s*)?건)\s*$/, '').trim() || '지출';   // '서버 증설 요청'·'10월 …' 이 두 번 붙지 않게
   return `[품의서] ${String(d.getFullYear()).slice(2)}년 ${d.getMonth() + 1}월 ${core} 요청의 건`;
 }
 
@@ -472,8 +483,12 @@ function puiTitle(subject, date = new Date()) {
 function dueRepeat(list, now = new Date()) {
   const ym = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`, today = `${ym}-${String(now.getDate()).padStart(2, '0')}`;
   const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-  const rep = (list || []).find(r => r.on && r.last !== ym && ym > r.base && now.getDate() >= Math.min(r.day, lastDay));
-  return rep ? { rep, ym, today } : null;
+  const rep = (list || []).find(r => r.on && r.last !== ym && r.done !== ym && ym > r.base && now.getDate() >= Math.min(r.day, lastDay));
+  if (rep) return { rep, ym, today };
+  // 지난달 알림을 PC 가 꺼져 있어 못 보냈으면 지금이라도 (말일 알림이 사라졌음). ym = 그 지난달
+  const p = new Date(now.getFullYear(), now.getMonth() - 1, 1), pym = `${p.getFullYear()}-${String(p.getMonth() + 1).padStart(2, '0')}`;
+  const late = (list || []).find(r => r.on && r.last < pym && r.done !== pym && pym > r.base);
+  return late ? { rep: late, ym: pym, today } : null;
 }
 
 /** 신청 교통비 = 네이버 지도 왕복 + 여유분(자차·대중교통, 기본 2만원). 보고서 정산은 실제 금액으로 */
@@ -490,7 +505,7 @@ function transportExpense(a, total, margin = 0) {
 }
 
 // ---------- AI 프롬프트 ----------
-function applyPrompt(today = new Date().toISOString().slice(0, 10)) {
+function applyPrompt(today = ymd(new Date())) {   // 현지 날짜 (toISOString 은 UTC 라 한국 오전 9시 전엔 어제가 됨)
   return `너는 레인보우로보틱스 출장신청서 입력 도우미야.
 아래 [메모]를 읽고 YAML 하나만 출력해. 설명이나 다른 말은 쓰지 마.
 오늘 날짜는 ${today} 이야. '다음주 화요일' 같은 표현은 실제 날짜로 바꿔.
@@ -521,8 +536,8 @@ companion_purpose: ""
 purpose: |
   판교 AI 연구소의 RBY1 로봇과 Muscat 플랫폼의 정식 연동을 위해 ...
 expenses:
-  - {item: domestic_lodging, amount: 140000, memo: 출장 숙박비 (2박 × 70,000원)}
-  - {item: meal, amount: 106000, memo: 출장 식대 (아침 2회, 점심 3회, 저녁 3회)}
+  - {item: domestic_lodging, amount: 140000, memo: "출장 숙박비 (2박 × 70,000원)"}
+  - {item: meal, amount: 106000, memo: "출장 식대 (아침 2회, 점심 3회, 저녁 3회)"}
 \`\`\`
 
 [메모]
@@ -545,9 +560,11 @@ ${yaml.dump(draft, { lineWidth: 1000 })}
 
 /** AI 답변에서 \`\`\`yaml 블록(없으면 전체)을 꺼낸다 */
 function extractYaml(text) {
-  const m = /```(?:ya?ml)?\s*\n([\s\S]*?)```/.exec(text || '');
-  const data = yaml.load(m ? m[1] : text, { schema: yaml.JSON_SCHEMA });
+  const t = String(text || ''), m = /```ya?ml\s*\n([\s\S]*?)```/i.exec(t) || /```\s*\n([\s\S]*?)```/.exec(t);   // yaml 표시한 블록 먼저 (```YAML 도)
+  let data; try { data = yaml.load(m ? m[1] : t, { schema: yaml.JSON_SCHEMA }); } catch (e) { data = null; }
   if (!data || typeof data !== 'object' || Array.isArray(data)) throw new InputError('YAML 을 읽지 못했습니다. AI 답변 전체를 그대로 붙여 넣어 주세요.');
+  if (typeof data.companions === 'string') data.companions = data.companions.split(/[,、·]/).map(s => s.trim()).filter(Boolean);   // '김철수, 이영희' 처럼 글로 오면 (화면이 .join 에서 죽었음)
+  if (Array.isArray(data.report)) data.report = data.report.map(String).join('\n');
   return data;
 }
 
@@ -588,9 +605,11 @@ function parseTripPeriod(text, base = '') {
     const time = m[4] ? `${pad(m[4])}:${m[5] || m[6] || '00'}`.replace(/:(\d)$/, ':0$1') : '';
     hits.push({ y, mo, d, time, end: re.lastIndex });
   }
-  if (hits.length === 1) {   // "10월 19일 ~ 20일": 두 번째 날짜에 월이 빠진 경우
-    const rest = t.slice(hits[0].end), m2 = /^\s*[~\-–]\s*(\d{1,2})\s*일(?:\s*\([^)]*\))?(?:\s*(\d{1,2})(?::(\d{2})|\s*시))?/.exec(rest);
-    if (m2 && Number(m2[1]) >= hits[0].d) hits.push({ y: hits[0].y, mo: hits[0].mo, d: Number(m2[1]), time: m2[2] ? `${pad(m2[2])}:${m2[3] || '00'}` : '' });
+  if (hits.length === 1) {   // 끝에 월이 빠진 날("10월 19일 ~ 20일", "10.19~20", 월 넘김 "12/30~2") 또는 시각만("10/19 09:00~18:00")
+    const h = hits[0], rest = t.slice(h.end), m2 = /^\s*[~\-–]\s*(?:(\d{1,2})(?![\d:]|\s*(?:시|박|주|개|명|회|일\s*(?:간|동안|정)))\s*일?(?:\s*\([^)]*\))?(?:\s*(\d{1,2})(?::(\d{2})|\s*시))?|(\d{1,2}):(\d{2}))/.exec(rest);
+    if (m2 && m2[4]) hits.push({ ...h, time: `${pad(m2[4])}:${m2[5]}` });
+    else if (m2) { const d = Number(m2[1]); let y = h.y, mo = h.mo; if (d < h.d) { mo++; if (mo > 12) { mo = 1; y++; } }
+      if (new Date(y, mo - 1, d).getDate() === d) hits.push({ y, mo, d, time: m2[2] ? `${pad(m2[2])}:${m2[3] || '00'}` : '' }); }
   }
   const iso = h => h ? `${h.y}-${pad(h.mo)}-${pad(h.d)}` : '';
   const a = hits[0], b = hits[1] || hits[0];
@@ -637,9 +656,9 @@ function parsePurchase(data) {
   // 온라인 판매가(제품 페이지)는 이미 부가세 포함 → 합계는 그대로 더하고 'VAT포함'. 발주서는 공급가액 + 부가세
   const price_vat = data.price_vat === undefined ? Boolean(data.link && data.link.url && data.link.priceVat !== 'excl') : Boolean(data.price_vat);
   const vat_included = price_vat || Boolean(data.vat_included);
-  const total = data.total === '' || data.total == null ? (vat_included && !price_vat ? Math.round(supply * 1.1) : supply) : amount(data.total, 'total');
+  const total = data.total === '' || data.total == null ? (vat_included && !price_vat ? supply + Math.floor(supply / 10) : supply)   /* 부가세 원 단위 버림 (세금계산서와 같게) */ : amount(data.total, 'total');
   const reason = String(data.reason || '').trim(); if (!reason) throw new InputError('구매 상세 사유를 적어 주세요.');
-  const title = String(data.title || '').trim() || purchaseTitle(project_etc || project, rows[0].name + (rows.length > 1 ? ` 외 ${rows.length - 1}건` : ''));
+  const title = String(data.title || '').trim() || purchaseTitle(project_etc || project, rows[0].name + ((n => n > 1 ? ` 외 ${n - 1}건` : '')(rows.filter(r => r.amount >= 0).length)));   // 할인 줄은 품목 수에 안 셈
   const file = String(data.file || '').trim();
   const l = data.link || {};
   if (file && l.url) throw new InputError('발주서 파일과 제품 페이지는 둘 중 하나만 쓸 수 있어요.');

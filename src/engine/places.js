@@ -30,7 +30,7 @@ async function searchPlaces(query, { keys, fetch: f = fetch } = {}) {
   return rankPlaces(q, all).slice(0, 8);
 }
 async function searchOnce(q, keys, f) {
-  const res = await f(`${API}?${new URLSearchParams({ query: q, display: '5' })}`, { headers: { 'X-NCP-APIGW-API-KEY-ID': keys.id, 'X-NCP-APIGW-API-KEY': keys.secret } });
+  const res = await f(`${API}?${new URLSearchParams({ query: q, display: '5' })}`, { headers: { 'X-NCP-APIGW-API-KEY-ID': keys.id, 'X-NCP-APIGW-API-KEY': keys.secret }, signal: AbortSignal.timeout(10000) });
   if (res.status === 401 || res.status === 403) throw new Error('네이버 지역 검색 키가 올바르지 않아요. 관리자에게 알려 주세요 (.env NAVER_CLIENT_ID / NAVER_CLIENT_SECRET).');
   if (res.status === 429) throw new Error('네이버 지역 검색 호출이 너무 잦아요. 잠시 뒤 다시 해 주세요.');
   if (!res.ok) throw new Error(`네이버 지역 검색 실패 (HTTP ${res.status})`);

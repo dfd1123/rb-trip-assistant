@@ -72,10 +72,11 @@ class Store {
     while (fs.existsSync(path.join(this.tripsDir, id))) id = `${base}-${++i}`;
     return id;
   }
-  tripDir(id) { const d = path.join(this.tripsDir, id); fs.mkdirSync(d, { recursive: true }); return d; }
+  tripDir(id) { this.safeId(id); const d = path.join(this.tripsDir, id); fs.mkdirSync(d, { recursive: true }); return d; }
   save(id, rec) { writeJson(path.join(this.tripDir(id), 'trip.json'), rec); return rec; }
   remove(id) { if (!id || /[\/\\]/.test(String(id)) || String(id).includes('..')) throw new Error('잘못된 출장 ID'); fs.rmSync(path.join(this.tripsDir, id), { recursive: true, force: true }); }
-  load(id) { return JSON.parse(fs.readFileSync(path.join(this.tripsDir, id, 'trip.json'), 'utf8')); }
+  safeId(id) { if (!id || /[\/\\]/.test(String(id)) || String(id).includes('..')) throw new Error('잘못된 출장 ID'); return id; }
+  load(id) { this.safeId(id); return JSON.parse(fs.readFileSync(path.join(this.tripsDir, id, 'trip.json'), 'utf8')); }
   /** 자주 가는 곳: 기록에서 많이 간 순 + 기본 목록 */
   places() {
     const count = new Map();
@@ -101,7 +102,7 @@ class Store {
   getFare(mode, from, to) {
     try {
       const c = JSON.parse(fs.readFileSync(this.farePath, 'utf8'))[this.fareKey(mode, from, to)];
-      if (c && Date.now() - c.at < FARE_TTL_DAYS * 86400000 && (!c.screenshot || fs.existsSync(c.screenshot))) return c;
+      if (c && Date.now() - c.at < FARE_TTL_DAYS * 86400000 && c.screenshot && fs.existsSync(c.screenshot)) return c;   // 캡처(증빙) 없는 값은 다시 조회
     } catch (e) { /* 없음 */ }
     return null;
   }

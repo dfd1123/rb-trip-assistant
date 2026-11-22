@@ -95,7 +95,9 @@ const rowVals = (g, row) => { const r = rows(g)[row]; if (!r) return null; const
 `;
 
 class Page {
-  constructor(win) { this.win = win; this.wc = win.webContents; }
+  constructor(win, guard = null) { this.win = win; this.wc = win.webContents; this.guard = guard; }
+  /** 취소된 작업이면 여기서 멈춘다 — 전엔 log() 를 부를 때만 멈춰 그 사이 [전송]·[삭제] 클릭이 이어졌음 */
+  check() { if (this.guard) this.guard(); }
 
   /** 리눅스는 숨긴 창에 OS 포커스를 안 줘 document.hasFocus() false → RealGrid 드롭다운·편집기가 안 열림. CDP 로 포커스된 척.
    *  페이지를 옮기면 풀리고 껐다 켜야 다시 먹는다 — 포커스가 있을 땐 안 건드림 (끄면 blur 로 열린 드롭다운이 닫힘) */
@@ -111,6 +113,7 @@ class Page {
 
   /** fn: 페이지에서 실행할 함수 소스(문자열). PRELUDE 헬퍼 사용 가능. */
   async eval(fn, ...args) {
+    this.check();
     const code = `(() => { ${PRELUDE}\n return (${fn})(...${JSON.stringify(args)}); })()`;
     if (this.wc.isDestroyed()) throw new Error('작업 창이 닫혔어요');   // 닫힌 창의 executeJavaScript 는 끝나지 않고 매달림
     return this.wc.executeJavaScript(code, true);
@@ -120,6 +123,7 @@ class Page {
     const end = Date.now() + timeout;
     let last;
     while (Date.now() < end) {
+      this.check();   // 아래 catch 가 취소를 삼키지 않게
       try { last = await this.eval(fn, ...args); if (last) return last; } catch (e) { /* 페이지 전환 중 */ }
       await sleep(interval);
     }
@@ -129,6 +133,7 @@ class Page {
 
   url() { return this.wc.getURL(); }
   async goto(url) {
+    this.check();
     try { await this.wc.loadURL(url); }
     catch (e) {
       // 여는 중에 그 사이트가 다른 주소로 보내면(세션 만료 → #/login?logout=Y) loadURL 이 ERR_FAILED·ERR_ABORTED 로 끝난다.
@@ -143,6 +148,7 @@ class Page {
 
   /** 끌기 (스크롤바 손잡이 등): 누른 채 여러 번 나눠 움직이고 놓는다 */
   async drag(from, to, steps = 8) {
+    this.check();
     await this.emulateFocus(); this.wc.focus();
     this.wc.sendInputEvent({ type: 'mouseMove', x: from.x, y: from.y });
     this.wc.sendInputEvent({ type: 'mouseDown', x: from.x, y: from.y, button: 'left', clickCount: 1 });
@@ -155,6 +161,7 @@ class Page {
   }
 
   async click(pt, { count = 1 } = {}) {
+    this.check();
     if (!pt) throw new Error('클릭할 위치를 찾지 못했습니다.');
     const { x, y } = pt;
     await this.emulateFocus(); this.wc.focus();   // 숨긴 창은 포커스 이벤트가 안 와 RealGrid 편집기·코드도움이 안 열린다 (document.hasFocus() false)
@@ -178,6 +185,7 @@ class Page {
 
   /** 마우스 휠 (deltaY > 0 = 아래로) */
   async wheel(pt, deltaY, deltaX = 0) {
+    this.check();
     // 숨긴 창에서는 실제 휠 입력이 전달되지 않아, 그 위치의 요소에 휠 이벤트를 직접 보낸다 (그리드는 JS 로 휠을 처리)
     if (this.win.isVisible()) {
       this.wc.sendInputEvent({ type: 'mouseMove', x: pt.x, y: pt.y });
@@ -189,6 +197,7 @@ class Page {
   }
 
   async key(keyCode, modifiers = []) {
+    this.check();
     await this.emulateFocus(); this.wc.focus();
     this.wc.sendInputEvent({ type: 'keyDown', keyCode, modifiers });
     if (keyCode === 'Enter') this.wc.sendInputEvent({ type: 'char', keyCode: '\r', modifiers });
@@ -196,10 +205,10 @@ class Page {
     await sleep(80);
   }
   async press(keyCode, times = 1) { for (let i = 0; i < times; i++) { await this.key(keyCode); await sleep(150); } }
-  async selectAll() { await this.emulateFocus(); this.wc.focus(); this.wc.selectAll(); await sleep(120); }   // 단축키(Cmd+A)는 메뉴 없는 창에서 안 먹음
-  async type(text) { await this.wc.insertText(String(text)); await sleep(100); }
+  async selectAll() { this.check(); await this.emulateFocus(); this.wc.focus(); this.wc.selectAll(); await sleep(120); }   // 단축키(Cmd+A)는 메뉴 없는 창에서 안 먹음
+  async type(text) { this.check(); await this.wc.insertText(String(text)); await sleep(100); }
   /** 키를 하나씩 눌러 입력 (붙여넣기를 안 받는 날짜 칸 등). 숫자·영문용 */
-  async typeKeys(text) { await this.emulateFocus(); this.wc.focus(); for (const ch of String(text)) { for (const type of ['keyDown', 'char', 'keyUp']) this.wc.sendInputEvent({ type, keyCode: ch }); await sleep(40); } await sleep(100); }
+  async typeKeys(text) { this.check(); await this.emulateFocus(); this.wc.focus(); for (const ch of String(text)) { for (const type of ['keyDown', 'char', 'keyUp']) this.wc.sendInputEvent({ type, keyCode: ch }); await sleep(40); } await sleep(100); }
 
   /** 모든 프레임(iframe 포함) */
   frames() { return this.wc.mainFrame.framesInSubtree; }
@@ -259,6 +268,7 @@ class Page {
 
   /** <input type=file> 에 파일 넣기 (CDP) */
   async setFiles(selector, files) {
+    this.check();
     await this.emulateFocus();
     const dbg = this.wc.debugger;
     const attached = dbg.isAttached();

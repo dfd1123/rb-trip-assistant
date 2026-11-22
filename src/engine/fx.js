@@ -14,7 +14,7 @@ async function usdRate(key, { from = new Date(), fetch: f = fetch, days = 10 } =
   if (!key) throw new Error('환율 API 키가 들어 있지 않은 버전이에요. 관리자에게 알려 주세요 (.env OPEN_API_KEY).');
   for (let i = 0; i < days; i++) {
     const d = new Date(from); d.setDate(d.getDate() - i);
-    const res = await f(`${API}?authkey=${encodeURIComponent(key)}&searchdate=${ymd(d).replace(/-/g, '')}&data=AP01`);
+    const res = await f(`${API}?authkey=${encodeURIComponent(key)}&searchdate=${ymd(d).replace(/-/g, '')}&data=AP01`, { signal: AbortSignal.timeout(15000) });   // 멈춘 요청이 작업을 막지 않게
     if (!res.ok) throw new Error(`수출입은행 환율 조회 실패 (HTTP ${res.status})`);
     const rows = await res.json();
     const bad = rows.find(r => r.result && r.result !== 1);
