@@ -69,10 +69,10 @@
   // 실제처럼 품의일자 기본값은 이번 달 1일부터: 지난달에 신청한 품의는 날짜를 바꿔 [조회]해야 보임
   const monthStart = () => today().slice(0, 8).replace(/-/g, '') + '01';
   function approvePage() {
-    const from = A.from || monthStart(), shown = T.approve.filter(r => `${r.품의연월.replace('-', '')}${String(r.품의일).padStart(2, '0')}` >= from);
+    const from = A.from || monthStart(), to = A.to || today().replace(/-/g, ''), shown = T.approve.filter(r => { const d = `${r.품의연월.replace('-', '')}${String(r.품의일).padStart(2, '0')}`; return d >= from && d <= to; });   // 실제처럼 끝 날짜도 거름
     A.rows = shown;
-    $('#app').innerHTML = css + `<div class="s-root"><h3>품의서승인(복수)</h3><div><span>품의일자</span> <span><input type="text" id="sFrom" value="${from}"> ~ <input type="text" value="${today().replace(/-/g, '')}"></span> <button class="OBTConditionPanel_searchButton__x" id="sFind">조회</button> <button id="sOpen">결의서전송/취소</button></div>${grid('appr', TOPC, shown, { check: A.check })}</div>`;
-    $('#sFind').onclick = () => { A.from = $('#sFrom').value.replace(/\D/g, '').slice(0, 8) || monthStart(); A.check.clear(); approvePage(); };
+    $('#app').innerHTML = css + `<div class="s-root"><h3>품의서승인(복수)</h3><div><span>품의일자</span> <span><input type="text" id="sFrom" value="${from}"> ~ <input type="text" id="sTo" value="${to}"></span> <button class="OBTConditionPanel_searchButton__x" id="sFind">조회</button> <button id="sOpen">결의서전송/취소</button></div>${grid('appr', TOPC, shown, { check: A.check })}</div>`;
+    $('#sFind').onclick = () => { A.from = $('#sFrom').value.replace(/\D/g, '').slice(0, 8) || monthStart(); A.to = $('#sTo').value.replace(/\D/g, '').slice(0, 8) || today().replace(/-/g, ''); A.check.clear(); approvePage(); };
     $('#sOpen').onclick = () => { const k = [...A.check][0]; if (k == null) return alertBox('품의를 선택해 주세요.'); if (A.check.size > 1) return alertBox('한 건의 품의서만 전송할 수 있습니다.'); openTransfer(A.rows[k]); };   // 실제처럼 두 건 이상 체크면 막음
   }
 

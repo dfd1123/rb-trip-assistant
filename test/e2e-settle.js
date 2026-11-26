@@ -317,6 +317,16 @@ app.whenReady().then(async () => {
       assert.equal(s16.closed, 1, '닫은 건 사람 한 번뿐');
       console.log('E2E 정산 사람이 창 닫은 뒤 다시 열기 OK');
     }
+    if (run(17)) {
+      // ---- 17) 두 달 전 품의(9/30 순번 18) — 품의일자를 그 달 1일~말일로 조회해 찾고, 결재완료라도 '품의대기'면 결의서전송 전에 알려 줌 (2026-11-26 정효빈) ----
+      const old = { ...APPLY(), key: '2026-09|30|18', 품의연월: '2026-09', 품의일: '30', 순번: '18', 진행상태: '품의대기' };
+      const cur = { ...APPLY(), key: `${today().slice(0, 7)}|1|2`, 품의연월: today().slice(0, 7), 품의일: '1', 순번: '2' };
+      mock.setSettle(STATE({ approve: [cur, old] }));
+      store.save('t17', { ...store.load('t1'), id: 't17', gwApply: { key: old.key, ym: '2026-09', day: '30', seq: '18' } });
+      await assert.rejects(runner.runReport(env, { ...report(exp1), trip_id: 't17' }), /품의대기/);
+      assert.ok(ui.logs.every(m => !/목록에 없음/.test(m)), '9월 품의를 목록에서 찾아야 함');
+      console.log('E2E 정산 두 달 전 품의 찾기 · 품의대기 알림 OK');
+    }
 
   } catch (e) {
     code = 1; console.error('E2E 정산 실패:', e.stack || e);

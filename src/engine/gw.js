@@ -1112,15 +1112,21 @@ class Amaranth {
     await sleep(1500);
     const find = () => p.eval((y, d, q) => { const g = grid('품의구분'); return rows(g).findIndex((_, i) => { const v = rowVals(g, i) || {}; return v['품의연월'] === y && String(Number(v['품의일'])) === String(Number(d)) && v['순번'] === String(q); }); }, ym, day, seq);
     let ri = await find();
-    if (ri < 0) {   // 품의일자 시작 칸을 품의한 달 1일로 → 조회
-      const box = await p.eval(() => { const lb = all('*').find(e => ownText(e) && vis(e) && norm(e.textContent) === '품의일자'); if (!lb) return null;
+    if (ri < 0) {   // 품의일자를 품의한 달 1일~말일로 → 조회. 시작만 바꿔 9/1~11/30 으로 두면 목록이 11월 그대로였음 (2026-11-26 리눅스)
+      const [y, m] = ym.split('-').map(Number), want = [`${ym}-01`, `${ym}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}`];
+      const dateBox = () => p.eval(() => { const lb = all('*').find(e => ownText(e) && vis(e) && norm(e.textContent) === '품의일자'); if (!lb) return null;
         let c = lb; for (let i = 0; c && i < 6 && !all('input', c).filter(vis).length; i++) c = c.parentElement;
-        const ins = c ? all('input', c).filter(vis) : []; return ins.length ? center(ins[0]) : null; });
+        const ins = c ? all('input', c).filter(vis) : []; return ins.length ? { pts: ins.map(center), vals: ins.map(x => x.value) } : null; });
+      const same = b => b.vals.map(x => x.replace(/\D/g, '')).join('~') === want.slice(0, b.pts.length).map(x => x.replace(/\D/g, '')).join('~');   // 화면 꼴 2026-09-01 / 20260901 둘 다
+      let box = await dateBox();
+      for (let t = 0; box && t < 2 && !same(box); t++) {   // 시작 먼저 (끝이 시작보다 앞서면 막힐 수 있음)
+        for (let i = 0; i < Math.min(2, box.pts.length); i++) { await p.click(box.pts[i]); await p.selectAll(); const d = want[i].replace(/-/g, ''); if (t) await p.typeKeys(d); else await p.type(d); await p.key('Enter'); await sleep(400); }   // 안 먹었으면 키를 하나씩으로 다시
+        box = await dateBox();
+      }
+      if (box && !same(box)) this.log(`(품의일자 칸이 ${box.vals.join(' ~ ')} 로 남음, 원한 값 ${want.join(' ~ ')})`);
       if (box) {
-        await p.click(box); await p.selectAll(); await p.type(ym.replace('-', '') + '01'); await p.key('Enter'); await sleep(400);
         try { await p.clickWhere(() => all('#tutorial-conditionPanel-search, [class*=OBTConditionPanel_searchButton]').filter(vis).pop()); } catch (e) { await p.key('Enter'); }
-        await sleep(2500);
-        ri = await find();
+        for (let t = 0; t < 10 && ri < 0; t++) { await sleep(700); ri = await find(); }   // 조회가 늦게 끝날 수 있음
       }
     }
     if (ri < 0) {
@@ -1128,10 +1134,12 @@ class Amaranth {
       const rowsNow = await p.eval(() => { const g = grid('품의구분'); return g ? rows(g).map((_, i) => { const v = rowVals(g, i) || {}; return `${v['품의연월']}-${v['품의일']}#${v['순번']}`; }).join(', ') : '(그리드 없음)'; });
       this.log(`품의서승인 목록에 없음: 찾는 건 ${ym}-${day}#${seq}, 보이는 건 ${rowsNow}`);
       if (noAssist) throw new Error(`품의서승인 목록에서 신청 품의(${ym}-${day} 순번 ${seq})를 못 찾았어요`);
-      await this.ui.assist(`품의서승인 목록에서 신청 품의(${ym}-${day} 순번 ${seq})를 못 찾았어요. 품의일자를 맞춰 조회하고 그 행만 체크한 뒤 [계속]을 눌러 주세요.`); return;
+      await this.ui.assist(`품의서승인 목록에서 신청 품의(${ym}-${day} 순번 ${seq})를 못 찾았어요. 품의일자를 맞춰 조회하고 그 행만 체크한 뒤 [계속]을 눌러 주세요.`);
+      ri = await find();   // 사람이 조회해 둔 목록에서 다시 — 아래 상태 확인을 건너뛰면 품의대기 줄로 [결의서전송]이 안 열렸음 (2026-11-26)
+      if (ri < 0) throw new Error(`품의서승인 목록에 신청 품의(${ym}-${day} 순번 ${seq})가 안 보여요. 품의일자를 그 달로 조회해 두고 다시 해 주세요.`);
     }
     const v = await this.rowVals('품의구분', ri);
-    if (!/승인완료/.test(v['진행상태'] || '')) throw new Error(`신청 품의(순번 ${seq})가 아직 '${v['진행상태'] || v['결재상태'] || '?'}' 상태예요. 신청이 승인완료돼야 보고(정산)를 할 수 있어요.`);
+    if (!/승인완료/.test(v['진행상태'] || '')) throw new Error(`신청 품의(순번 ${seq})가 아직 '${v['진행상태'] || v['결재상태'] || '?'}' 상태예요. 승인완료돼야 보고(정산)를 할 수 있어요. 그룹웨어 품의서승인에서 그 줄을 [승인]한 뒤 다시 해 주세요.`);
     await this.checkOnly('품의구분', ri, { noAssist });
     await sleep(300);
     this.approvedTotal = v['총금액'] === undefined ? null : amountOf(v['총금액']);   // 품의 총금액 — 전송된 결의가 다 썼는지(환원할 게 있는지) 판단. 0원 품의는 빈 칸 → 0
